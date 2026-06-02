@@ -1,0 +1,197 @@
+type Github {
+  let repository: String = null
+  let authHeader: Secret = null
+
+  new(
+    """
+    GitHub repository in owner/name form.
+    """
+    repository: String = null,
+    """
+    Authorization header secret, for example "Bearer ghp_...".
+    """
+    authHeader: Secret = null,
+  ) {
+    self.repository = repository
+    self.authHeader = authHeader
+
+    self
+  }
+
+  """
+  Interact with GitHub releases for the given repository.
+  """
+  pub releases(repository: String = self.repository): Releases! {
+    Releases(repository: repository, authHeader: self.authHeader)
+  }
+
+  """
+  Get a GitHub release by version. Use "latest" or an empty string for the latest release.
+  """
+  pub release(version: String = null, repository: String = self.repository): Release! {
+    self.releases(repository).get(version)
+  }
+}
+
+let resolveRepository(repository: String): String! {
+  if (repository == null) {
+    raise "repository is required"
+  }
+
+  repository
+}
+
+let extractFile(file: File!, stripComponents: Int = null): Directory! {
+  let fileName = file.name
+
+  let args = ["bsdtar", "--no-xattrs", "-xf", fileName, "-C", "/work/out"]
+
+  if (stripComponents != null) {
+    args += ["--strip-components", toString(stripComponents)]
+  }
+
+  Dagger
+    .container
+    .from("alpine:3.23.4")
+    .withMountedCache("/var/cache/apk", Dagger.cacheVolume("alpine-apk"))
+    .withExec(["apk", "add", "libarchive-tools"])
+    .withWorkdir("/work/src")
+    .withExec(["mkdir", "-p", "/work/out"])
+    .withMountedFile(fileName, file)
+    .withExec(args)
+    .directory("/work/out")
+}
+
+"""
+A GitHub release.
+"""
+type Releases {
+  let repository: String = null
+  let authHeader: Secret = null
+
+  new(repository: String = null, authHeader: Secret = null) {
+    self.repository = repository
+    self.authHeader = authHeader
+
+    self
+  }
+
+  """
+  Get the latest, non-draft, non-prerelease release.
+  """
+  pub latest(
+    """
+    GitHub repository in owner/name form.
+    """
+    repository: String = self.repository,
+  ): Release! {
+    self.get("latest", repository)
+  }
+
+  """
+  Get a GitHub release by version. Use "latest" or an empty string for the latest release.
+  """
+  pub get(
+    """
+    Release tag, or "latest" (or empty) for latest, non-draft, non-prerelease release.
+    """
+    version: String = null,
+    """
+    GitHub repository in owner/name form.
+    """
+    repository: String = self.repository,
+  ): Release! {
+    fromJSON(Dagger.http(
+      apiUrl(resolveRepository(repository), version),
+      "release.json",
+      authHeader: authHeader,
+    ).contents) :: Release!
+  }
+
+  let apiUrl(repository: String!, version: String): String! {
+    let base = "https://api.github.com/repos/" + repository + "/releases"
+
+    if (version == null or version == "latest" or version == "") {
+      base + "/latest"
+    } else {
+      base + "/tags/" + version
+    }
+  }
+}
+
+"""
+A GitHub release.
+"""
+type Release {
+  pub url: String!
+
+  let html_url: String!
+
+  pub htmlUrl: String! { self.html_url }
+
+  let tarball_url: String!
+
+  pub tarballUrl: String! { self.tarball_url }
+
+  let zipball_url: String!
+
+  pub zipballUrl: String! { self.zipball_url }
+
+  let tag_name: String!
+
+  pub tagName: String! { self.tag_name }
+
+  pub name: String!
+  pub body: String!
+  pub draft: Boolean!
+  pub prerelease: Boolean!
+  pub immutable: Boolean!
+  pub assets: [ReleaseAsset!]!
+
+  """
+  Returns the asset with the given name, or null if no such asset exists.
+  """
+  pub asset(name: String!): ReleaseAsset {
+    self.assets.filter { asset => asset.name == name }[0]
+  }
+}
+
+"""
+A resolved GitHub release asset.
+"""
+type ReleaseAsset {
+  pub name: String!
+  pub label: String!
+
+  let content_type: String!
+
+  pub contentType: String! { self.content_type }
+
+  pub size: Int!
+
+  pub digest: String!
+
+  let browser_download_url: String!
+
+  pub downloadUrl: String! {
+    self.browser_download_url
+  }
+
+  """
+  Downloaded asset file with GitHub's asset digest enforced by Dagger.
+  """
+  pub file: File! {
+    Dagger.http(
+      url: self.downloadUrl,
+      name: self.name,
+      checksum: self.digest,
+    )
+  }
+
+  """
+  Downloaded and extracted asset file.
+  """
+  pub extracted(stripComponents: Int = null): Directory! {
+    extractFile(self.file, stripComponents)
+  }
+}

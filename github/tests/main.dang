@@ -1,0 +1,51 @@
+type Tests {
+  pub resolveRepo: RepoResolutionTests! { RepoResolutionTests }
+
+  pub releases: ReleasesTests! { ReleasesTests }
+}
+
+type RepoResolutionTests {
+  """
+  Default repository resolves correctly.
+  """
+  pub default: String! @check {
+    assert { Dagger.github("kubernetes/kubernetes").releases.get.url.contains("kubernetes/kubernetes") }
+  }
+
+  """
+  Level override resolves correctly.
+  """
+  pub levelOverride: String! @check {
+    assert { Dagger.github("kubernetes/kubernetes").releases("dagger/dagger").get.url.contains("dagger/dagger") }
+  }
+
+  """
+  Call override resolves correctly.
+  """
+  pub callOverride: String! @check {
+    assert { Dagger.github("kubernetes/kubernetes").releases("dagger/dagger").get(repository: "rust-lang/rust").url.contains("rust-lang/rust") }
+  }
+}
+
+type ReleasesTests {
+  """
+  Release can be fetched by tag.
+  """
+  pub getDefaults: String! @check {
+    Dagger.github.releases("kubernetes/kubernetes").get("v1.36.1").name
+  }
+
+  """
+  Get with default parameters returns the latest release.
+  """
+  pub getDefaults: String! @check {
+    Dagger.github.releases("kubernetes/kubernetes").get.name
+  }
+
+  """
+  Latest release can be fetched.
+  """
+  pub latest: String! @check {
+    Dagger.github.releases("kubernetes/kubernetes").get.name
+  }
+}

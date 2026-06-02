@@ -1,0 +1,3 @@
+[["version","1"]]
+["","git.head",["https://github.com/dagger/sdk-sdk"],"d1532df4f7d322a7bdab02487accde9d21bbb464","float"]
+["","modules.resolve",["github.com/dagger/dang-sdk@572b0c5dbbe8b6a28beef7535161217ebef5086c"],"572b0c5dbbe8b6a28beef7535161217ebef5086c","float"]

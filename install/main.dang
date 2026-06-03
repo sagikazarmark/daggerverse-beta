@@ -1,0 +1,48 @@
+type Install {
+
+}
+
+interface Downloader {
+  pub download(platform: Platform!): File!
+}
+
+type GitHubReleaseDownloader implements Downloader {
+  let repository: String!
+  let fileName: String!
+
+  let versionResolver: VersionResolver
+
+  new(
+    repository: String!,
+    fileName: String!,
+    versionResolver: VersionResolver = null,
+  ) {
+    self.repository = repository
+    self.fileName = fileName
+
+    self.versionResolver = versionResolver
+
+    self
+  }
+
+  pub download(
+    version: String = null,
+    platform: Platform! = Dagger.defaultPlatform,
+  ): File! {
+    let file = Dagger.github.release(version, repository: repository).asset(fileName).file
+
+    if (file == null) {
+      raise "no such asset: " + fileName
+    }
+
+    file
+  }
+}
+
+interface VersionResolver {
+  pub resolve(version: String): String!
+}
+
+interface FileNameResolver {
+  pub resolve(template: String!, version: String!): String!
+}

@@ -1,0 +1,9 @@
+type Tests {
+
+}
+
+type TestVersionResolver implements InstallVersionResolver {
+  pub resolve(version: String): String! {
+    "foo"
+  }
+}

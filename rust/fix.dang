@@ -1,0 +1,30 @@
+type Fix {
+  let parent: Rust!
+
+  let exec(args: [String!]!): Changeset! {
+    parent
+      .container
+      .withExec(args)
+      .directory("/work/src")
+      .changes(parent.source)
+  }
+
+  """
+  Format the codebase using cargo fmt.
+  """
+  pub fmt: Changeset! @generate {
+    self.exec(["cargo", "fmt"])
+  }
+
+  """
+  Run clippy and fix any warnings.
+  """
+  pub clippy: Changeset! @generate {
+    self
+      .exec([
+        "cargo", "clippy", "--fix",
+        "--allow-dirty", "--allow-staged", "--allow-no-vcs", "--all-targets",
+        "--", "-D", "warnings",
+      ])
+  }
+}

@@ -191,7 +191,16 @@ type ReleaseAsset {
   """
   Downloaded and extracted asset file.
   """
-  pub extracted(stripComponents: Int = null): Directory! {
+  pub extracted(
+    """
+    If stripParent is true, the parent directory will be stripped from the extracted file.
+    """
+    stripParent: Boolean! = false,
+    """
+    Number of components to strip from the extracted file.
+    """
+    stripComponents: Int = if (stripParent) { 1 } else { null },
+  ): Directory! {
     extractFile(self.file, stripComponents)
   }
 }

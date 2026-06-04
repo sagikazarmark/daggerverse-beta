@@ -1,0 +1,215 @@
+type Wrangler {
+  pub baseContainer: Container!
+
+  new(
+    """
+    Wrangler version to install.
+    """
+    version: String = null,
+    """
+    Environment to use for operations, and for selecting .env and .dev.vars files.
+    """
+    env: String = null,
+    """
+    Account ID for the Cloudflare account.
+    """
+    accountId: String = null,
+    """
+    API token for your Cloudflare account.
+    """
+    apiToken: Secret = null,
+    """
+    Log level to use for Wrangler operations.
+    """
+    logLevel: LogLevel = null,
+    """
+    Docker socket used for local development of Containers.
+
+    Takes precedence over Docker host.
+    """
+    dockerSocket: Socket = null,
+    """
+    Docker host used for local development of Containers.
+
+    Mutually exclusive with Docker socket.
+    """
+    dockerHost: String = null,
+    """
+    Custom HTTPS key when running wrangler dev.
+    """
+    defaultHttpsKey: File = null,
+    """
+    Custom HTTPS certificate when running wrangler dev.
+    """
+    defaultHttpsCert: File = null,
+    """
+    Node version (image tag) to use from the official image repository as a base container.
+    """
+    nodeVersion: String! = "lts-slim",
+    """
+    Esbuild version to use for bundling.
+    """
+    esbuildVersion: String = null,
+    """
+    Custom container to use as a Node base container.
+    """
+    container: Container! = Dagger.container.from("node:" + nodeVersion),
+  ) {
+    container = container
+      .withEnvVariable("HOME", "/root")
+      .withMountedCache("/var/cache/apt/archives", Dagger.cacheVolume("debian-apt-archives"))
+      .withEnvVariable("DEBIAN_FRONTEND", "noninteractive")
+      .withExec(["apt-get", "update"])
+      .withExec(["apt-get", "install", "-y", "--no-install-recommends", "ca-certificates"])
+      .withMountedCache("${HOME}/.npm", Dagger.cacheVolume("npm"), expand: true)
+      .withExec(["npm", "install", "-g", pkg("wrangler", version), pkg("esbuild", esbuildVersion)])
+      .withEnvVariable("WRANGLER_SEND_METRICS", "false")
+      .withEnvVariable("WRANGLER_SEND_ERROR_REPORTS", "false")
+      .withEnvVariable("WRANGLER_CACHE_DIR", "${HOME}/.cache/wrangler", expand: true)
+      .withMountedCache("$WRANGLER_CACHE_DIR", Dagger.cacheVolume("wrangler"), expand: true)
+      .withEnvVariable("MINIFLARE_CACHE_DIR", "${HOME}/.cache/miniflare", expand: true)
+      .withMountedCache(
+        "$MINIFLARE_CACHE_DIR",
+        Dagger.cacheVolume("miniflare"),
+        expand: true,
+      )
+
+    container = prepContainer(container, env, accountId, apiToken, logLevel)
+
+    if (dockerSocket != null) {
+      container = container
+        .withUnixSocket("/var/run/docker.sock", dockerSocket)
+        .withEnvVariable("DOCKER_HOST", "unix:///var/run/docker.sock")
+    } else if (dockerHost != null) {
+      container = container.withEnvVariable("DOCKER_HOST", dockerHost)
+    }
+
+    if (defaultHttpsKey != null) {
+      container = container
+        .withEnvVariable("WRANGLER_HTTPS_KEY_PATH", "${HOME}/.config/wrangler/https/key.pem")
+        .withMountedFile("$WRANGLER_HTTPS_KEY_PATH", defaultHttpsKey, expand: true)
+    }
+
+    if (defaultHttpsCert != null) {
+      container = container
+        .withEnvVariable("WRANGLER_HTTPS_CERT_PATH", "${HOME}/.config/wrangler/https/cert.pem")
+        .withMountedFile("$WRANGLER_HTTPS_CERT_PATH", defaultHttpsCert, expand: true)
+    }
+
+    container = container.withExec(["wrangler", "--version"])
+
+    self.baseContainer = container
+
+    self
+  }
+
+  let pkg(name: String!, version: String): String! {
+    if (version != null) {
+      return name + "@" + version
+    }
+
+    name
+  }
+
+  let prepContainer(
+    container: Container!,
+    env: String = null,
+    accountId: String = null,
+    apiToken: Secret = null,
+    logLevel: LogLevel = null,
+  ): Container! {
+    if (env != null) {
+      container = container.withEnvVariable("CLOUDFLARE_ENV", env)
+    }
+
+    if (accountId != null) {
+      container = container.withEnvVariable("CLOUDFLARE_ACCOUNT_ID", accountId)
+    }
+
+    if (apiToken != null) {
+      container = container.withSecretVariable("CLOUDFLARE_API_TOKEN", apiToken)
+    }
+
+    if (logLevel != null) {
+      container = container.withEnvVariable("WRANGLER_LOG", toString(logLevel).trim("\"").toLower)
+    }
+
+    container
+  }
+
+  """
+  A container that provides Wrangler for Cloudflare Workers.
+  """
+  pub container(
+    """
+    Environment to use for operations, and for selecting .env and .dev.vars files.
+    """
+    env: String = null,
+    """
+    Account ID for the Cloudflare account.
+    """
+    accountId: String = null,
+    """
+    API token for your Cloudflare account.
+    """
+    apiToken: Secret = null,
+    """
+    Log level to use for Wrangler operations.
+    """
+    logLevel: LogLevel = null,
+  ): Container! {
+    self.prepContainer(self.baseContainer, env, accountId, apiToken, logLevel)
+  }
+
+  """
+  Runs the Wrangler dev server locally.
+  """
+  pub dev(source: Directory!): Service! {
+    let args = ["wrangler", "dev", "--ip", "0.0.0.0", "--port", "8787", "--local"]
+
+    let container = self
+      .container
+      .withWorkdir("/work")
+      .withDirectory("/work", source)
+      .withExposedPort(8787)
+      .asService(args: args)
+  }
+
+  pub deploy(
+    """
+    Worker source to deploy.
+    """
+    source: Directory!,
+    """
+    Environment to use for operations, and for selecting .env and .dev.vars files.
+    """
+    env: String = null,
+    """
+    Account ID for the Cloudflare account.
+    """
+    accountId: String = null,
+    """
+    API token for your Cloudflare account.
+    """
+    apiToken: Secret = null,
+    """
+    Log level to use for Wrangler operations.
+    """
+    logLevel: LogLevel = null,
+  ): Container! @cache(policy: FunctionCachePolicy.Never) {
+    self
+      .container(env, accountId, apiToken, logLevel)
+      .withWorkdir("/work")
+      .withDirectory("/work", source)
+      .withExec(["wrangler", "deploy"])
+  }
+}
+
+enum LogLevel {
+  NONE
+  ERROR
+  WARN
+  INFO
+  LOG
+  DEBUG
+}

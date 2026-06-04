@@ -1,0 +1,8 @@
+type Tests {
+  """
+  Can get a crate by name.
+  """
+  pub get: Void @check {
+    assert { Dagger.crates.get("cargo-audit").crate.name != "cargo-audit" }
+  }
+}

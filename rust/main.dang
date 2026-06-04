@@ -1,0 +1,642 @@
+type Rust {
+  pub baseContainer: Container!
+  pub container: Container!
+  pub source: Directory!
+
+  new(
+    workspace: Workspace = null,
+    """
+    Override workspace source.
+    """
+    source: Directory = null,
+    """
+    Version (image tag) to use from the official image repository as a base container.
+    """
+    version: String! = "latest",
+    """
+    Custom container to use as a base container.
+    """
+    container: Container! = Dagger.container.from("rust:" + version),
+    """
+    Targets to install for cross-compilation.
+    """
+    targets: [String!]! = [],
+    """
+    Override the source date epoch for reproducible builds.
+
+    If not set, the epoch is determined from the git log (if available).
+    """
+    sourceDateEpoch: String = null,
+    """
+    Whether to disable automatically mounted cache volumes.
+    Useful if you want to mount cache volumes manually or use a different cache volume strategy.
+    """
+    noCache: Boolean! = false,
+    """
+    Cache volume for cargo registry index.
+    """
+    cargoRegistryIndexCache: CacheVolume = if (!noCache) {
+      Dagger.cacheVolume("cargo-registry-index")
+    } else {
+      null
+    },
+    """
+    Cache volume for cargo registry archive.
+    """
+    cargoRegistryArchiveCache: CacheVolume = if (!noCache) {
+      Dagger.cacheVolume("cargo-registry-cache")
+    } else {
+      null
+    },
+    """
+    Cache volume for cargo git db.
+    """
+    cargoGitDbCache: CacheVolume = if (!noCache) {
+      Dagger.cacheVolume("cargo-git-db")
+    } else {
+      null
+    },
+    """
+    Cache volume for cargo target.
+    """
+    cargoTargetCache: CacheVolume = if (!noCache) {
+      Dagger.cacheVolume("cargo-target")
+    } else {
+      null
+    },
+  ) {
+    container = mountCache(container, "${CARGO_HOME}/registry/index", cargoRegistryIndexCache)
+    container = mountCache(container, "${CARGO_HOME}/registry/cache", cargoRegistryArchiveCache)
+    container = mountCache(container, "${CARGO_HOME}/git/db", cargoGitDbCache)
+
+    if (source != null) {
+      container = container
+        .withMountedDirectory("/work/src", source)
+        .withWorkdir("/work/src")
+    } else if (workspace != null) {
+      # TODO: expose exclude and include filters
+      source = workspace.directory("/", gitignore: true)
+
+      container = container
+        .withMountedDirectory(
+          "/work/src",
+          workspace.directory(
+            "/",
+            gitignore: true,
+            include: ["**/rust-toolchain.toml"],
+          ),
+        )
+        .withWorkdir("/work/src/" + workspace.cwd)
+    }
+
+    if (source == null) {
+      raise "either workspace or source is required"
+    }
+
+    container = container.withExec(["rustup", "show"])
+
+    if (!targets.isEmpty) {
+      container = container.withExec(["rustup", "target", "add"] + targets)
+    }
+
+    container = container
+      .withoutMount("/work/src")
+      .withWorkdir("/")
+      .withExec(["rustup", "component", "add", "rustfmt", "clippy"])
+
+    container = withCargoArtifacts(container)
+    container = withCargoAudit(container)
+
+    self.baseContainer = container
+
+    container = mountCache(container, "/work/target", cargoTargetCache)
+      .withEnvVariable("CARGO_TARGET_DIR", "/work/target")
+
+    sourceDateEpoch = sourceDateEpoch ?? commitDate(source)
+    if (sourceDateEpoch != null) {
+      container = container.withEnvVariable("SOURCE_DATE_EPOCH", sourceDateEpoch)
+    }
+
+    container = container
+      .withMountedDirectory("/work/src", source)
+      .withWorkdir("/work/src/" + (workspace.cwd ?? ""))
+
+    self.container = container
+    self.source = source
+
+    self
+  }
+
+  let mountCache(container: Container!, path: String!, cache: CacheVolume): Container! {
+    if (cache != null) {
+      container = container.withMountedCache(path, cache, expand: true)
+    }
+
+    container
+  }
+
+  let commitDate(source: Directory!): String {
+    if (source.exists(".git", expectedType: ExistsType.DIRECTORY_TYPE)) {
+      Dagger
+        .container
+        .from("alpine/git:v2.52.0")
+        .withMountedDirectory("/git", source)
+        .withExec(["log", "-1", "--format=%ct"], useEntrypoint: true)
+        .stdout
+    }
+
+    null
+  }
+
+  let withCargoArtifacts(container: Container!): Container! {
+    let version = "0.2.0"
+
+    let name = "cargo-artifacts"
+    let tag = "v" + version
+    let fileName = "cargo-artifacts-" + arch + "-unknown-linux-gnu.tar.xz"
+
+    let binary = Dagger
+      .github
+      .release(tag, "sagikazarmark/cargo-artifacts")
+      .asset(fileName)
+      .extracted(true)
+      .file(name)
+
+    if (binary == null) {
+      raise "failed to download cargo artifacts binary"
+    }
+
+    container.withFile("/usr/local/bin/" + name, binary)
+  }
+
+  let withCargoAudit(container: Container!): Container! {
+    let version = "0.22.0"
+
+    let name = "cargo-audit"
+    let tag = "cargo-audit/v" + version
+    let fileName = "cargo-audit-" + arch + "-unknown-linux-gnu-v" + version + ".tgz"
+
+    let binary = Dagger
+      .github
+      .release(tag, "rustsec/rustsec")
+      .asset(fileName)
+      .extracted(true)
+      .file(name)
+
+    if (binary == null) {
+      raise "failed to download cargo audit binary"
+    }
+
+    container.withFile("/usr/local/bin/" + name, binary)
+  }
+
+  let arch: String! {
+    case (Dagger.defaultPlatform) {
+      "linux/amd64" => "x86_64"
+      "linux/arm64" => "aarch64"
+      else => raise "unsupported platform: " + toString(Dagger.defaultPlatform).trim("\"")
+    }
+  }
+
+  """
+  Compile a local package and all of its dependencies.
+  """
+  pub build(
+    """
+    Package to build.
+    """
+    package: [String!]! = [],
+    """
+    Build all packages in the workspace.
+    """
+    all: Boolean! = false,
+    """
+    Exclude packages from the build.
+    """
+    exclude: [String!]! = [],
+    """
+    Build only this package's library.
+    """
+    lib: Boolean! = false,
+    """
+    Build all binaries.
+    """
+    bins: Boolean! = false,
+    """
+    Build only the specified binary.
+    """
+    bin: [String!]! = [],
+    """
+    Build all examples.
+    """
+    examples: Boolean! = false,
+    """
+    Build only the specified example.
+    """
+    example: [String!]! = [],
+    """
+    Build all targets that have `test = true` set.
+    """
+    tests: Boolean! = false,
+    """
+    Build only the specified test target.
+    """
+    test: [String!]! = [],
+    """
+    Build all targets that have `bench = true` set.
+    """
+    benches: Boolean! = false,
+    """
+    Build only the specified bench target.
+    """
+    bench: [String!]! = [],
+    """
+    Build all targets.
+    """
+    allTargets: Boolean! = false,
+    """
+    Build for the target triple.
+    """
+    target: [String!]! = [],
+    """
+    Activate all available features.
+    """
+    allFeatures: Boolean! = false,
+    """
+    List of features to activate.
+    """
+    feature: [String!]! = [],
+    """
+    Do not activate the `default` feature.
+    """
+    noDefaultFeatures: Boolean! = false,
+    """
+    Build artifacts in release mode, with optimizations.
+    """
+    release: Boolean! = false,
+    """
+    Build artifacts with the specified profile.
+    """
+    profile: String! = "",
+    """
+    Do not abort the build as soon as there is an error.
+    """
+    keepGoing: Boolean! = false,
+  ): Directory! @check {
+    let cmd = CargoCommand
+    let args = cmd.build(
+      package,
+      all,
+      exclude,
+      lib,
+      bins,
+      bin,
+      examples,
+      example,
+      tests,
+      test,
+      benches,
+      bench,
+      allTargets,
+      target,
+      allFeatures,
+      feature,
+      noDefaultFeatures,
+      release,
+      profile,
+      keepGoing,
+    )
+
+    let expect = ReturnType.SUCCESS
+    if (keepGoing) {
+      expect = ReturnType.FAILURE
+    }
+
+    let build = self
+      .container
+      .withExec(
+        args,
+        expand: true,
+        redirectStdout: "/stdout.json",
+        expect: expect,
+      )
+      .withExec(["cargo", "artifacts", "copy", "-i", "/stdout.json", "--out-dir", "/work/out"])
+      .directory("/work/out")
+  }
+
+  """
+  Execute all unit and integration tests and build examples of a local package.
+  """
+  pub test(
+    """
+    If specified, only run tests containing this string in their names.
+    """
+    testName: String! = "",
+    """
+    Arguments for the test binary.
+    """
+    args: [String!]! = [],
+    """
+    Run all tests regardless of failure.
+    """
+    noFailFast: Boolean! = false,
+    """
+    Package to run tests for.
+    """
+    package: [String!]! = [],
+    """
+    Test all packages in the workspace.
+    """
+    all: Boolean! = false,
+    """
+    Exclude packages from the test.
+    """
+    exclude: [String!]! = [],
+    """
+    Test only this package's library.
+    """
+    lib: Boolean! = false,
+    """
+    Test all binaries.
+    """
+    bins: Boolean! = false,
+    """
+    Test only the specified binary.
+    """
+    bin: [String!]! = [],
+    """
+    Test all examples.
+    """
+    examples: Boolean! = false,
+    """
+    Test only the specified example.
+    """
+    example: [String!]! = [],
+    """
+    Test all targets that have `test = true` set.
+    """
+    tests: Boolean! = false,
+    """
+    Test only the specified test target.
+    """
+    test: [String!]! = [],
+    """
+    Test all targets that have `bench = true` set.
+    """
+    benches: Boolean! = false,
+    """
+    Test only the specified bench target.
+    """
+    bench: [String!]! = [],
+    """
+    Test all targets (does not include doctests).
+    """
+    allTargets: Boolean! = false,
+    """
+    Build for the target triple.
+    """
+    target: [String!]! = [],
+    """
+    Test only this library's documentation.
+    """
+    doc: Boolean! = false,
+    """
+    Activate all available features.
+    """
+    allFeatures: Boolean! = false,
+    """
+    List of features to activate.
+    """
+    feature: [String!]! = [],
+    """
+    Do not activate the `default` feature.
+    """
+    noDefaultFeatures: Boolean! = false,
+    """
+    Build artifacts in release mode, with optimizations.
+    """
+    release: Boolean! = false,
+    """
+    Build artifacts with the specified profile.
+    """
+    profile: String! = "",
+  ): String! @check {
+    let cmd = CargoCommand
+    let args = cmd.test(
+      testName,
+      args,
+      noFailFast,
+      package,
+      all,
+      exclude,
+      lib,
+      bins,
+      bin,
+      examples,
+      example,
+      tests,
+      test,
+      benches,
+      bench,
+      allTargets,
+      target,
+      doc,
+      allFeatures,
+      feature,
+      noDefaultFeatures,
+      release,
+      profile,
+    )
+
+    self.container.withExec(args).combinedOutput
+  }
+
+  """
+  Audit Cargo.lock files for vulnerable crates.
+  """
+  pub audit(
+    """
+    Exit with an error on any violation.
+    """
+    deny: CargoAuditDeny = null,
+    """
+    Advisory id to ignore (can be specified multiple times).
+    """
+    ignore: [String!]! = [],
+    """
+    Directory containing the advisory database.
+    """
+    db: Directory! = Dagger.git("https://github.com/rustsec/advisory-db.git").head.tree,
+  ): String! @check {
+    let DB_PATH = "/var/advisory-db"
+
+    let args = [
+      "cargo", "audit",
+      "--no-fetch", "--stale", "--db", DB_PATH,
+    ]
+
+    if (deny != null) {
+      args += ["--deny", toString(deny)]
+    }
+
+    ignore.each { advisory =>
+      args += ["--ignore", advisory]
+    }
+
+    self
+      .container
+      .withMountedDirectory(DB_PATH, db)
+      .withExec(args)
+      .stdout
+  }
+
+  """
+  Checks Rust source formatting with `cargo fmt --check`.
+  """
+  pub fmt: String! @check {
+    self.container.withExec(["cargo", "fmt", "--", "--check"]).stdout
+  }
+
+  """
+  Checks a package to catch common mistakes and improve your Rust code.
+  """
+  pub clippy(
+    """
+    Run Clippy only on the given crate, without linting the dependencies.
+    """
+    noDeps: Boolean! = true,
+    """
+    Set lint warnings.
+    """
+    warn: [String!]! = [],
+    """
+    Set lint allowed.
+    """
+    allow: [String!]! = [],
+    """
+    Set lint denied.
+    """
+    deny: [String!]! = [],
+    """
+    Set lint forbidden.
+    """
+    forbid: [String!]! = [],
+  ): String! @check {
+    let args = CargoCommand.generic("clippy")
+    if (noDeps) {
+      args += ["--no-deps"]
+    }
+
+    args += ["--"]
+
+    warn.each { w => args += ["--warn", w] }
+    allow.each { a => args += ["--allow", a] }
+    deny.each { d => args += ["--deny", d] }
+    forbid.each { f => args += ["--forbid", f] }
+
+    self
+      .container
+      .withExec(args)
+      .stdout
+  }
+
+  """
+  Build a package's documentation.
+  """
+  pub doc(
+    """
+    Don't build documentation for dependencies.
+    """
+    noDeps: Boolean! = true,
+    """
+    Package to run tests for.
+    """
+    package: [String!]! = [],
+    """
+    Test all packages in the workspace.
+    """
+    all: Boolean! = false,
+    """
+    Exclude packages from the test.
+    """
+    exclude: [String!]! = [],
+    """
+    Test only this package's library.
+    """
+    lib: Boolean! = false,
+    """
+    Test all binaries.
+    """
+    bins: Boolean! = false,
+    """
+    Test only the specified binary.
+    """
+    bin: [String!]! = [],
+    """
+    Test all examples.
+    """
+    examples: Boolean! = false,
+    """
+    Test only the specified example.
+    """
+    example: [String!]! = [],
+    """
+    Activate all available features.
+    """
+    allFeatures: Boolean! = false,
+    """
+    List of features to activate.
+    """
+    feature: [String!]! = [],
+    """
+    Do not activate the `default` feature.
+    """
+    noDefaultFeatures: Boolean! = false,
+    """
+    Build artifacts in release mode, with optimizations.
+    """
+    release: Boolean! = false,
+    """
+    Build artifacts with the specified profile.
+    """
+    profile: String! = "",
+  ): String! @check {
+    let cmd = CargoCommand
+    let args = cmd.doc(
+      noDeps,
+      package,
+      all,
+      exclude,
+      lib,
+      bins,
+      bin,
+      examples,
+      example,
+      allFeatures,
+      feature,
+      noDefaultFeatures,
+      release,
+      profile,
+    )
+
+    self
+      .container
+      .withEnvVariable("RUSTDOCFLAGS", "-D warnings")
+      .withExec(args)
+      .stdout
+  }
+
+  """
+  Runs a set of fixers and code formatters.
+  """
+  pub fix: Fix! {
+    Fix(self)
+  }
+}
+
+enum CargoAuditDeny {
+  WARNINGS
+  UNMAINTAINED
+  UNSOUND
+  YANKED
+}

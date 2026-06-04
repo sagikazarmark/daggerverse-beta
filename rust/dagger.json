@@ -1,0 +1,18 @@
+{
+  "name": "rust",
+  "engineVersion": "v1.0.0-beta.2",
+  "sdk": {
+    "source": "dang"
+  },
+  "include": ["!tests"],
+  "dependencies": [
+    {
+      "name": "crates",
+      "source": "../crates"
+    },
+    {
+      "name": "github",
+      "source": "../github"
+    }
+  ]
+}

@@ -1,0 +1,29 @@
+let RUST_VERSION = "1.96-slim-trixie"
+
+type Tests {
+  let source: Directory! {
+    Dagger
+      .git("https://github.com/sagikazarmark/cargo-artifacts.git")
+      .head
+      .tree
+  }
+
+  let rust: Rust! {
+    Dagger.rust(
+      source: source,
+      version: RUST_VERSION,
+    )
+  }
+
+  pub build: Directory! @check {
+    rust.build
+  }
+
+  pub test: String! @check {
+    rust.test
+  }
+
+  pub clippy: String! @check {
+    rust.clippy
+  }
+}

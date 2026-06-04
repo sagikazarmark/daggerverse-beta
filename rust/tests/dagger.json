@@ -1,0 +1,13 @@
+{
+  "name": "tests",
+  "engineVersion": "v1.0.0-beta.2",
+  "sdk": {
+    "source": "dang"
+  },
+  "dependencies": [
+    {
+      "name": "rust",
+      "source": ".."
+    }
+  ]
+}

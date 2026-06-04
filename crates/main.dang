@@ -1,0 +1,53 @@
+type Crates {
+  """
+  The URL of the registry.
+  """
+  pub registry: String! = "https://crates.io"
+
+  """
+  Get a crate from the registry.
+  """
+  pub get(name: String!): Crate! {
+    let path = "/api/v1/crates/" + name
+
+    fromJSON(self.http(path).contents) :: Crate!
+  }
+
+  let http(path: String!): File! {
+    Dagger.http(self.url(path))
+  }
+
+  let url(path: String!): String! {
+    self.registry.trimSuffix("/") + "/" + path.trimPrefix("/")
+  }
+}
+
+type Crate {
+  pub crate: CrateDetails!
+}
+
+type CrateDetails {
+  pub name: String!
+
+  let default_version: String!
+
+  pub defaultVersion: String! { self.default_version }
+
+  pub yanked: Boolean!
+
+  let max_version: String!
+
+  pub maxVersion: String! { self.max_version }
+
+  let newest_version: String!
+
+  pub newestVersion: String! { self.newest_version }
+
+  let max_stable_version: String!
+
+  pub maxStableVersion: String! { self.max_stable_version }
+
+  pub description: String
+  pub homepage: String
+  pub repository: String
+}

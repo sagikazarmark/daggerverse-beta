@@ -4,5 +4,11 @@ source = "github.com/dagger/dang-sdk@572b0c5dbbe8b6a28beef7535161217ebef5086c"
 # Marker filename that skips generate when found at or above a Dang SDK module root.
 # settings.skipGenerateFilename = ""
 
+[modules.crates-tests]
+source = "../crates/tests"
+
 [modules.github-tests]
 source = "../github/tests"
+
+[modules.rust-tests]
+source = "../rust/tests"

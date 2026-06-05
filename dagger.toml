@@ -13,6 +13,9 @@ source = "distro/tests"
 [modules.github-tests]
 source = "github/tests"
 
+[modules.minisign-tests]
+source = "minisign/tests"
+
 [modules.rust-tests]
 source = "rust/tests"
 

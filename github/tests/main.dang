@@ -46,6 +46,6 @@ type ReleasesTests {
   Latest release can be fetched.
   """
   pub latest: String! @check {
-    Dagger.github.releases("kubernetes/kubernetes").get.name
+    Dagger.github.releases("kubernetes/kubernetes").latest.name
   }
 }

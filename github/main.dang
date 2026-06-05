@@ -53,7 +53,6 @@ let extractFile(file: File!, stripComponents: Int = null): Directory! {
   Dagger
     .container
     .from("alpine:3.23.4")
-    .withMountedCache("/var/cache/apk", Dagger.cacheVolume("alpine-apk"))
     .withExec(["apk", "add", "libarchive-tools"])
     .withWorkdir("/work/src")
     .withExec(["mkdir", "-p", "/work/out"])
@@ -85,7 +84,7 @@ type Releases {
     """
     repository: String = self.repository,
   ): Release! {
-    self.get("latest", repository)
+    self.get(repository: repository)
   }
 
   """
@@ -111,7 +110,7 @@ type Releases {
   let apiUrl(repository: String!, version: String): String! {
     let base = "https://api.github.com/repos/" + repository + "/releases"
 
-    if (version == null or version == "latest" or version == "") {
+    if (version == null or version == "") {
       base + "/latest"
     } else {
       base + "/tags/" + version
@@ -161,7 +160,7 @@ A resolved GitHub release asset.
 """
 type ReleaseAsset {
   pub name: String!
-  pub label: String!
+  pub label: String
 
   let content_type: String!
 
@@ -169,7 +168,7 @@ type ReleaseAsset {
 
   pub size: Int!
 
-  pub digest: String!
+  pub digest: String
 
   let browser_download_url: String!
 

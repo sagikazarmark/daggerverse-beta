@@ -26,6 +26,7 @@ jobs:
           - php-dist
           - rust
           - wrangler
+          - zig-dist
 
     steps:
       - name: Checkout repository

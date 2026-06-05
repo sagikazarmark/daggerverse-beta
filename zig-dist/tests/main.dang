@@ -1,0 +1,44 @@
+let VERSION = "0.16.0"
+
+type Tests {
+  """
+  Download tests.
+  """
+  pub download: DownloadTests! { DownloadTests }
+
+  """
+  Install tests.
+  """
+  pub install: InstallTests! { InstallTests }
+}
+
+type DownloadTests {
+  """
+  Verifies that the default-platform Zig archive can be downloaded and extracted.
+  """
+  pub defaultPlatform: Void @check {
+    let directory = zigDist(VERSION).download
+
+    assert { directory.exists("/zig") }
+  }
+}
+
+type InstallTests {
+  """
+  Verifies that Zig can be installed into a container and executed through the symlink.
+  """
+  pub default: Container! @check {
+    zigDist(VERSION)
+      .install
+      .withExec(["zig", "version"])
+  }
+
+  """
+  Verifies that Zig can be installed into a container and executed through the symlink.
+  """
+  pub container: Container! @check {
+    zigDist(VERSION)
+      .install(Dagger.container.from("debian:trixie-slim"))
+      .withExec(["zig", "version"])
+  }
+}

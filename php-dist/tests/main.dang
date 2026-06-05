@@ -1,0 +1,99 @@
+let VERSION = "8"
+
+type Tests {
+  pub release: ReleaseTests! { ReleaseTests }
+
+  pub build: BuildTests! { BuildTests }
+}
+
+type ReleaseTests {
+  let release: PhpDistRelease! {
+    phpDist.release(VERSION)
+  }
+
+  """
+  The source's resolved version matches the requested version.
+  """
+  pub version: Void @check {
+    assert { release.version.hasPrefix(VERSION) }
+  }
+
+  """
+  The source code archive can be downloaded.
+  """
+  pub download: File! @check {
+    release.file
+  }
+
+  """
+  The source code archive can be extracted.
+  """
+  pub extract: Directory! @check {
+    release.directory
+  }
+}
+
+type BuildTests {
+  let builder: PhpDistBuilder! {
+    phpDist.fromVersion(VERSION)
+  }
+
+  """
+  The build returns a valid container.
+  """
+  pub base: Container! @check {
+    self.builder.container
+  }
+
+  """
+  The build configures and compiles with the default configuration.
+  """
+  pub defaults: Directory! @check {
+    let build = self.builder.build
+
+    assert { build.config.prefix == "/usr/local" }
+
+    build.rootfs
+  }
+
+  """
+  The build accepts empty configuration.
+  """
+  pub configured: Container! @check {
+    self.builder.configure.build.container
+  }
+
+  pub components: Directory! @check {
+    self
+      .builder
+      .build([PhpDistComponent.HEADERS, PhpDistComponent.PROGRAMS])
+      .rootfs
+  }
+
+  """
+  The build preserves a custom prefix.
+  """
+  pub prefix: Void @check {
+    let build = self.builder.configure(["--prefix", "/opt/php"]).build
+
+    assert { build.config.prefix == "/opt/php" }
+    assert { build.rootfs.exists("/opt/php/bin/php") }
+  }
+
+  """
+  The compile output can be merged at the filesystem root.
+  """
+  pub merge: Container! @check {
+    let deps = ["libxml2", "sqlite3"]
+
+    Dagger
+      .container
+      .from("debian:trixie-slim")
+      .withEnvVariable("DEBIAN_FRONTEND", "noninteractive")
+      .withExec(["apt-get", "update"])
+      .withExec(["apt-get", "install", "-y"] + deps)
+      .withDirectory("/", self.builder.build.rootfs)
+      .withExec(["php", "--version"])
+      .withExec(["php", "--modules"])
+  }
+}

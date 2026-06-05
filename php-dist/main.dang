@@ -1,0 +1,51 @@
+type PhpDist {
+  """
+  Get release information for the given PHP version from the official PHP website.
+  """
+  pub release(
+    """
+    PHP version.
+
+    Can be a major version (e.g. "8"), a minor version (e.g. "8.3"), or a specific version (e.g. "8.3.0").
+    """
+    version: String!,
+  ): Release! {
+    let url = "https://www.php.net/releases/index.php?json&version=" + version
+
+    fromJSON(Dagger.http(url).contents) :: Release!
+  }
+
+  """
+  Build PHP from a given version.
+  """
+  pub fromVersion(
+    """
+    The PHP version to build.
+
+    Can be a major version (e.g. "8"), a minor version (e.g. "8.3"), or a specific version (e.g. "8.3.0").
+    """
+    version: String!,
+    """
+    Container to use for building PHP.
+    """
+    container: Container! = defaultBuildContainer,
+  ): Builder! {
+    Builder(self.release(version).directory, container)
+  }
+
+  """
+  Build PHP from a given source directory.
+  """
+  pub fromSource(
+    """
+    The PHP source directory.
+    """
+    source: Directory!,
+    """
+    Container to use for building PHP.
+    """
+    container: Container! = defaultBuildContainer,
+  ): Builder! {
+    Builder(source, container)
+  }
+}

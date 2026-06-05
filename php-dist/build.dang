@@ -1,0 +1,300 @@
+type Builder {
+  """
+  The container used for building PHP.
+
+  Source code is available under `/usr/local/src/php`.
+  """
+  pub container: Container!
+
+  """
+  The PHP source directory.
+  """
+  pub source: Directory! {
+    self.container.directory("/usr/local/src/php")
+  }
+
+  let configured = false
+
+  """
+  The PHP installation prefix used during configure.
+  """
+  pub prefix: String! = "/usr/local"
+
+  """
+  Arguments passed to `configure`.
+  """
+  pub configureArgs: [String!]! = []
+
+  new(source: Directory!, container: Container!) {
+    self.container = container
+      .withWorkdir("/usr/local/src/php")
+      .withMountedDirectory(".", source)
+
+    self
+  }
+
+  """
+  Generate the configure script and required files.
+
+  Requires autoconf and autoheader to be present in the build container.
+  """
+  pub buildconf(
+    """
+    Regenerate configure files.
+    """
+    force: Boolean! = false,
+  ): Builder! {
+    let args = ["./buildconf"]
+    if (force) {
+      args += ["--force"]
+    }
+
+    self.container = self.container.withExec(args)
+
+    self
+  }
+
+  let ensureBuildconf: Builder! {
+    let buildconfRan = ["configure", "main/php_config.h.in"].all { file =>
+      self.container.exists(file, expectedType: ExistsType.REGULAR_TYPE)
+    }
+
+    if (!buildconfRan) {
+      return self.buildconf
+    }
+
+    self
+  }
+
+  """
+  Generate the configure files.
+  """
+  pub configure(
+    """
+    Arguments to pass to `configure`.
+    """
+    args: [String!]! = [],
+  ): Builder! {
+    self.configured = true
+
+    self.container = self
+      .ensureBuildconf
+      .container
+      .withExec(["./configure"] + args)
+      .withExec(["chmod", "+x", "scripts/php-config"])
+
+    self
+  }
+
+  let ensureConfigured: Builder! {
+    if (!self.configured) {
+      return self.configure
+    }
+
+    self
+  }
+
+  """
+  PHP API version.
+  """
+  pub apiVersion: String! {
+    # TODO: use file.search instead
+    # ^#define PHP_API_VERSION (\d+)$
+    self
+      .ensureConfigured
+      .container
+      .withExec([
+        "sh", "-c",
+        "grep -E '^#define PHP_API_VERSION ' main/php.h | awk '{print $3}'",
+      ])
+      .stdout
+      .trimSpace
+  }
+
+  """
+  Call `php-config` to get PHP build configuration.
+  """
+  pub config: BuildConfig! {
+    BuildConfig(self.ensureConfigured.container)
+  }
+
+  """
+  Compile PHP and return staged installation artifacts.
+
+  The returned directory is a filesystem root. Files are installed below the
+  configured prefix path so callers can merge it into another container at `/`.
+  """
+  pub build(components: [Component!]! = [Component.ALL]): Build! {
+    let output = "/var/php-build"
+
+    let container = self.ensureConfigured.container.withExec(["mkdir", "-p", output])
+
+    let args = ["make", "INSTALL_ROOT=" + output]
+
+    if (components.contains(Component.ALL)) {
+      container = container
+        .withExec(["make"])
+        .withExec(args + ["install"])
+    } else {
+      components.uniq.each { comp =>
+        container = container.withExec(args + ["install-" + toString(comp).trim("\"").toLower])
+      }
+    }
+
+    Build(
+      container: container,
+      rootfs: container.directory(output),
+      config: BuildConfig(container),
+    )
+  }
+
+  """
+  Installs PHP into the provided container.
+  """
+  pub install(
+    """
+    The container to install PHP into.
+    """
+    container: Container! = self.container,
+    components: [Component!]! = [Component.ALL],
+  ): Container! {
+    self.build(components).install(container)
+  }
+}
+
+"""
+Compiled PHP installation artifacts.
+"""
+type Build {
+  """
+  The container used to compile PHP.
+  """
+  pub container: Container!
+
+  """
+  Filesystem root containing installed files below their configured prefix path.
+  """
+  pub rootfs: Directory!
+
+  """
+  The PHP configuration used during build.
+  """
+  pub config: BuildConfig!
+
+  """
+  Installs PHP into the provided container.
+  """
+  pub install(
+    """
+    The container to install PHP into.
+    """
+    container: Container! = self.container,
+  ): Container! {
+    container.withDirectory("/", self.rootfs)
+  }
+}
+
+type BuildConfig {
+  let container: Container!
+
+  """
+  The PHP installation prefix used during configure.
+  """
+  pub prefix: String! {
+    self.raw("prefix")
+  }
+
+  pub includes: [String!]! {
+    self.raw("includes").split(" ")
+  }
+
+  pub ldflags: [String!]! {
+    self.raw("ldflags").split(" ")
+  }
+
+  pub libs: [String!]! {
+    self.raw("libs").split(" ")
+  }
+
+  pub extensionDir: String! {
+    self.raw("extension-dir")
+  }
+
+  pub includeDir: String! {
+    self.raw("include-dir")
+  }
+
+  pub libDir: String! {
+    self.raw("lib-dir")
+  }
+
+  pub libEmbed: String! {
+    self.raw("lib-embed")
+  }
+
+  pub manDir: String! {
+    self.raw("man-dir")
+  }
+
+  pub phpBinary: String! {
+    self.raw("php-binary")
+  }
+
+  pub phpSapis: [String!]! {
+    self.raw("php-sapis").split(" ")
+  }
+
+  pub iniPath: String! {
+    self.raw("ini-path")
+  }
+
+  pub iniDir: String! {
+    self.raw("ini-dir")
+  }
+
+  pub configureOptions: [String!]! {
+    self.raw("configure-options").split(" ")
+  }
+
+  pub version: String! {
+    self.raw("version")
+  }
+
+  pub vernum: String! {
+    self.raw("vernum")
+  }
+
+  """
+  Returns the raw output of the php-config command for the given option.
+  """
+  pub raw(option: String!): String! {
+    self
+      .container
+      .withExec(["./scripts/php-config", "--" + option])
+      .stdout
+      .trimSpace
+  }
+}
+
+enum Component {
+  ALL
+  HEADERS
+  PROGRAMS
+}
+
+let defaultBuildContainer: Container! {
+  let deps = []
+
+  # Build dependencies
+  deps += ["build-essential", "autoconf", "bison", "re2c", "pkg-config"]
+
+  # Dependencies for default-enabled extensions
+  deps += ["libxml2-dev", "libsqlite3-dev"]
+
+  Dagger
+    .container
+    .from("debian:trixie-slim")
+    .withEnvVariable("DEBIAN_FRONTEND", "noninteractive")
+    .withExec(["apt-get", "update"])
+    .withExec(["apt-get", "install", "-y"] + deps)
+}

@@ -1,0 +1,104 @@
+"""
+PHP release information.
+"""
+type Release {
+  """
+  PHP version.
+  """
+  pub version: String!
+
+  let supported_versions: [String!]!
+
+  """
+  List of supported minor PHP versions.
+  """
+  pub supportedVersions: [String!]! { supported_versions }
+
+  """
+  Source code archives.
+  """
+  pub source: [Source!]!
+
+  """
+  Release date.
+  """
+  pub date: String!
+
+  let _source: Source! {
+    let source = self.source[0]
+
+    if (source == null) {
+      raise "source is null"
+    }
+
+    source
+  }
+
+  """
+  The downloaded source code archive.
+  """
+  pub file: File! {
+    self._source.file
+  }
+
+  """
+  The downloaded and extracted PHP source code.
+  """
+  pub directory: Directory! {
+    self._source.directory
+  }
+}
+
+"""
+Source code archive information.
+"""
+type Source {
+  """
+  Filename of the source code archive.
+  """
+  pub filename: String!
+
+  """
+  Name of the source file.
+  """
+  pub name: String!
+
+  """
+  SHA256 checksum of the source code archive.
+  """
+  pub sha256: String!
+
+  """
+  Release date of the source code archive.
+  """
+  pub date: String!
+
+  """
+  The download URL of the source code archive.
+  """
+  pub url: String! {
+    "https://www.php.net/distributions/" + self.filename
+  }
+
+  """
+  The downloaded source code archive.
+  """
+  pub file: File! {
+    Dagger.http(self.url, checksum: "sha256:" + self.sha256)
+  }
+
+  """
+  The downloaded and extracted PHP source code.
+  """
+  pub directory: Directory! {
+    Dagger
+      .container
+      .from("alpine:3.23.4")
+      .withExec(["apk", "add", "libarchive-tools"])
+      .withWorkdir("/work")
+      .withExec(["mkdir", "-p", "php-src"])
+      .withMountedFile(filename, file)
+      .withExec(["bsdtar", "-xf", filename, "-C", "php-src", "--strip-components", "1"])
+      .directory("php-src")
+  }
+}

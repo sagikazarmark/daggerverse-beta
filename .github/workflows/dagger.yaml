@@ -23,6 +23,7 @@ jobs:
           - distro
           - github
           - minisign
+          - php-dist
           - rust
           - wrangler
 

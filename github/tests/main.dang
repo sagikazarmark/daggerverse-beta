@@ -8,21 +8,21 @@ type RepoResolutionTests {
   """
   Default repository resolves correctly.
   """
-  pub default: String! @check {
+  pub default: Void @check {
     assert { Dagger.github("kubernetes/kubernetes").releases.get.url.contains("kubernetes/kubernetes") }
   }
 
   """
   Level override resolves correctly.
   """
-  pub levelOverride: String! @check {
+  pub levelOverride: Void @check {
     assert { Dagger.github("kubernetes/kubernetes").releases("dagger/dagger").get.url.contains("dagger/dagger") }
   }
 
   """
   Call override resolves correctly.
   """
-  pub callOverride: String! @check {
+  pub callOverride: Void @check {
     assert { Dagger.github("kubernetes/kubernetes").releases("dagger/dagger").get(repository: "rust-lang/rust").url.contains("rust-lang/rust") }
   }
 }

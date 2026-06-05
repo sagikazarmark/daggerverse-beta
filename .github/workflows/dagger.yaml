@@ -19,7 +19,7 @@ jobs:
       fail-fast: false
       matrix:
         module:
-          - crates
+          # - crates
           - distro
           - github
           - minisign

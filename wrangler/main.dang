@@ -55,12 +55,11 @@ type Wrangler {
     """
     container: Container! = Dagger.container.from("node:" + nodeVersion),
   ) {
-    container = container
+    container = Dagger
+      .distro
+      .packages(debian: ["ca-certificates"])
+      .install(container)
       .withEnvVariable("HOME", "/root")
-      .withMountedCache("/var/cache/apt/archives", Dagger.cacheVolume("debian-apt-archives"))
-      .withEnvVariable("DEBIAN_FRONTEND", "noninteractive")
-      .withExec(["apt-get", "update"])
-      .withExec(["apt-get", "install", "-y", "--no-install-recommends", "ca-certificates"])
       .withMountedCache("${HOME}/.npm", Dagger.cacheVolume("npm"), expand: true)
       .withExec(["npm", "install", "-g", pkg("wrangler", version), pkg("esbuild", esbuildVersion)])
       .withEnvVariable("WRANGLER_SEND_METRICS", "false")

@@ -1,0 +1,48 @@
+type Tests {
+  pub packages: PackagesTests { PackagesTests }
+
+  pub kind: KindTests { KindTests }
+}
+
+type KindTests {
+  """
+  Alpine is detected correctly.
+  """
+  pub alpine: Void @check {
+    assert { Dagger.distro.kind(Dagger.container.from("alpine")) == DistroKind.ALPINE }
+  }
+
+  """
+  Debian is detected correctly.
+  """
+  pub debian: Void @check {
+    assert { Dagger.distro.kind(Dagger.container.from("debian")) == DistroKind.DEBIAN }
+  }
+}
+
+type PackagesTests {
+  let packages: DistroPackages! {
+    Dagger.distro.packages(
+      alpine: ["chromium-chromedriver"],
+      debian: ["chromium-driver"],
+    )
+  }
+
+  """
+  Alpine packages are installed correctly.
+  """
+  pub alpine: Void @check {
+    let container = packages.install(Dagger.container.from("alpine"))
+
+    assert { container.exists("/usr/bin/chromedriver", expectedType: ExistsType.REGULAR_TYPE) }
+  }
+
+  """
+  Debian packages are installed correctly.
+  """
+  pub debian: Void @check {
+    let container = packages.install(Dagger.container.from("debian"))
+
+    assert { container.exists("/usr/bin/chromedriver", expectedType: ExistsType.REGULAR_TYPE) }
+  }
+}

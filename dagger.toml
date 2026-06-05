@@ -7,6 +7,9 @@ check.skip = ["generate-all"]
 [modules.crates-tests]
 source = "crates/tests"
 
+[modules.distro-tests]
+source = "distro/tests"
+
 [modules.github-tests]
 source = "github/tests"
 

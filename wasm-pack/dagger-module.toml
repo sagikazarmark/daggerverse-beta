@@ -1,4 +1,4 @@
-name = "wrangler"
+name = "wasm-pack"
 engineVersion = "v1.0.0-beta.3"
 runtime.source = "dang"
 include = ["!tests"]
@@ -6,3 +6,11 @@ include = ["!tests"]
 [[dependencies]]
 name = "distro"
 source = "../distro"
+
+[[dependencies]]
+name = "github"
+source = "../github"
+
+[[dependencies]]
+name = "rust"
+source = "../rust"

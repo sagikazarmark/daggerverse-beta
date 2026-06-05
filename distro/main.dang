@@ -1,0 +1,110 @@
+type Distro {
+  """
+  Install packages in a container.
+  """
+  pub packages(
+    """
+    Packages to install on Alpine distros.
+    """
+    alpine: [String!]! = [],
+    """
+    Packages to install on Debian distros.
+    """
+    debian: [String!]! = [],
+    """
+    Run package manager updates before installing packages.
+    """
+    update: Boolean! = true,
+  ): Packages! {
+    Packages(parent: self, alpine: alpine, debian: debian)
+  }
+
+  """
+  Detect the kind of distro.
+  """
+  pub kind(container: Container!): Kind! {
+    if (container.exists("/etc/alpine-release", expectedType: ExistsType.REGULAR_TYPE)) {
+      Kind.ALPINE
+    } else if (container.exists("/etc/debian_version", expectedType: ExistsType.REGULAR_TYPE)) {
+      Kind.DEBIAN
+    } else {
+      Kind.UNKNOWN
+    }
+  }
+}
+
+type Packages {
+  let parent: Distro!
+
+  """
+  Packages to install on Alpine distros.
+  """
+  pub alpine: [String!]! = []
+
+  """
+  Packages to install on Debian distros.
+  """
+  pub debian: [String!]! = []
+
+  """
+  Run package manager updates before installing packages.
+  """
+  pub update: Boolean! = true
+
+  """
+  Install the packages in the container.
+  """
+  pub install(container: Container!): Container! {
+    case (parent.kind(container)) {
+      Kind.ALPINE => {
+        if (self.alpine.isEmpty) {
+          return container
+        }
+
+        if (!container.mounts.contains("/var/cache/apk")) {
+          container = container.withMountedCache(
+            "/var/cache/apk",
+            Dagger.cacheVolume("alpine-apk"),
+          )
+        }
+
+        if (self.update) {
+          container = container.withExec(["apk", "update"])
+        }
+
+        container.withExec(["apk", "add"] + self.alpine)
+      }
+
+      Kind.DEBIAN => {
+        if (self.debian.isEmpty) {
+          return container
+        }
+
+        if (!container.mounts.contains("/var/cache/apt/archives")) {
+          container = container.withMountedCache(
+            "/var/cache/apt/archives",
+            Dagger.cacheVolume("debian-apt-archives"),
+          )
+        }
+
+        container = container.withEnvVariable("DEBIAN_FRONTEND", "noninteractive")
+
+        if (self.update) {
+          container = container.withExec(["apt-get", "update"])
+        }
+
+        container.withExec(["apt-get", "install", "-y", "--no-install-recommends"] + self.debian)
+      }
+
+      Kind.UNKNOWN => {
+        raise "unsupported distro"
+      }
+    }
+  }
+}
+
+enum Kind {
+  ALPINE
+  DEBIAN
+  UNKNOWN
+}

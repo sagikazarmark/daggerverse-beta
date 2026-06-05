@@ -1,0 +1,183 @@
+type WasmPack {
+  let rust: Rust!
+
+  """
+  Default browsers to use for testing.
+  """
+  pub defaultBrowsers: [Browser!]!
+
+  """
+  Default test arguments to pass to `cargo test`.
+  """
+  pub defaultTestArgs: [String!]!
+
+  new(
+    workspace: Workspace!,
+    """
+    wasm-pack version to use.
+    """
+    version: String! = "latest",
+    """
+    Default browsers to use for testing.
+    """
+    defaultBrowsers: [Browser!]! = Browser.values,
+    """
+    Browsers to install.
+    """
+    installBrowsers: [Browser!]! = defaultBrowsers,
+    """
+    Default test arguments to pass to `cargo test`.
+    """
+    defaultTestArgs: [String!]! = [],
+    """
+    Version (image tag) to use from the official image repository as a Rust base container.
+    """
+    rustVersion: String! = "latest",
+    """
+    Custom container to use as a base container.
+    """
+    container: Container! = Dagger.container.from("rust:" + rustVersion),
+  ) {
+    container = withBrowsers(container, installBrowsers)
+    container = withWasmPack(container, version)
+    container = withWasmBindgenFromLock(workspace, container)
+
+    self.rust = Dagger.rust(
+      workspace: workspace,
+      version: rustVersion,
+      container: container,
+      targets: ["wasm32-unknown-unknown"],
+    )
+    self.defaultBrowsers = defaultBrowsers
+    self.defaultTestArgs = defaultTestArgs
+
+    self
+  }
+
+  let withBrowsers(container: Container!, browsers: [Browser!]!): Container! {
+    let alpine = []
+    let debian = []
+
+    browsers.uniq.each { browser =>
+      case (browser) {
+        Browser.CHROME => {
+          alpine += ["chromium", "chromium-chromedriver"]
+          debian += ["chromium", "chromium-driver"]
+        }
+
+        Browser.FIREFOX => {
+          alpine += ["firefox-esr", "geckodriver"]
+          debian += ["firefox-esr"]
+        }
+      }
+
+      null
+    }
+
+    Dagger.distro.packages(alpine: alpine, debian: debian).install(container)
+  }
+
+  let withWasmPack(container: Container!, version: String!): Container! {
+    let release = Dagger.github.release(version, "wasm-bindgen/wasm-pack")
+
+    let name = "wasm-pack"
+    let fileName = "wasm-pack-" + release.tagName + "-" + arch + "-unknown-linux-musl.tar.gz"
+
+    let binary = release
+      .asset(fileName)
+      .extracted(true)
+      .file(name)
+
+    if (binary == null) {
+      raise "failed to download wasm-pack binary"
+    }
+
+    container.withFile("/usr/local/bin/" + name, binary)
+  }
+
+  let withWasmBindgenFromLock(workspace: Workspace!, container: Container!): Container! {
+    let lock: String = workspace.findUp("Cargo.lock")
+
+    if (lock == null) {
+      raise "Cargo.lock not found"
+    }
+
+    let lockFile = workspace.directory("/", gitignore: true).file(lock)
+
+    let wasmBindgenVersion = Dagger
+      .container
+      .from("mikefarah/yq:4.53.2")
+      .withMountedFile("Cargo.lock", lockFile)
+      .withExec(["yq", "-r", """.package[] | select(.name == "wasm-bindgen") | .version""", "Cargo.lock"])
+      .stdout
+
+    withWasmBindgen(container, wasmBindgenVersion)
+  }
+
+  let withWasmBindgen(container: Container!, version: String!): Container! {
+    let release = Dagger.github.release(version, "wasm-bindgen/wasm-bindgen")
+
+    let name = "wasm-bindgen"
+    let fileName = "wasm-bindgen-" + release.tagName + "-" + arch + "-unknown-linux-gnu.tar.gz"
+
+    let binaries = release
+      .asset(fileName)
+      .extracted(true)
+      .filter(include: ["wasm-bindgen-test-runner", "wasm2es6js", "wasm-bindgen"])
+
+    if (binaries == null) {
+      raise "failed to download wasm-bindgen"
+    }
+
+    container.withDirectory("/usr/local/bin/", binaries)
+  }
+
+  let arch: String! {
+    case (Dagger.defaultPlatform) {
+      "linux/amd64" => "x86_64"
+      "linux/arm64" => "aarch64"
+      else => raise "unsupported platform: " + toString(Dagger.defaultPlatform).trim("\"")
+    }
+  }
+
+  """
+  Returns the wasm-pack container.
+  """
+  pub container: Container! {
+    self.rust.container
+  }
+
+  """
+  Run wasm-pack tests.
+  """
+  pub test(
+    """
+    Runs wasm-pack tests using the specified browsers.
+    """
+    browsers: [Browser!]! = self.defaultBrowsers,
+    """
+    Additional arguments to pass to `cargo test`.
+    """
+    args: [String!]! = self.defaultTestArgs,
+  ): Container! @check {
+    let _args = ["wasm-pack", "test", "--mode", "no-install", "--headless"]
+
+    _args += browsers.uniq.map { browser => "--" + toString(browser).trim("\"").toLower }
+
+    _args += ["."]
+
+    if (!args.isEmpty) {
+      _args += ["--"] + args
+    }
+
+    self
+      .rust
+      .container
+      .withExec(_args, experimentalPrivilegedNesting: true)
+  }
+}
+
+enum Browser {
+  CHROME
+  FIREFOX
+}

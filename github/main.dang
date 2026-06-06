@@ -12,7 +12,7 @@ type Github {
     """
     authHeader: Secret = null,
   ) {
-    self.repository = repository
+    self.repository = resolveRepository(repository)
     self.authHeader = authHeader
 
     self
@@ -31,14 +31,6 @@ type Github {
   pub release(version: String = null, repository: String = self.repository): Release! {
     self.releases(repository).get(version)
   }
-}
-
-let resolveRepository(repository: String): String! {
-  if (repository == null) {
-    raise "repository is required"
-  }
-
-  repository
 }
 
 let extractFile(file: File!, stripComponents: Int = null): Directory! {
@@ -69,7 +61,7 @@ type Releases {
   let authHeader: Secret = null
 
   new(repository: String = null, authHeader: Secret = null) {
-    self.repository = repository
+    self.repository = resolveRepository(repository)
     self.authHeader = authHeader
 
     self
@@ -101,7 +93,7 @@ type Releases {
     repository: String = self.repository,
   ): Release! {
     fromJSON(Dagger.http(
-      apiUrl(resolveRepository(repository), version),
+      apiUrl(coerceRepository(resolveRepository(repository)), version),
       "release.json",
       authHeader: authHeader,
     ).contents) :: Release!
@@ -202,4 +194,18 @@ type ReleaseAsset {
   ): Directory! {
     extractFile(self.file, stripComponents)
   }
+}
+
+let resolveRepository(repository: String): String {
+  repository
+    .match(`^(?:https://github\.com/|git@github\.com:)?(?P<repo>[^/\s]+/[^/\s]+?)(?:\.git)?(?:/.*)?$`)
+    .capture("repo")
+}
+
+let coerceRepository(repository: String): String! {
+  if (repository == null) {
+    raise "repository is required"
+  }
+
+  repository
 }

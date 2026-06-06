@@ -26,7 +26,7 @@ type Github {
   }
 
   """
-  Get a GitHub release by version. Use "latest" or an empty string for the latest release.
+  Get a GitHub release by version. Use null or an empty string for the latest release.
   """
   pub release(version: String = null, repository: String = self.repository): Release! {
     self.releases(repository).get(version)
@@ -80,11 +80,11 @@ type Releases {
   }
 
   """
-  Get a GitHub release by version. Use "latest" or an empty string for the latest release.
+  Get a GitHub release by version. Use null or an empty string for the latest release.
   """
   pub get(
     """
-    Release tag, or "latest" (or empty) for latest, non-draft, non-prerelease release.
+    Release tag, or null (or empty) for latest, non-draft, non-prerelease release.
     """
     version: String = null,
     """
@@ -100,7 +100,7 @@ type Releases {
   }
 
   let apiUrl(repository: String!, version: String): String! {
-    let base = "https://api.github.com/repos/" + repository + "/releases"
+    let base = `https://api.github.com/repos/${repository}/releases`
 
     if (version == null or version == "") {
       base + "/latest"

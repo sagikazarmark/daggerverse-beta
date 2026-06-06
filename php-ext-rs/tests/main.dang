@@ -1,0 +1,238 @@
+enum TestSuite {
+  MINIMAL
+  FULL
+}
+
+type Tests {
+  let suite: TestSuite!
+
+  new(suite: TestSuite = null) {
+    self.suite = suite ?? TestSuite.MINIMAL
+
+    self
+  }
+
+  let testContainer: Container! {
+    let deps = ["cmake", "libssl-dev", "libsystemd-dev", "protobuf-compiler"]
+
+    Dagger
+      .container
+      .from("rust:1.95-slim-trixie@sha256:ee4fa026a11f9e8b1b00568364a880dc720409bb94b0e6800f63f974f9c909d5")
+      .withMountedCache("/var/cache/apt/archives", Dagger.cacheVolume("debian-apt-archives"))
+      .withEnvVariable("DEBIAN_FRONTEND", "noninteractive")
+      .withExec(["apt-get", "update"])
+      .withExec(["apt-get", "install", "-y", "--no-install-recommends"] + deps)
+  }
+
+  let test(
+    source: Directory!,
+    variants: [PhpExtRsPhpVariant!]! = [],
+    phpVersions: [String!] = null,
+    buildPath: String = null,
+    targets: [String!] = null,
+  ): Directory! {
+    let selectedPhpVersions = phpVersions ?? phpVersionsForSuite(self.suite)
+    let selectedTargets = targets ?? targetsForSuite(self.suite)
+    let defaultTarget = targetForPlatform(Dagger.defaultPlatform)
+
+    if (!selectedTargets.contains(defaultTarget)) {
+      selectedTargets = [defaultTarget] + selectedTargets
+    }
+
+    let composer = source.file("composer.json").asJSON
+
+    let _type = composer.field(["type"]).asString
+
+    assert { _type == "php-ext" }
+
+    let extensionName = composer.field(["php-ext", "extension-name"]).asString
+
+    let sourceBuildPath = buildPath ?? ""
+    if (sourceBuildPath == "") {
+      sourceBuildPath = try {
+        composer.field(["php-ext", "build-path"]).asString
+      } catch {
+        err => ""
+      }
+    }
+
+    if (variants.isEmpty) {
+      try {
+        if (composer.field(["php-ext", "support-nts"]).asBoolean) {
+          variants += [PhpExtRsPhpVariant.NTS]
+        }
+      } catch {
+        err => null
+      }
+
+      try {
+        if (composer.field(["php-ext", "support-zts"]).asBoolean) {
+          variants += [PhpExtRsPhpVariant.ZTS]
+        }
+      } catch {
+        err => null
+      }
+    }
+
+    if (self.suite == TestSuite.MINIMAL) {
+      variants = variants.takeFirst
+    }
+
+    let result = phpExtRs.buildExtensionMatrix(
+      source,
+      extensionName,
+      selectedPhpVersions,
+      variants,
+      selectedTargets,
+      sourceBuildPath,
+    )
+
+    let output = Dagger.directory
+
+    let iniName = "zz-" + extensionName + ".ini"
+    let extensionDir = "/opt/php/extensions/"
+    let extensionPath = extensionDir + extensionName + ".so"
+
+    selectedPhpVersions.each { phpVersion =>
+      variants.each { variant =>
+        let tag = phpVersion
+
+        if (variant == PhpExtRsPhpVariant.ZTS) {
+          tag += "-zts"
+        }
+
+        let extensionFilePath = "php-" + tag + "/" + defaultTarget + "/" + extensionName + ".so"
+        let extensionFile = result.file(extensionFilePath)
+
+        let test = Dagger
+          .container
+          .from("php:" + tag)
+          .withFile(extensionPath, extensionFile)
+          .withFile(
+            "/usr/local/etc/php/conf.d/" + iniName,
+            Dagger.file(iniName, "extension=" + extensionPath + "\n"),
+          )
+          .withExec(["php", "--ri", extensionName])
+          .withExec(["php", "-m"])
+
+        result = result.withFile(extensionFilePath, extensionFile)
+      }
+    }
+
+    result
+  }
+
+  let phpVersionsForSuite(suite: TestSuite!): [String!]! {
+    case (suite) {
+      TestSuite.MINIMAL => ["8.5.6"]
+      TestSuite.FULL => ["8.4.21", "8.5.6"]
+    }
+  }
+
+  let targetsForSuite(suite: TestSuite!): [String!]! {
+    [
+      "x86_64-unknown-linux-gnu",
+      "aarch64-unknown-linux-gnu",
+      "aarch64-apple-darwin",
+    ]
+    # case (suite) {
+    #   TestSuite.MINIMAL => ["aarch64-apple-darwin"]
+    #   TestSuite.FULL => [
+    #     "x86_64-unknown-linux-gnu",
+    #     "aarch64-unknown-linux-gnu",
+    #     "aarch64-apple-darwin",
+    #   ]
+    # }
+  }
+
+  let targetForPlatform(platform: Platform!): String! {
+    case (platform) {
+      "linux/amd64" => "x86_64-unknown-linux-gnu"
+      "linux/arm64" => "aarch64-unknown-linux-gnu"
+    }
+  }
+
+  pub ammonia: Directory! @check {
+    let source = Dagger.git("https://github.com/nicofff/ammonia-php-rs.git").tag("v0.3.0").tree
+
+    test(source)
+  }
+
+  pub otel: Directory! @check {
+    let source = Dagger.git("https://github.com/brettmc/otel-php-rust.git").tag("0.17.0").tree
+
+    test(source, [PhpExtRsPhpVariant.NTS], ["8.4.21"])
+  }
+
+  pub grpc: Directory! @check {
+    let source = Dagger.git("https://github.com/BSN4/grpc-php-rs.git").tag("v0.2.5").tree
+
+    test(source)
+  }
+
+  pub arrow: Directory! @check {
+    let source = Dagger.git("https://github.com/flow-php/arrow-ext.git").tag("0.38.0").tree
+
+    test(source)
+  }
+
+  pub rabbitmq: Directory! @check {
+    let source = Dagger.git("https://github.com/jaapieaapie1/rabbitmq-ext.git").tag("1.0.0").tree
+
+    test(source)
+  }
+
+  pub lopdf: Directory! @check {
+    let source = Dagger.git("https://github.com/alekitto/lopdf-php.git").commit("b5904e3967baad7189df147ec90a8a7f42a583a7").tree
+
+    test(source, [PhpExtRsPhpVariant.NTS], ["8.4.21"])
+  }
+
+  pub mjml: Directory! @check {
+    let source = Dagger.git("https://github.com/alekitto/mjml-php.git").commit("4da9356349a8ee0ddba43a43f280e01e56b1d813").tree
+
+    test(source, [PhpExtRsPhpVariant.NTS], ["8.4.21"])
+  }
+
+  pub kreuzberg: Directory! @check {
+    let source = Dagger.git("https://github.com/kreuzberg-dev/kreuzberg.git").commit("45bc74c4ffa5c2d0ed54f0db8a7417bc76dcac4f").tree
+
+    test(source, [PhpExtRsPhpVariant.NTS], ["8.4.21"], "crates/kreuzberg-php")
+  }
+
+  pub literLlm: Directory! @check {
+    let source = Dagger.git("https://github.com/kreuzberg-dev/liter-llm.git").commit("d423ddb0e336271740dcdef1e0444c858a4f9076").tree
+
+    test(source, [PhpExtRsPhpVariant.NTS], ["8.4.21"], "crates/liter-llm-php", [targetForPlatform(Dagger.defaultPlatform)])
+  }
+
+  pub treeSitterLanguagePack: Directory! @check {
+    let source = Dagger.git("https://github.com/kreuzberg-dev/tree-sitter-language-pack.git").commit("b3e11803ddf641145f9883c99add8b83c847aeff").tree
+
+    test(
+      source,
+      [PhpExtRsPhpVariant.NTS],
+      ["8.4.21"],
+      "crates/ts-pack-core-php",
+      [targetForPlatform(Dagger.defaultPlatform)],
+    )
+  }
+
+  pub systemd: Directory! @check {
+    let source = Dagger.git("https://github.com/nerou42/php-ext-systemd.git").commit("f324722f195f071e6706b0e340a04c57dbca6fab").tree
+
+    test(source, [PhpExtRsPhpVariant.NTS], ["8.4.21"], targets: [targetForPlatform(Dagger.defaultPlatform)])
+  }
+
+  pub pqcrypto: Directory! @check {
+    let source = Dagger.git("https://github.com/paragonie/ext-pqcrypto.git").commit("e46681e8ecd0c6476c79eb7c53474cd96d398097").tree
+
+    test(source, [PhpExtRsPhpVariant.NTS], ["8.4.21"], targets: [targetForPlatform(Dagger.defaultPlatform)])
+  }
+
+  pub spikard: Directory! @check {
+    let source = Dagger.git("https://github.com/Goldziher/spikard.git").commit("8b41d5ffd54974e76726331b993715e0bc1dba0c").tree
+
+    test(source, [PhpExtRsPhpVariant.NTS], ["8.4.21"], "crates/spikard-php", [targetForPlatform(Dagger.defaultPlatform)])
+  }
+}

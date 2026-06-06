@@ -1,0 +1,16 @@
+#!/bin/sh
+case "$*" in
+  "-i"|"--info")
+    printf 'PHP Version => %s\nPHP API => %s\nDebug Build => no\nThread Safety => %s\n' "@@PHP_VERSION@@" "@@PHP_API_VERSION@@" "@@PHP_THREAD_SAFETY@@"
+    ;;
+  "-n -r echo PHP_DEBUG ? \"-debug\" : \"\";")
+    printf '\n'
+    ;;
+  "-n -r echo ZEND_THREAD_SAFE ? \"-zts\" : \"\";")
+    printf '%s\n' "@@PHP_ZTS_SUFFIX@@"
+    ;;
+  *)
+    printf 'unsupported php shim invocation: %s\n' "$*" >&2
+    exit 1
+    ;;
+esac

@@ -1,0 +1,68 @@
+type MacosSdk {
+  """
+  MacOS SDK version
+  """
+  pub version: String!
+
+  new(
+    """
+    MacOS SDK version
+    """
+    version: String!,
+  ) {
+    self.version = version
+
+    self
+  }
+
+  """
+  Download the MacOS SDK.
+  """
+  pub download: Directory! {
+    let asset = Dagger
+      .github
+      .release(self.version, "joseluisq/macosx-sdks")
+      .asset("MacOSX" + self.version + ".sdk.tar.xz")
+
+    if (asset == null) {
+      raise "asset is null"
+    }
+
+    asset.extracted(true)
+  }
+
+  """
+  Returns the default installation path for the MacOS SDK.
+  """
+  pub defaultPath: String! {
+    "/opt/MacOSX-SDK/MacOSX" + self.version + ".sdk"
+  }
+
+  """
+  Installs the MacOS SDK into the provided container.
+  """
+  pub install(
+    """
+    Container to install the MacOS SDK into.
+    """
+    container: Container! = Dagger.container.from("alpine:latest"),
+    """
+    Whether to set the SDKROOT environment variable to the installed path.
+    """
+    default: Boolean! = true,
+    """
+    Path to install the MacOS SDK into.
+    """
+    path: String! = defaultPath,
+  ): Container! {
+    let container = container
+      .withExec(["rm", "-rf", path])
+      .withDirectory(path, download)
+
+    if (default) {
+      container = container.withEnvVariable("SDKROOT", path)
+    }
+
+    container
+  }
+}

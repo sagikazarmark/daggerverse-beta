@@ -1,0 +1,24 @@
+name = "php-ext-rs"
+engineVersion = "v1.0.0-beta.3"
+runtime.source = "dang"
+include = ["!tests"]
+
+[[dependencies]]
+name = "macos-sdk"
+source = "../macos-sdk"
+
+[[dependencies]]
+name = "php-dist"
+source = "../php-dist"
+
+[[dependencies]]
+name = "zig-dist"
+source = "../zig-dist"
+
+[[dependencies]]
+name = "rust"
+source = "../rust"
+
+[[dependencies]]
+name = "github"
+source = "../github"

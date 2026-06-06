@@ -16,7 +16,7 @@ type WasmPack {
     """
     wasm-pack version to use.
     """
-    version: String! = "latest",
+    version: String = null,
     """
     Default browsers to use for testing.
     """
@@ -77,7 +77,7 @@ type WasmPack {
     Dagger.distro.packages(alpine: alpine, debian: debian).install(container)
   }
 
-  let withWasmPack(container: Container!, version: String!): Container! {
+  let withWasmPack(container: Container!, version: String): Container! {
     let release = Dagger.github.release(version, "wasm-bindgen/wasm-pack")
 
     let name = "wasm-pack"

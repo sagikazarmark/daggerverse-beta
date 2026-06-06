@@ -55,26 +55,26 @@ type WasmPack {
   }
 
   let withBrowsers(container: Container!, browsers: [Browser!]!): Container! {
-    let alpine = []
-    let debian = []
+    let apk = []
+    let apt = []
 
     browsers.uniq.each { browser =>
       case (browser) {
         Browser.CHROME => {
-          alpine += ["chromium", "chromium-chromedriver"]
-          debian += ["chromium", "chromium-driver"]
+          apk += ["chromium", "chromium-chromedriver"]
+          apt += ["chromium", "chromium-driver"]
         }
 
         Browser.FIREFOX => {
-          alpine += ["firefox-esr", "geckodriver"]
-          debian += ["firefox-esr"]
+          apk += ["firefox-esr", "geckodriver"]
+          apt += ["firefox-esr"]
         }
       }
 
       null
     }
 
-    Dagger.distro.packages(alpine: alpine, debian: debian).install(container)
+    Dagger.distro.packages(apk: apk, apt: apt).install(container)
   }
 
   let withWasmPack(container: Container!, version: String): Container! {

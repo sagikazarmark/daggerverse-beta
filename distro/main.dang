@@ -6,17 +6,21 @@ type Distro {
     """
     Packages to install on Alpine distros.
     """
-    alpine: [String!]! = [],
+    apk: [String!]! = [],
     """
     Packages to install on Debian distros.
     """
-    debian: [String!]! = [],
+    apt: [String!]! = [],
     """
     Run package manager updates before installing packages.
     """
     update: Boolean! = true,
+    """
+    Mount the package manager cache volume before installing packages.
+    """
+    cache: Boolean! = true,
   ): Packages! {
-    Packages(parent: self, alpine: alpine, debian: debian)
+    Packages(parent: self, apk: apk, apt: apt, update: update, cache: cache)
   }
 
   """
@@ -39,12 +43,12 @@ type Packages {
   """
   Packages to install on Alpine distros.
   """
-  pub alpine: [String!]! = []
+  pub apk: [String!]! = []
 
   """
   Packages to install on Debian distros.
   """
-  pub debian: [String!]! = []
+  pub apt: [String!]! = []
 
   """
   Run package manager updates before installing packages.
@@ -52,16 +56,21 @@ type Packages {
   pub update: Boolean! = true
 
   """
+  Mount the package manager cache volume before installing packages.
+  """
+  pub cache: Boolean! = true
+
+  """
   Install the packages in the container.
   """
   pub install(container: Container!): Container! {
     case (parent.kind(container)) {
       Kind.ALPINE => {
-        if (self.alpine.isEmpty) {
+        if (self.apk.isEmpty) {
           return container
         }
 
-        if (!container.mounts.contains("/var/cache/apk")) {
+        if (self.cache and !container.mounts.contains("/var/cache/apk")) {
           container = container.withMountedCache(
             "/var/cache/apk",
             Dagger.cacheVolume("alpine-apk"),
@@ -72,15 +81,15 @@ type Packages {
           container = container.withExec(["apk", "update"])
         }
 
-        container.withExec(["apk", "add"] + self.alpine)
+        container.withExec(["apk", "add"] + self.apk)
       }
 
       Kind.DEBIAN => {
-        if (self.debian.isEmpty) {
+        if (self.apt.isEmpty) {
           return container
         }
 
-        if (!container.mounts.contains("/var/cache/apt/archives")) {
+        if (self.cache and !container.mounts.contains("/var/cache/apt/archives")) {
           container = container.withMountedCache(
             "/var/cache/apt/archives",
             Dagger.cacheVolume("debian-apt-archives"),
@@ -93,7 +102,7 @@ type Packages {
           container = container.withExec(["apt-get", "update"])
         }
 
-        container.withExec(["apt-get", "install", "-y", "--no-install-recommends"] + self.debian)
+        container.withExec(["apt-get", "install", "-y", "--no-install-recommends"] + self.apt)
       }
 
       Kind.UNKNOWN => {

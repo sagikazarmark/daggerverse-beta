@@ -15,16 +15,6 @@ type Builder {
 
   let configured = false
 
-  """
-  The PHP installation prefix used during configure.
-  """
-  pub prefix: String! = "/usr/local"
-
-  """
-  Arguments passed to `configure`.
-  """
-  pub configureArgs: [String!]! = []
-
   new(source: Directory!, container: Container!) {
     self.container = container
       .withWorkdir("/usr/local/src/php")

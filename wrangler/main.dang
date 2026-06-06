@@ -57,7 +57,7 @@ type Wrangler {
   ) {
     container = Dagger
       .distro
-      .packages(debian: ["ca-certificates"])
+      .packages(apt: ["ca-certificates"])
       .install(container)
       .withEnvVariable("HOME", "/root")
       .withMountedCache("${HOME}/.npm", Dagger.cacheVolume("npm"), expand: true)

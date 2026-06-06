@@ -23,8 +23,8 @@ type KindTests {
 type PackagesTests {
   let packages: DistroPackages! {
     Dagger.distro.packages(
-      alpine: ["chromium-chromedriver"],
-      debian: ["chromium-driver"],
+      apk: ["chromium-chromedriver"],
+      apt: ["chromium-driver"],
     )
   }
 

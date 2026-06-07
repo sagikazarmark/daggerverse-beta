@@ -1,0 +1,19 @@
+let alpine: Container! {
+  Dagger.container.from("alpine:3.23.4@sha256:5b10f432ef3da1b8d4c7eb6c487f2f5a8f096bc91145e68878dd4a5019afde11")
+}
+
+let extractArchive(file: File!, stripComponents: Int = null): Directory! {
+  let args = ["bsdtar", "--no-xattrs", "-xf", file.name, "-C", "/work/out"]
+
+  if (stripComponents != null) {
+    args += ["--strip-components", toString(stripComponents)]
+  }
+
+  alpine
+    .withExec(["apk", "add", "libarchive-tools"])
+    .withWorkdir("/work/src")
+    .withExec(["mkdir", "-p", "/work/out"])
+    .withMountedFile("", file)
+    .withExec(args)
+    .directory("/work/out")
+}

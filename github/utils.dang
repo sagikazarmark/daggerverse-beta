@@ -1,0 +1,13 @@
+let resolveRepository(repository: String): String {
+  repository
+    .match(`^(?:https://github\.com/|git@github\.com:)?(?P<repo>[^/\s]+/[^/\s]+?)(?:\.git)?(?:/.*)?$`)
+    .capture("repo")
+}
+
+let coerceRepository(repository: String): String! {
+  if (repository == null) {
+    raise "repository is required"
+  }
+
+  repository
+}

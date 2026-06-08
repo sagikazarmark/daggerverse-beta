@@ -18,8 +18,14 @@ type Tests {
   """
   pub leafBundle: String! @check {
     let root = x509.generate("test-root-ca").rsa(2048).rootCa
-    let intermediate = x509.generate("test-intermediate-ca").rsa(2048).intermediateCa(root.issuer, bundle: true)
-    let leaf = x509.generate("test.local", sans: ["test.local"]).rsa(2048).certificate(intermediate.issuer, bundle: true)
+    let intermediate = x509.generate("test-intermediate-ca").rsa(2048).intermediateCa(
+      root.issuer,
+      bundle: true,
+    )
+    let leaf = x509.generate("test.local", sans: ["test.local"]).rsa(2048).certificate(
+      intermediate.issuer,
+      bundle: true,
+    )
 
     x509
       .container
@@ -47,7 +53,6 @@ type Tests {
     let password = Dagger.setSecret("x509-import-test-password", "correct horse battery staple")
     let root = x509.generate("import-root-ca").rsa(2048, password: password).rootCa
     let imported = x509.importCa(
-      "imported-root-ca",
       root.certificate,
       root.key,
       password: root.password,

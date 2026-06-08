@@ -1,6 +1,4 @@
 type X509 {
-  let requestedVersion: String = null
-
   """
   Container with the smallstep step CLI installed.
   """
@@ -8,37 +6,25 @@ type X509 {
 
   new(
     """
-    Step CLI version. Use null or an empty string for the latest release.
+    Version (image tag) to use from the official image repository.
     """
-    version: String = null,
+    version: String! = "latest",
     """
-    Alpine version to use for the default container.
+    Container to use.
     """
-    alpineVersion: String! = "latest",
-    """
-    Container to install the step CLI into.
-    """
-    container: Container! = Dagger.container.from("alpine:" + alpineVersion),
+    container: Container! = Dagger.container.from("smallstep/step-cli:" + version).withUser("root"),
   ) {
-    self.requestedVersion = version
-    self.container = container.withFile("/usr/local/bin/step", download(version, container.platform))
+    self.container = container
 
     self
   }
 
   """
-  Installed Step CLI version.
-  """
-  pub version: String! {
-    stepRelease(self.requestedVersion).tagName
-  }
-
-  """
-  Create a reusable certificate generation request.
+  Create a certificate generation request.
   """
   pub generate(
     """
-    Certificate or CSR common name.
+    Common name.
     """
     commonName: String!,
     """
@@ -89,15 +75,12 @@ type X509 {
   Wrap existing certificate and key files as a CA.
   """
   pub importCa(
-    commonName: String!,
     certificate: File!,
     key: File!,
     password: Secret = null,
     bundle: File = null,
   ): ImportedCA! {
     ImportedCA(
-      x509: self,
-      commonName: commonName,
       certificate: certificate,
       key: key,
       bundle: bundle ?? certificate,
@@ -171,7 +154,12 @@ type Generator {
     """
     password: Secret = null,
   ): KeyedGenerator! {
-    KeyedGenerator(generator: self, keyType: KeyType.EC, curve: ecCurveValue(curve), password: password)
+    KeyedGenerator(
+      generator: self,
+      keyType: KeyType.EC,
+      curve: ecCurveValue(curve),
+      password: password,
+    )
   }
 
   """
@@ -236,12 +224,25 @@ type KeyedGenerator {
 
     let container = self.generator.x509.baseContainer(certFile, keyFile, bundleFile)
 
-    let args = createArgs(self.generator.commonName, certFile, keyFile, self.key)
-      + ["--profile", "root-ca", "--force"]
-    args = addCommonCreateArgs(args, self.keyType, self.curve, self.size, self.generator.notBefore, self.generator.notAfter, [], self.generator.template)
-    args = addKeyArgs(args, self.key, self.password)
+    let args = createArgs(self.generator.commonName, certFile, keyFile, self.key) + ["--profile", "root-ca", "--force"]
+    args += commonCreateArgs(
+      self.keyType,
+      self.curve,
+      self.size,
+      self.generator.notBefore,
+      self.generator.notAfter,
+      [],
+      self.generator.template,
+    )
+    args += keyArgs(self.key, self.password)
 
-    let prepared = prepareCreate(container, self.password, null, self.generator.template, self.key)
+    let prepared = prepareCreate(
+      container,
+      self.password,
+      null,
+      self.generator.template,
+      self.key,
+    )
       .withExec(args)
       .withExec(["cp", certFile, bundleFile])
 
@@ -272,26 +273,39 @@ type KeyedGenerator {
     let bundleFile = name + "-bundle.crt"
     let authority = issuer.authority
 
-    let container = self.generator.x509
+    let container = self
+      .generator
+      .x509
       .baseContainer(certFile, keyFile, bundleFile)
-      .withMountedFile(caCertFile, authority.certificate)
-      .withMountedFile(caKeyFile, authority.key)
-      .withMountedFile(issuerBundleFile, authority.bundle)
+      .withMountedFile(caCertFile, issuer.certificate)
+      .withMountedFile(caKeyFile, issuer.key)
+      .withMountedFile(issuerBundleFile, issuer.bundle)
 
-    let args = createArgs(self.generator.commonName, certFile, keyFile, self.key)
-      + ["--profile", "intermediate-ca", "--ca", caCertFile, "--ca-key", caKeyFile, "--force"]
-    args = addCommonCreateArgs(args, self.keyType, self.curve, self.size, self.generator.notBefore, self.generator.notAfter, [], self.generator.template)
-    args = addKeyArgs(args, self.key, self.password)
+    let args = createArgs(self.generator.commonName, certFile, keyFile, self.key) + ["--profile", "intermediate-ca", "--ca", caCertFile, "--ca-key", caKeyFile, "--force"]
+    args += commonCreateArgs(
+      self.keyType,
+      self.curve,
+      self.size,
+      self.generator.notBefore,
+      self.generator.notAfter,
+      [],
+      self.generator.template,
+    )
+    args += keyArgs(self.key, self.password)
     let signingPassword = authorityPassword(authority)
-    args = addCaPasswordArgs(args, signingPassword)
+    args += caPasswordArgs(signingPassword)
 
-    container = prepareCreate(container, self.password, signingPassword, self.generator.template, self.key)
+    container = prepareCreate(
+      container,
+      self.password,
+      signingPassword,
+      self.generator.template,
+      self.key,
+    )
       .withExec(args)
 
     if (bundle) {
-      container = container.withExec([
-        "step", "certificate", "bundle", certFile, issuerBundleFile, bundleFile, "--force",
-      ])
+      container = container.withExec(["step", "certificate", "bundle", certFile, issuerBundleFile, bundleFile, "--force"])
     }
 
     let directory = container.directory("/work")
@@ -322,26 +336,39 @@ type KeyedGenerator {
     let bundleFile = name + "-bundle.crt"
     let authority = issuer.authority
 
-    let container = self.generator.x509
+    let container = self
+      .generator
+      .x509
       .baseContainer(certFile, keyFile, bundleFile)
       .withMountedFile(caCertFile, authority.certificate)
       .withMountedFile(caKeyFile, authority.key)
       .withMountedFile(issuerBundleFile, authority.bundle)
 
-    let args = createArgs(self.generator.commonName, certFile, keyFile, self.key)
-      + ["--profile", "leaf", "--ca", caCertFile, "--ca-key", caKeyFile, "--force"]
-    args = addCommonCreateArgs(args, self.keyType, self.curve, self.size, self.generator.notBefore, self.generator.notAfter, self.generator.sans, self.generator.template)
-    args = addKeyArgs(args, self.key, self.password)
+    let args = createArgs(self.generator.commonName, certFile, keyFile, self.key) + ["--profile", "leaf", "--ca", caCertFile, "--ca-key", caKeyFile, "--force"]
+    args += commonCreateArgs(
+      self.keyType,
+      self.curve,
+      self.size,
+      self.generator.notBefore,
+      self.generator.notAfter,
+      self.generator.sans,
+      self.generator.template,
+    )
+    args += keyArgs(self.key, self.password)
     let signingPassword = authorityPassword(authority)
-    args = addCaPasswordArgs(args, signingPassword)
+    args += caPasswordArgs(signingPassword)
 
-    container = prepareCreate(container, self.password, signingPassword, self.generator.template, self.key)
+    container = prepareCreate(
+      container,
+      self.password,
+      signingPassword,
+      self.generator.template,
+      self.key,
+    )
       .withExec(args)
 
     if (bundle) {
-      container = container.withExec([
-        "step", "certificate", "bundle", certFile, issuerBundleFile, bundleFile, "--force",
-      ])
+      container = container.withExec(["step", "certificate", "bundle", certFile, issuerBundleFile, bundleFile, "--force"])
     }
 
     let directory = container.directory("/work")
@@ -366,12 +393,25 @@ type KeyedGenerator {
 
     let container = self.generator.x509.baseContainer(certFile, keyFile, bundleFile)
 
-    let args = createArgs(self.generator.commonName, certFile, keyFile, self.key)
-      + ["--profile", "self-signed", "--subtle", "--force"]
-    args = addCommonCreateArgs(args, self.keyType, self.curve, self.size, self.generator.notBefore, self.generator.notAfter, self.generator.sans, self.generator.template)
-    args = addKeyArgs(args, self.key, self.password)
+    let args = createArgs(self.generator.commonName, certFile, keyFile, self.key) + ["--profile", "self-signed", "--subtle", "--force"]
+    args += commonCreateArgs(
+      self.keyType,
+      self.curve,
+      self.size,
+      self.generator.notBefore,
+      self.generator.notAfter,
+      self.generator.sans,
+      self.generator.template,
+    )
+    args += keyArgs(self.key, self.password)
 
-    container = prepareCreate(container, self.password, null, self.generator.template, self.key)
+    container = prepareCreate(
+      container,
+      self.password,
+      null,
+      self.generator.template,
+      self.key,
+    )
       .withExec(args)
       .withExec(["cp", certFile, bundleFile])
 
@@ -398,10 +438,24 @@ type KeyedGenerator {
     let container = self.generator.x509.baseContainer(csrFile, keyFile, bundleFile)
 
     let args = createArgs(self.generator.commonName, csrFile, keyFile, self.key) + ["--csr", "--force"]
-    args = addCommonCreateArgs(args, self.keyType, self.curve, self.size, null, null, self.generator.sans, self.generator.template)
-    args = addKeyArgs(args, self.key, self.password)
+    args += commonCreateArgs(
+      self.keyType,
+      self.curve,
+      self.size,
+      null,
+      null,
+      self.generator.sans,
+      self.generator.template,
+    )
+    args += keyArgs(self.key, self.password)
 
-    container = prepareCreate(container, self.password, null, self.generator.template, self.key)
+    container = prepareCreate(
+      container,
+      self.password,
+      null,
+      self.generator.template,
+      self.key,
+    )
       .withExec(args)
 
     let directory = container.directory("/work")
@@ -419,16 +473,18 @@ type KeyedGenerator {
 type Issuer {
   pub authority: CertificateAuthority!
 
-  pub commonName: String! { self.authority.commonName }
   pub certificate: File! { self.authority.certificate }
+
   pub key: File! { self.authority.key }
+
   pub bundle: File! { self.authority.bundle }
+
   pub password: Secret! { self.authority.password }
+
   pub passwordProtected: Boolean! { self.authority.passwordProtected }
 }
 
 type CertificateAuthority {
-  pub commonName: String!
   pub certificate: File!
   pub key: File!
   pub bundle: File!
@@ -448,11 +504,10 @@ type RootCA {
 
   pub authority: CertificateAuthority! {
     CertificateAuthority(
-      commonName: self.commonName,
       certificate: self.certificate,
       key: self.key,
       bundle: self.bundle,
-      password: self.password ?? emptyPassword(),
+      password: self.password ?? emptyPassword,
       passwordProtected: self.password != null,
     )
   }
@@ -474,11 +529,10 @@ type IntermediateCA {
 
   pub authority: CertificateAuthority! {
     CertificateAuthority(
-      commonName: self.commonName,
       certificate: self.certificate,
       key: self.key,
       bundle: self.bundle ?? self.certificate,
-      password: self.password ?? emptyPassword(),
+      password: self.password ?? emptyPassword,
       passwordProtected: self.password != null,
     )
   }
@@ -489,9 +543,6 @@ type IntermediateCA {
 }
 
 type ImportedCA {
-  let x509: X509!
-
-  pub commonName: String!
   pub certificate: File!
   pub key: File!
   pub bundle: File!
@@ -499,11 +550,10 @@ type ImportedCA {
 
   pub authority: CertificateAuthority! {
     CertificateAuthority(
-      commonName: self.commonName,
       certificate: self.certificate,
       key: self.key,
       bundle: self.bundle,
-      password: self.password ?? emptyPassword(),
+      password: self.password ?? emptyPassword,
       passwordProtected: self.password != null,
     )
   }
@@ -550,7 +600,7 @@ let caKeyFile = "/inputs/ca.key"
 let issuerBundleFile = "/inputs/issuer-bundle.crt"
 let templateFile = "/inputs/template.json"
 
-let emptyPassword(): Secret! {
+let emptyPassword: Secret! {
   Dagger.setSecret("x509-empty-password", "")
 }
 
@@ -558,30 +608,13 @@ let authorityPassword(authority: CertificateAuthority!): Secret {
   if (authority.passwordProtected) { authority.password } else { null }
 }
 
-let stepRelease(version: String): GithubRelease! {
-  Dagger.github.release(version, "smallstep/cli")
-}
-
-let download(version: String, platform: Platform!): File! {
-  let release = stepRelease(version)
-  let stepVersion = release.tagName.trimPrefix("v")
-  let fileName = "step_linux_" + stepVersion + "_" + arch(platform) + ".tar.gz"
-  let asset = release.asset(fileName)
-
-  if (asset == null) {
-    raise "failed to download step binary"
-  }
-
-  let binary = asset.extracted(true).file("bin/step")
-
-  if (binary == null) {
-    raise "failed to extract step binary"
-  }
-
-  binary
-}
-
-let prepareCreate(container: Container!, password: Secret, caPassword: Secret, template: File, key: File): Container! {
+let prepareCreate(
+  container: Container!,
+  password: Secret,
+  caPassword: Secret,
+  template: File,
+  key: File,
+): Container! {
   if (password != null) {
     container = container.withMountedSecret(keyPasswordFile, password)
   }
@@ -601,7 +634,12 @@ let prepareCreate(container: Container!, password: Secret, caPassword: Secret, t
   container
 }
 
-let createArgs(commonName: String!, certFile: String!, keyFile: String!, key: File): [String!]! {
+let createArgs(
+  commonName: String!,
+  certFile: String!,
+  keyFile: String!,
+  key: File,
+): [String!]! {
   if (key != null) {
     ["step", "certificate", "create", commonName, certFile]
   } else {
@@ -609,8 +647,7 @@ let createArgs(commonName: String!, certFile: String!, keyFile: String!, key: Fi
   }
 }
 
-let addCommonCreateArgs(
-  args: [String!]!,
+let commonCreateArgs(
   keyType: KeyType,
   curve: String,
   size: Int,
@@ -619,6 +656,8 @@ let addCommonCreateArgs(
   sans: [String!]!,
   template: File,
 ): [String!]! {
+  let args = []
+
   if (keyType != null) {
     args += ["--kty", keyTypeValue(keyType)]
   }
@@ -648,9 +687,9 @@ let addCommonCreateArgs(
   }
 }
 
-let addKeyArgs(args: [String!]!, key: File, password: Secret): [String!]! {
+let keyArgs(key: File, password: Secret): [String!]! {
   if (key != null) {
-    args += ["--key", existingKeyFile]
+    let args = ["--key", existingKeyFile]
 
     if (password != null) {
       args += ["--password-file", keyPasswordFile]
@@ -658,17 +697,17 @@ let addKeyArgs(args: [String!]!, key: File, password: Secret): [String!]! {
 
     args
   } else if (password != null) {
-    args + ["--password-file", keyPasswordFile]
+    ["--password-file", keyPasswordFile]
   } else {
-    args + ["--no-password", "--insecure"]
+    ["--no-password", "--insecure"]
   }
 }
 
-let addCaPasswordArgs(args: [String!]!, password: Secret): [String!]! {
+let caPasswordArgs(password: Secret): [String!]! {
   if (password != null) {
-    args + ["--ca-password-file", caPasswordFile]
+    ["--ca-password-file", caPasswordFile]
   } else {
-    args
+    []
   }
 }
 

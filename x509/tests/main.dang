@@ -10,16 +10,16 @@ type Tests {
   Root CA generation returns certificate and key files.
   """
   pub rootCa: File! @check {
-    x509.generate("test-root-ca").withRsaKey(2048).rootCa.certificate
+    x509.generate("test-root-ca").rsa(2048).rootCa.certificate
   }
 
   """
   Intermediate and leaf certificate bundles can be generated and verified.
   """
   pub leafBundle: String! @check {
-    let root = x509.generate("test-root-ca").withRsaKey(2048).rootCa
-    let intermediate = root.issuer.intermediateCa("test-intermediate-ca", bundle: true)
-    let leaf = intermediate.issuer.certificate("test.local", sans: ["test.local"], bundle: true)
+    let root = x509.generate("test-root-ca").rsa(2048).rootCa
+    let intermediate = root.issuer.generate("test-intermediate-ca").rsa(2048).intermediateCa(bundle: true)
+    let leaf = intermediate.issuer.generate("test.local", sans: ["test.local"]).rsa(2048).certificate(bundle: true)
 
     x509
       .container
@@ -35,9 +35,9 @@ type Tests {
   """
   pub passwordProtectedCa: File! @check {
     let password = Dagger.setSecret("x509-test-password", "correct horse battery staple")
-    let root = x509.generate("password-root-ca", password: password).rootCa
+    let root = x509.generate("password-root-ca").rsa(2048, password: password).rootCa
 
-    root.issuer.intermediateCa("password-intermediate-ca").certificate
+    root.issuer.generate("password-intermediate-ca").rsa(2048).intermediateCa.certificate
   }
 
   """
@@ -45,7 +45,7 @@ type Tests {
   """
   pub importedCaPassword: File! @check {
     let password = Dagger.setSecret("x509-import-test-password", "correct horse battery staple")
-    let root = x509.generate("import-root-ca", password: password).rootCa
+    let root = x509.generate("import-root-ca").rsa(2048, password: password).rootCa
     let imported = x509.importCa(
       "imported-root-ca",
       root.certificate,
@@ -54,22 +54,22 @@ type Tests {
       bundle: root.bundle,
     )
 
-    imported.issuer.intermediateCa("imported-intermediate-ca").certificate
+    imported.issuer.generate("imported-intermediate-ca").rsa(2048).intermediateCa.certificate
   }
 
   """
   Existing private keys can be used instead of generating a new key.
   """
   pub existingKeyCsr: File! @check {
-    let first = x509.generate("existing-key.local").csr
+    let first = x509.generate("existing-key.local").rsa(2048).csr
 
-    x509.generate("existing-key.local").withKey(first.key).csr(name: "existing-key").csr
+    x509.generate("existing-key.local").key(first.key).csr(name: "existing-key").csr
   }
 
   """
   CSR generation returns a CSR file.
   """
   pub csr: File! @check {
-    x509.csr("test.local", sans: ["test.local"]).csr
+    x509.generate("test.local", sans: ["test.local"]).ec(X509EcCurve.P_256).csr.csr
   }
 }

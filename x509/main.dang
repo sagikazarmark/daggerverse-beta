@@ -46,26 +46,6 @@ type X509 {
     """
     sans: [String!]! = [],
     """
-    Key type used by the generated private key.
-    """
-    keyType: KeyType = null,
-    """
-    Elliptic curve used by generated EC or OKP private keys.
-    """
-    curve: Curve = null,
-    """
-    Key size used by generated RSA private keys.
-    """
-    size: Int = null,
-    """
-    Existing private key to use instead of generating one.
-    """
-    key: File = null,
-    """
-    Password used to encrypt generated keys or decrypt an existing key.
-    """
-    password: Secret = null,
-    """
     Certificate validity start time or duration.
     """
     notBefore: String = null,
@@ -82,189 +62,10 @@ type X509 {
       x509: self,
       commonName: commonName,
       sans: sans,
-      keyType: keyType,
-      curve: curve,
-      size: size,
-      key: key,
-      password: password,
       notBefore: notBefore,
       notAfter: notAfter,
       template: template,
     )
-  }
-
-  """
-  Create a self-signed root CA certificate.
-  """
-  pub rootCa(
-    """
-    Certificate common name.
-    """
-    commonName: String!,
-    """
-    Output file name prefix.
-    """
-    name: String! = "root-ca",
-    """
-    Key type used by the generated private key.
-    """
-    keyType: KeyType = null,
-    """
-    Elliptic curve used by generated EC or OKP private keys.
-    """
-    curve: Curve = null,
-    """
-    Key size used by generated RSA private keys.
-    """
-    size: Int = null,
-    """
-    Existing private key to use instead of generating one.
-    """
-    key: File = null,
-    """
-    Password used to encrypt generated keys or decrypt an existing key.
-    """
-    password: Secret = null,
-    """
-    Certificate validity start time or duration.
-    """
-    notBefore: String = null,
-    """
-    Certificate validity end time or duration.
-    """
-    notAfter: String = null,
-    """
-    Certificate template file.
-    """
-    template: File = null,
-  ): RootCA! {
-    self.generate(
-      commonName,
-      keyType: keyType,
-      curve: curve,
-      size: size,
-      key: key,
-      password: password,
-      notBefore: notBefore,
-      notAfter: notAfter,
-      template: template,
-    ).rootCa(name)
-  }
-
-  """
-  Create a self-signed leaf certificate.
-  """
-  pub selfSignedLeaf(
-    """
-    Certificate common name.
-    """
-    commonName: String!,
-    """
-    Output file name prefix.
-    """
-    name: String! = "leaf",
-    """
-    Subject alternative names.
-    """
-    sans: [String!]! = [],
-    """
-    Key type used by the generated private key.
-    """
-    keyType: KeyType = null,
-    """
-    Elliptic curve used by generated EC or OKP private keys.
-    """
-    curve: Curve = null,
-    """
-    Key size used by generated RSA private keys.
-    """
-    size: Int = null,
-    """
-    Existing private key to use instead of generating one.
-    """
-    key: File = null,
-    """
-    Password used to encrypt generated keys or decrypt an existing key.
-    """
-    password: Secret = null,
-    """
-    Certificate validity start time or duration.
-    """
-    notBefore: String = null,
-    """
-    Certificate validity end time or duration.
-    """
-    notAfter: String = null,
-    """
-    Certificate template file.
-    """
-    template: File = null,
-  ): Certificate! {
-    self.generate(
-      commonName,
-      sans: sans,
-      keyType: keyType,
-      curve: curve,
-      size: size,
-      key: key,
-      password: password,
-      notBefore: notBefore,
-      notAfter: notAfter,
-      template: template,
-    ).selfSignedLeaf(name)
-  }
-
-  """
-  Create a certificate signing request and private key.
-  """
-  pub csr(
-    """
-    CSR common name.
-    """
-    commonName: String!,
-    """
-    Output file name prefix.
-    """
-    name: String! = "certificate",
-    """
-    Subject alternative names.
-    """
-    sans: [String!]! = [],
-    """
-    Key type used by the generated private key.
-    """
-    keyType: KeyType = null,
-    """
-    Elliptic curve used by generated EC or OKP private keys.
-    """
-    curve: Curve = null,
-    """
-    Key size used by generated RSA private keys.
-    """
-    size: Int = null,
-    """
-    Existing private key to use instead of generating one.
-    """
-    key: File = null,
-    """
-    Password used to encrypt generated keys or decrypt an existing key.
-    """
-    password: Secret = null,
-    """
-    CSR template file.
-    """
-    template: File = null,
-  ): CertificateRequest! {
-    self.generate(
-      commonName,
-      sans: sans,
-      keyType: keyType,
-      curve: curve,
-      size: size,
-      key: key,
-      password: password,
-      template: template,
-    ).csr(name)
   }
 
   """
@@ -321,11 +122,6 @@ type Generation {
   let x509: X509!
   let commonName: String!
   let sans: [String!]! = []
-  let keyType: KeyType = null
-  let curve: Curve = null
-  let size: Int = null
-  let key: File = null
-  let password: Secret = null
   let notBefore: String = null
   let notAfter: String = null
   let template: File = null
@@ -334,11 +130,6 @@ type Generation {
     x509: X509!,
     commonName: String!,
     sans: [String!]! = [],
-    keyType: KeyType = null,
-    curve: Curve = null,
-    size: Int = null,
-    key: File = null,
-    password: Secret = null,
     notBefore: String = null,
     notAfter: String = null,
     template: File = null,
@@ -346,11 +137,6 @@ type Generation {
     self.x509 = x509
     self.commonName = commonName
     self.sans = sans
-    self.keyType = keyType
-    self.curve = curve
-    self.size = size
-    self.key = key
-    self.password = password
     self.notBefore = notBefore
     self.notAfter = notAfter
     self.template = template
@@ -361,48 +147,83 @@ type Generation {
   """
   Use a generated RSA key.
   """
-  pub withRsaKey(size: Int! = 2048): Generation! {
-    self.keyType = KeyType.RSA
-    self.curve = null
-    self.size = size
-    self.key = null
-
-    self
+  pub rsa(
+    """
+    RSA key size.
+    """
+    size: Int!,
+    """
+    Password used to encrypt the generated private key.
+    """
+    password: Secret = null,
+  ): KeyedGeneration! {
+    KeyedGeneration(generation: self, keyType: KeyType.RSA, size: size, password: password)
   }
 
   """
   Use a generated EC key.
   """
-  pub withEcKey(curve: Curve! = Curve.P256): Generation! {
-    self.keyType = KeyType.EC
-    self.curve = curve
-    self.size = null
-    self.key = null
-
-    self
+  pub ec(
+    """
+    EC key curve.
+    """
+    curve: EcCurve!,
+    """
+    Password used to encrypt the generated private key.
+    """
+    password: Secret = null,
+  ): KeyedGeneration! {
+    KeyedGeneration(generation: self, keyType: KeyType.EC, curve: ecCurveValue(curve), password: password)
   }
 
   """
-  Use a generated OKP key.
+  Use a generated Ed25519 key.
   """
-  pub withOkpKey(curve: Curve! = Curve.ED25519): Generation! {
-    self.keyType = KeyType.OKP
-    self.curve = curve
-    self.size = null
-    self.key = null
-
-    self
+  pub ed25519(
+    """
+    Password used to encrypt the generated private key.
+    """
+    password: Secret = null,
+  ): KeyedGeneration! {
+    KeyedGeneration(generation: self, keyType: KeyType.OKP, curve: "Ed25519", password: password)
   }
 
   """
   Use an existing private key instead of generating one.
   """
-  pub withKey(key: File!, password: Secret = null): Generation! {
+  pub key(
+    key: File!,
+    """
+    Password used to decrypt the existing private key.
+    """
+    password: Secret = null,
+  ): KeyedGeneration! {
+    KeyedGeneration(generation: self, key: key, password: password)
+  }
+}
+
+type KeyedGeneration {
+  let generation: Generation!
+  let keyType: KeyType = null
+  let curve: String = null
+  let size: Int = null
+  let key: File = null
+  let password: Secret = null
+
+  new(
+    generation: Generation!,
+    keyType: KeyType = null,
+    curve: String = null,
+    size: Int = null,
+    key: File = null,
+    password: Secret = null,
+  ) {
+    self.generation = generation
+    self.keyType = keyType
+    self.curve = curve
+    self.size = size
     self.key = key
     self.password = password
-    self.keyType = null
-    self.curve = null
-    self.size = null
 
     self
   }
@@ -415,14 +236,14 @@ type Generation {
     let keyFile = name + ".key"
     let bundleFile = name + "-bundle.crt"
 
-    let container = self.x509.baseContainer(certFile, keyFile, bundleFile)
+    let container = self.generation.x509.baseContainer(certFile, keyFile, bundleFile)
 
-    let args = createArgs(self.commonName, certFile, keyFile, self.key)
+    let args = createArgs(self.generation.commonName, certFile, keyFile, self.key)
       + ["--profile", "root-ca", "--force"]
-    args = addCommonCreateArgs(args, self.keyType, self.curve, self.size, self.notBefore, self.notAfter, [], self.template, self.key)
+    args = addCommonCreateArgs(args, self.keyType, self.curve, self.size, self.generation.notBefore, self.generation.notAfter, [], self.generation.template)
     args = addKeyArgs(args, self.key, self.password)
 
-    let prepared = prepareCreate(container, self.password, null, self.template, self.key)
+    let prepared = prepareCreate(container, self.password, null, self.generation.template, self.key)
       .withExec(args)
       .withExec(["cp", certFile, bundleFile])
 
@@ -430,14 +251,14 @@ type Generation {
     let resultKey = self.key ?? directory.file(keyFile)
 
     let authority = CertificateAuthority(
-      commonName: self.commonName,
+      commonName: self.generation.commonName,
       certificate: directory.file(certFile),
       key: resultKey,
       bundle: directory.file(bundleFile),
     )
 
     RootCA(
-      issuer: Issuer(x509: self.x509, authority: authority, password: self.password),
+      issuer: Issuer(x509: self.generation.x509, authority: authority, password: self.password),
       directory: directory,
     )
   }
@@ -455,19 +276,19 @@ type Generation {
     let keyFile = name + ".key"
     let bundleFile = name + "-bundle.crt"
 
-    let container = self.x509
+    let container = self.generation.x509
       .baseContainer(certFile, keyFile, bundleFile)
       .withMountedFile(caCertFile, ca.certificate)
       .withMountedFile(caKeyFile, ca.key)
       .withMountedFile(issuerBundleFile, ca.bundle)
 
-    let args = createArgs(self.commonName, certFile, keyFile, self.key)
+    let args = createArgs(self.generation.commonName, certFile, keyFile, self.key)
       + ["--profile", "intermediate-ca", "--ca", caCertFile, "--ca-key", caKeyFile, "--force"]
-    args = addCommonCreateArgs(args, self.keyType, self.curve, self.size, self.notBefore, self.notAfter, [], self.template, self.key)
+    args = addCommonCreateArgs(args, self.keyType, self.curve, self.size, self.generation.notBefore, self.generation.notAfter, [], self.generation.template)
     args = addKeyArgs(args, self.key, self.password)
     args = addCaPasswordArgs(args, caPassword)
 
-    container = prepareCreate(container, self.password, caPassword, self.template, self.key)
+    container = prepareCreate(container, self.password, caPassword, self.generation.template, self.key)
       .withExec(args)
 
     if (bundle) {
@@ -481,14 +302,14 @@ type Generation {
     let certificateBundle = if (bundle) { directory.file(bundleFile) } else { null }
 
     let authority = CertificateAuthority(
-      commonName: self.commonName,
+      commonName: self.generation.commonName,
       certificate: directory.file(certFile),
       key: resultKey,
       bundle: certificateBundle ?? directory.file(certFile),
     )
 
     IntermediateCA(
-      issuer: Issuer(x509: self.x509, authority: authority, password: self.password),
+      issuer: Issuer(x509: self.generation.x509, authority: authority, password: self.password),
       bundle: certificateBundle,
       directory: directory,
     )
@@ -507,19 +328,19 @@ type Generation {
     let keyFile = name + ".key"
     let bundleFile = name + "-bundle.crt"
 
-    let container = self.x509
+    let container = self.generation.x509
       .baseContainer(certFile, keyFile, bundleFile)
       .withMountedFile(caCertFile, ca.certificate)
       .withMountedFile(caKeyFile, ca.key)
       .withMountedFile(issuerBundleFile, ca.bundle)
 
-    let args = createArgs(self.commonName, certFile, keyFile, self.key)
+    let args = createArgs(self.generation.commonName, certFile, keyFile, self.key)
       + ["--profile", "leaf", "--ca", caCertFile, "--ca-key", caKeyFile, "--force"]
-    args = addCommonCreateArgs(args, self.keyType, self.curve, self.size, self.notBefore, self.notAfter, self.sans, self.template, self.key)
+    args = addCommonCreateArgs(args, self.keyType, self.curve, self.size, self.generation.notBefore, self.generation.notAfter, self.generation.sans, self.generation.template)
     args = addKeyArgs(args, self.key, self.password)
     args = addCaPasswordArgs(args, caPassword)
 
-    container = prepareCreate(container, self.password, caPassword, self.template, self.key)
+    container = prepareCreate(container, self.password, caPassword, self.generation.template, self.key)
       .withExec(args)
 
     if (bundle) {
@@ -531,7 +352,7 @@ type Generation {
     let directory = container.directory("/work")
 
     Certificate(
-      commonName: self.commonName,
+      commonName: self.generation.commonName,
       certificate: directory.file(certFile),
       key: self.key ?? directory.file(keyFile),
       bundle: if (bundle) { directory.file(bundleFile) } else { null },
@@ -548,21 +369,21 @@ type Generation {
     let keyFile = name + ".key"
     let bundleFile = name + "-bundle.crt"
 
-    let container = self.x509.baseContainer(certFile, keyFile, bundleFile)
+    let container = self.generation.x509.baseContainer(certFile, keyFile, bundleFile)
 
-    let args = createArgs(self.commonName, certFile, keyFile, self.key)
+    let args = createArgs(self.generation.commonName, certFile, keyFile, self.key)
       + ["--profile", "self-signed", "--subtle", "--force"]
-    args = addCommonCreateArgs(args, self.keyType, self.curve, self.size, self.notBefore, self.notAfter, self.sans, self.template, self.key)
+    args = addCommonCreateArgs(args, self.keyType, self.curve, self.size, self.generation.notBefore, self.generation.notAfter, self.generation.sans, self.generation.template)
     args = addKeyArgs(args, self.key, self.password)
 
-    container = prepareCreate(container, self.password, null, self.template, self.key)
+    container = prepareCreate(container, self.password, null, self.generation.template, self.key)
       .withExec(args)
       .withExec(["cp", certFile, bundleFile])
 
     let directory = container.directory("/work")
 
     Certificate(
-      commonName: self.commonName,
+      commonName: self.generation.commonName,
       certificate: directory.file(certFile),
       key: self.key ?? directory.file(keyFile),
       bundle: directory.file(bundleFile),
@@ -579,19 +400,19 @@ type Generation {
     let keyFile = name + ".key"
     let bundleFile = name + "-bundle.crt"
 
-    let container = self.x509.baseContainer(csrFile, keyFile, bundleFile)
+    let container = self.generation.x509.baseContainer(csrFile, keyFile, bundleFile)
 
-    let args = createArgs(self.commonName, csrFile, keyFile, self.key) + ["--csr", "--force"]
-    args = addCommonCreateArgs(args, self.keyType, self.curve, self.size, null, null, self.sans, self.template, self.key)
+    let args = createArgs(self.generation.commonName, csrFile, keyFile, self.key) + ["--csr", "--force"]
+    args = addCommonCreateArgs(args, self.keyType, self.curve, self.size, null, null, self.generation.sans, self.generation.template)
     args = addKeyArgs(args, self.key, self.password)
 
-    container = prepareCreate(container, self.password, null, self.template, self.key)
+    container = prepareCreate(container, self.password, null, self.generation.template, self.key)
       .withExec(args)
 
     let directory = container.directory("/work")
 
     CertificateRequest(
-      commonName: self.commonName,
+      commonName: self.generation.commonName,
       csr: directory.file(csrFile),
       key: self.key ?? directory.file(keyFile),
       password: self.password,
@@ -616,11 +437,6 @@ type Issuer {
   pub generate(
     commonName: String!,
     sans: [String!]! = [],
-    keyType: KeyType = null,
-    curve: Curve = null,
-    size: Int = null,
-    key: File = null,
-    password: Secret = null,
     notBefore: String = null,
     notAfter: String = null,
     template: File = null,
@@ -629,11 +445,6 @@ type Issuer {
       generation: self.x509.generate(
         commonName,
         sans: sans,
-        keyType: keyType,
-        curve: curve,
-        size: size,
-        key: key,
-        password: password,
         notBefore: notBefore,
         notAfter: notAfter,
         template: template,
@@ -642,65 +453,6 @@ type Issuer {
     )
   }
 
-  """
-  Create an intermediate CA certificate signed by this issuer.
-  """
-  pub intermediateCa(
-    commonName: String!,
-    name: String! = "intermediate-ca",
-    keyType: KeyType = null,
-    curve: Curve = null,
-    size: Int = null,
-    key: File = null,
-    password: Secret = null,
-    notBefore: String = null,
-    notAfter: String = null,
-    template: File = null,
-    bundle: Boolean! = false,
-  ): IntermediateCA! {
-    self.generate(
-      commonName,
-      keyType: keyType,
-      curve: curve,
-      size: size,
-      key: key,
-      password: password,
-      notBefore: notBefore,
-      notAfter: notAfter,
-      template: template,
-    ).intermediateCa(name: name, bundle: bundle)
-  }
-
-  """
-  Create a leaf certificate signed by this issuer.
-  """
-  pub certificate(
-    commonName: String!,
-    name: String! = "leaf",
-    sans: [String!]! = [],
-    keyType: KeyType = null,
-    curve: Curve = null,
-    size: Int = null,
-    key: File = null,
-    password: Secret = null,
-    notBefore: String = null,
-    notAfter: String = null,
-    template: File = null,
-    bundle: Boolean! = false,
-  ): Certificate! {
-    self.generate(
-      commonName,
-      sans: sans,
-      keyType: keyType,
-      curve: curve,
-      size: size,
-      key: key,
-      password: password,
-      notBefore: notBefore,
-      notAfter: notAfter,
-      template: template,
-    ).certificate(name: name, bundle: bundle)
-  }
 }
 
 type IssuedGeneration {
@@ -710,38 +462,64 @@ type IssuedGeneration {
   """
   Use a generated RSA key.
   """
-  pub withRsaKey(size: Int! = 2048): IssuedGeneration! {
-    self.generation = self.generation.withRsaKey(size)
-
-    self
+  pub rsa(
+    """
+    RSA key size.
+    """
+    size: Int!,
+    """
+    Password used to encrypt the generated private key.
+    """
+    password: Secret = null,
+  ): IssuedKeyedGeneration! {
+    IssuedKeyedGeneration(generation: self.generation.rsa(size, password: password), issuer: self.issuer)
   }
 
   """
   Use a generated EC key.
   """
-  pub withEcKey(curve: Curve! = Curve.P256): IssuedGeneration! {
-    self.generation = self.generation.withEcKey(curve)
-
-    self
+  pub ec(
+    """
+    EC key curve.
+    """
+    curve: EcCurve!,
+    """
+    Password used to encrypt the generated private key.
+    """
+    password: Secret = null,
+  ): IssuedKeyedGeneration! {
+    IssuedKeyedGeneration(generation: self.generation.ec(curve, password: password), issuer: self.issuer)
   }
 
   """
-  Use a generated OKP key.
+  Use a generated Ed25519 key.
   """
-  pub withOkpKey(curve: Curve! = Curve.ED25519): IssuedGeneration! {
-    self.generation = self.generation.withOkpKey(curve)
-
-    self
+  pub ed25519(
+    """
+    Password used to encrypt the generated private key.
+    """
+    password: Secret = null,
+  ): IssuedKeyedGeneration! {
+    IssuedKeyedGeneration(generation: self.generation.ed25519(password: password), issuer: self.issuer)
   }
 
   """
   Use an existing private key instead of generating one.
   """
-  pub withKey(key: File!, password: Secret = null): IssuedGeneration! {
-    self.generation = self.generation.withKey(key, password: password)
-
-    self
+  pub key(
+    key: File!,
+    """
+    Password used to decrypt the existing private key.
+    """
+    password: Secret = null,
+  ): IssuedKeyedGeneration! {
+    IssuedKeyedGeneration(generation: self.generation.key(key, password: password), issuer: self.issuer)
   }
+}
+
+type IssuedKeyedGeneration {
+  let generation: KeyedGeneration!
+  let issuer: Issuer!
 
   """
   Create an intermediate CA certificate signed by the issuer.
@@ -820,11 +598,10 @@ enum KeyType {
   RSA
 }
 
-enum Curve {
+enum EcCurve {
   P256
   P384
   P521
-  ED25519
 }
 
 let keyPasswordFile = "/run/secrets/x509-password"
@@ -889,22 +666,19 @@ let createArgs(commonName: String!, certFile: String!, keyFile: String!, key: Fi
 let addCommonCreateArgs(
   args: [String!]!,
   keyType: KeyType,
-  curve: Curve,
+  curve: String,
   size: Int,
   notBefore: String,
   notAfter: String,
   sans: [String!]!,
   template: File,
-  key: File,
 ): [String!]! {
-  validateKeyOptions(keyType, curve, size, key)
-
   if (keyType != null) {
     args += ["--kty", keyTypeValue(keyType)]
   }
 
   if (curve != null) {
-    args += ["--curve", curveValue(curve)]
+    args += ["--curve", curve]
   }
 
   if (size != null) {
@@ -952,38 +726,15 @@ let addCaPasswordArgs(args: [String!]!, password: Secret): [String!]! {
   }
 }
 
-let validateKeyOptions(keyType: KeyType, curve: Curve, size: Int, key: File): Void {
-  if (key != null and (keyType != null or curve != null or size != null)) {
-    raise "key type, curve, and size cannot be used with an existing key"
-  }
-
-  if (size != null and keyType != KeyType.RSA) {
-    raise "size requires RSA key type"
-  }
-
-  if (curve != null and keyType == KeyType.RSA) {
-    raise "RSA keys use size, not curve"
-  }
-
-  if (keyType == KeyType.OKP and curve != null and curve != Curve.ED25519) {
-    raise "OKP keys only support Ed25519"
-  }
-
-  if (keyType == KeyType.EC and curve == Curve.ED25519) {
-    raise "EC keys do not support Ed25519"
-  }
-}
-
 let keyTypeValue(keyType: KeyType!): String! {
   toString(keyType).trim("\"")
 }
 
-let curveValue(curve: Curve!): String! {
+let ecCurveValue(curve: EcCurve!): String! {
   case (curve) {
-    Curve.P256 => "P-256"
-    Curve.P384 => "P-384"
-    Curve.P521 => "P-521"
-    Curve.ED25519 => "Ed25519"
+    EcCurve.P256 => "P-256"
+    EcCurve.P384 => "P-384"
+    EcCurve.P521 => "P-521"
   }
 }
 

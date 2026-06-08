@@ -1,0 +1,198 @@
+type X509 {
+  """
+  Container with the step CLI installed.
+  """
+  pub container: Container!
+
+  new(
+    """
+    Image tag for the smallstep/step-cli image.
+    """
+    version: String! = "latest",
+    """
+    Container to run step commands in.
+    """
+    container: Container! = Dagger.container.from("smallstep/step-cli:" + version).withUser("root"),
+  ) {
+    self.container = container.withWorkdir("/work")
+
+    self
+  }
+
+  """
+  Generate a certificate or a certificate signing request (CSR).
+  """
+  pub create(
+    """
+    Certificate template file.
+    """
+    template: File = null,
+    """
+    Certificate validity end time or duration.
+    """
+    notAfter: String = null,
+    """
+    Certificate validity start time or duration.
+    """
+    notBefore: String = null,
+  ): CreateKeySelector! {
+    CreateKeySelector(self, template, notAfter, notBefore)
+  }
+
+  """
+  Bundle a certificate with any intermediates necessary to validate the certificate.
+  """
+  pub bundle(
+    """
+    A leaf certificate to bundle with issuing certificate(s).
+    """
+    certificate: File!,
+    """
+    The Certificate Authority issuing certificate.
+    """
+    ca: File!,
+    """
+    Output file name.
+    """
+    name: String! = "bundle.crt",
+  ): File! {
+    self
+      .container
+      .withMountedFile("/inputs/certificate.crt", certificate)
+      .withMountedFile(caCertFile, ca)
+      .withExec(["step", "certificate", "bundle", "/inputs/certificate.crt", caCertFile, name])
+      .file(name)
+  }
+
+  """
+  Import existing certificate and key files as a Certificate Authority.
+  """
+  pub importCa(
+    """
+    CA certificate file.
+    """
+    certificate: File!,
+    """
+    CA private key file.
+    """
+    key: File!,
+    """
+    Password used to decrypt the private key.
+    """
+    password: Secret = null,
+    """
+    Certificate bundle for this CA, including its issuing chain if any.
+    """
+    bundle: File = null,
+  ): ImportedCA! {
+    ImportedCA(certificate, key, password, bundle ?? certificate)
+  }
+}
+
+type CertificateAuthority {
+  pub certificate: File!
+  pub key: File!
+  pub password: Secret!
+  pub bundle: File!
+}
+
+type RootCA {
+  pub certificate: File!
+  pub key: File!
+  pub password: Secret
+  pub bundle: File!
+
+  pub asCa: CertificateAuthority! {
+    CertificateAuthority(
+      certificate: self.certificate,
+      key: self.key,
+      password: self.password ?? emptyPassword,
+      bundle: self.bundle,
+    )
+  }
+}
+
+type IntermediateCA {
+  pub certificate: File!
+  pub key: File!
+  pub password: Secret
+  pub bundle: File!
+
+  pub asCa: CertificateAuthority! {
+    CertificateAuthority(
+      certificate: self.certificate,
+      key: self.key,
+      password: self.password ?? emptyPassword,
+      bundle: self.bundle,
+    )
+  }
+}
+
+type ImportedCA {
+  pub certificate: File!
+  pub key: File!
+  pub password: Secret
+  pub bundle: File!
+
+  pub asCa: CertificateAuthority! {
+    CertificateAuthority(
+      certificate: self.certificate,
+      key: self.key,
+      password: self.password ?? emptyPassword,
+      bundle: self.bundle,
+    )
+  }
+}
+
+type Certificate {
+  pub certificate: File!
+  pub key: File!
+  pub password: Secret
+  pub bundle: File!
+}
+
+type CertificateRequest {
+  pub csr: File!
+  pub key: File!
+  pub password: Secret
+}
+
+enum KeyType {
+  EC
+  OKP
+  RSA
+}
+
+enum EcCurve {
+  P256
+  P384
+  P521
+}
+
+let keyPasswordFile = "/run/secrets/x509-password"
+let caPasswordFile = "/run/secrets/x509-ca-password"
+let existingKeyFile = "/inputs/key.pem"
+let caCertFile = "/inputs/ca.crt"
+let caKeyFile = "/inputs/ca.key"
+let caBundleFile = "/inputs/ca-bundle.crt"
+let templateFile = "/inputs/template.json"
+
+let emptyPassword: Secret! {
+  Dagger.setSecret("x509-empty-password", "")
+}
+
+let ecCurveValue(curve: EcCurve!): String! {
+  case (curve) {
+    EcCurve.P256 => "P-256"
+    EcCurve.P384 => "P-384"
+    EcCurve.P521 => "P-521"
+  }
+}
+
+let arch(platform: Platform!): String! {
+  case (platform) {
+    "linux/amd64" => "amd64"
+    "linux/arm64" => "arm64"
+    else => raise "unsupported platform: " + toString(platform).trim("\"")
+  }
+}

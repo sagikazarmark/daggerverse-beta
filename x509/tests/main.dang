@@ -1,0 +1,95 @@
+type Tests {
+  """
+  Step CLI is installed and can be executed.
+  """
+  pub step: Container! @check {
+    x509.container.withExec(["step", "version"])
+  }
+
+  """
+  Root CA creation returns certificate and key files.
+  """
+  pub rootCa: File! @check {
+    x509.create.rsa(2048).rootCa("test-root-ca").certificate
+  }
+
+  """
+  Create-level validity parameters are applied to certificate creation.
+  """
+  pub createValidity: File! @check {
+    x509.create(notAfter: "24h", notBefore: "0s").rsa(2048).rootCa("create-validity-root-ca").certificate
+  }
+
+  """
+  Intermediate and leaf certificate bundles are created and can be verified.
+  """
+  pub leafBundle: String! @check {
+    let root = x509.create.rsa(2048).rootCa("test-root-ca")
+    let intermediate = x509.create.rsa(2048).intermediateCa(
+      "test-intermediate-ca",
+      root.asCa,
+    )
+    let leaf = x509.create.rsa(2048).certificate(
+      "test.local",
+      intermediate.asCa,
+      sans: ["test.local"],
+    )
+
+    x509
+      .container
+      .withWorkdir("/work")
+      .withMountedFile("root.crt", root.certificate)
+      .withMountedFile("leaf.crt", leaf.bundle)
+      .withExec(["step", "certificate", "verify", "--roots", "root.crt", "leaf.crt"])
+      .stdout
+  }
+
+  """
+  Self-signed certificate bundles expose the certificate itself.
+  """
+  pub selfSignedBundle: File! @check {
+    x509.create.ec(X509EcCurve.P_256).selfSigned("self-signed.local", sans: ["self-signed.local"]).bundle
+  }
+
+  """
+  Passwords are mounted as secret files for generated keys and CA signing keys.
+  """
+  pub passwordProtectedCa: File! @check {
+    let password = Dagger.setSecret("x509-test-password", "correct horse battery staple")
+    let root = x509.create.rsa(2048, password: password).rootCa("password-root-ca")
+
+    x509.create.rsa(2048).intermediateCa("password-intermediate-ca", root.asCa).certificate
+  }
+
+  """
+  Imported CAs retain their password for signing.
+  """
+  pub importedCaPassword: File! @check {
+    let password = Dagger.setSecret("x509-import-test-password", "correct horse battery staple")
+    let root = x509.create.rsa(2048, password: password).rootCa("import-root-ca")
+    let imported = x509.importCa(
+      root.certificate,
+      root.key,
+      password: root.password,
+      bundle: root.bundle,
+    )
+
+    x509.create.rsa(2048).intermediateCa("imported-intermediate-ca", imported.asCa).certificate
+  }
+
+  """
+  Existing private keys can be used instead of generating a new key.
+  """
+  pub existingKeyCsr: File! @check {
+    let first = x509.create.rsa(2048).csr("existing-key.local")
+
+    x509.create.key(first.key).csr("existing-key.local", name: "existing-key").csr
+  }
+
+  """
+  CSR creation returns a CSR file.
+  """
+  pub csr: File! @check {
+    x509.create.ec(X509EcCurve.P_256).csr("test.local", sans: ["test.local"]).csr
+  }
+}

@@ -10,28 +10,29 @@ type Tests {
   Root CA generation returns certificate and key files.
   """
   pub rootCa: File! @check {
-    x509.generate("test-root-ca").rsa(2048).rootCa.certificate
+    x509.generate.rsa(2048).rootCa("test-root-ca").certificate
   }
 
   """
-  Intermediate and leaf certificate bundles can be generated and verified.
+  Intermediate and leaf certificate bundles are generated and can be verified.
   """
   pub leafBundle: String! @check {
-    let root = x509.generate("test-root-ca").rsa(2048).rootCa
-    let intermediate = x509.generate("test-intermediate-ca").rsa(2048).intermediateCa(
+    let root = x509.generate.rsa(2048).rootCa("test-root-ca")
+    let intermediate = x509.generate.rsa(2048).intermediateCa(
       root.issuer,
-      bundle: true,
+      "test-intermediate-ca",
     )
-    let leaf = x509.generate("test.local", sans: ["test.local"]).rsa(2048).certificate(
+    let leaf = x509.generate.rsa(2048).certificate(
       intermediate.issuer,
-      bundle: true,
+      "test.local",
+      sans: ["test.local"],
     )
 
     x509
       .container
       .withWorkdir("/work")
       .withMountedFile("root.crt", root.certificate)
-      .withMountedFile("leaf.crt", leaf.directory.file("leaf-bundle.crt"))
+      .withMountedFile("leaf.crt", leaf.bundle)
       .withExec(["step", "certificate", "verify", "--roots", "root.crt", "leaf.crt"])
       .stdout
   }
@@ -41,9 +42,9 @@ type Tests {
   """
   pub passwordProtectedCa: File! @check {
     let password = Dagger.setSecret("x509-test-password", "correct horse battery staple")
-    let root = x509.generate("password-root-ca").rsa(2048, password: password).rootCa
+    let root = x509.generate.rsa(2048, password: password).rootCa("password-root-ca")
 
-    x509.generate("password-intermediate-ca").rsa(2048).intermediateCa(root.issuer).certificate
+    x509.generate.rsa(2048).intermediateCa(root.issuer, "password-intermediate-ca").certificate
   }
 
   """
@@ -51,7 +52,7 @@ type Tests {
   """
   pub importedCaPassword: File! @check {
     let password = Dagger.setSecret("x509-import-test-password", "correct horse battery staple")
-    let root = x509.generate("import-root-ca").rsa(2048, password: password).rootCa
+    let root = x509.generate.rsa(2048, password: password).rootCa("import-root-ca")
     let imported = x509.importCa(
       root.certificate,
       root.key,
@@ -59,22 +60,22 @@ type Tests {
       bundle: root.bundle,
     )
 
-    x509.generate("imported-intermediate-ca").rsa(2048).intermediateCa(imported.issuer).certificate
+    x509.generate.rsa(2048).intermediateCa(imported.issuer, "imported-intermediate-ca").certificate
   }
 
   """
   Existing private keys can be used instead of generating a new key.
   """
   pub existingKeyCsr: File! @check {
-    let first = x509.generate("existing-key.local").rsa(2048).csr
+    let first = x509.generate.rsa(2048).csr("existing-key.local")
 
-    x509.generate("existing-key.local").key(first.key).csr(name: "existing-key").csr
+    x509.generate.key(first.key).csr("existing-key.local", name: "existing-key").csr
   }
 
   """
   CSR generation returns a CSR file.
   """
   pub csr: File! @check {
-    x509.generate("test.local", sans: ["test.local"]).ec(X509EcCurve.P_256).csr.csr
+    x509.generate.ec(X509EcCurve.P_256).csr("test.local", sans: ["test.local"]).csr
   }
 }

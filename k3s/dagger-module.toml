@@ -1,0 +1,8 @@
+name = "k3s"
+engineVersion = "v1.0.0-beta.3"
+runtime.source = "dang"
+include = ["!tests"]
+
+[[dependencies]]
+name = "github"
+source = "../github"

@@ -1,0 +1,90 @@
+type CertGenerator {
+  let container: Container!
+
+  new(
+    version: String! = "latest",
+    container: Container! = Dagger.container.from("alpine/openssl:" + version),
+  ) {
+    self.container = container
+
+    self
+  }
+
+  pub generate(
+    seed: String!,
+  ): Directory! {
+    let container = self
+      .container
+      .withWorkdir("/work")
+      .withExec(["mkdir", "-p", ".ca/certs", "etcd"])
+      .withExec(["touch", ".ca/index"])
+      .withNewFile(".ca/config", self.config)
+      .withEnvVariable("SEED", seed) # set the seed for the Dagger cache key
+      .withExec(["openssl", "ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", "/dev/null"])
+      .withExec(["openssl", "rand", "-hex", "8"], redirectStdout: ".ca/serial")
+
+    let suffix = "@" + seed
+
+    container = self.genrsa(container, "service.key", "2048")
+
+    # Root CA
+    container = self
+      .genrsa(container, "root-ca.key", "4096")
+      .withExec(["openssl", "req", "-x509", "-new", "-nodes", "-sha256", "-days", "7300", "-subj", "/CN=k3s-root-ca" + suffix, "-key", "root-ca.key", "-out", "root-ca.pem", "-config", ".ca/config", "-extensions", "v3_ca"])
+      .withExec(["cat", "root-ca.pem"], redirectStdout: "root-ca.crt")
+
+    # Intermediate CA
+    container = self
+      .genrsa(container, "intermediate-ca.key", "4096")
+      .withExec(["openssl", "req", "-new", "-nodes", "-subj", "/CN=k3s-intermediate-ca" + suffix, "-key", "intermediate-ca.key", "-out", "intermediate-ca.csr"])
+      .withExec(["openssl", "ca", "-batch", "-notext", "-days", "3700", "-in", "intermediate-ca.csr", "-out", "intermediate-ca.pem", "-keyfile", "root-ca.key", "-cert", "root-ca.pem", "-config", ".ca/config", "-extensions", "v3_ca"])
+      .withExec(["cat", "intermediate-ca.pem", "root-ca.pem"], redirectStdout: "intermediate-ca.crt")
+
+    # Leaf CAs
+    container = self.leafCA(container, "client", "k3s-client-ca" + suffix)
+    container = self.leafCA(container, "server", "k3s-server-ca" + suffix)
+    container = self.leafCA(container, "request-header", "k3s-request-header-ca" + suffix)
+    container = self.leafCA(container, "etcd/peer", "k3s-etcd-peer-ca" + suffix)
+    container = self.leafCA(container, "etcd/server", "k3s-etcd-server-ca" + suffix)
+
+    container
+      .withExec(["sh", "-c", "rm -rf .ca *.csr etcd/*.csr"])
+      .directory("/work")
+  }
+
+  let genrsa(container: Container!, path: String!, bits: String!): Container! {
+    container.withExec(["openssl", "genrsa", "-out", path, bits])
+  }
+
+  let leafCA(container: Container!, name: String!, cn: String!): Container! {
+    container
+      .withExec(["openssl", "ecparam", "-name", "prime256v1", "-genkey", "-noout", "-out", name + "-ca.key"])
+      .withExec(["openssl", "req", "-new", "-nodes", "-subj", "/CN=" + cn, "-key", name + "-ca.key", "-out", name + "-ca.csr"])
+      .withExec(["openssl", "ca", "-batch", "-notext", "-days", "3700", "-in", name + "-ca.csr", "-out", name + "-ca.pem", "-keyfile", "intermediate-ca.key", "-cert", "intermediate-ca.pem", "-config", ".ca/config", "-extensions", "v3_ca"])
+      .withExec(
+        ["cat", name + "-ca.pem", "intermediate-ca.pem", "root-ca.pem"],
+        redirectStdout: name + "-ca.crt",
+      )
+  }
+
+  let config: String! = """[ca]
+  default_ca = ca_default
+  [ca_default]
+  dir = ./.ca
+  database = $dir/index
+  serial = $dir/serial
+  new_certs_dir = $dir/certs
+  default_md = sha256
+  policy = policy_anything
+  [policy_anything]
+  commonName = supplied
+  [req]
+  distinguished_name = req_distinguished_name
+  [req_distinguished_name]
+  [v3_ca]
+  subjectKeyIdentifier = hash
+  authorityKeyIdentifier = keyid:always
+  basicConstraints = critical, CA:true
+  keyUsage = critical, digitalSignature, keyEncipherment, keyCertSign
+  """
+}

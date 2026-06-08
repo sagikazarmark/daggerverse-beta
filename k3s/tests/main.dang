@@ -1,0 +1,86 @@
+type Tests {
+  """
+  kubectl can reach the generated K3s cluster.
+  """
+  pub clusterInfo: String! @check @cache(policy: FunctionCachePolicy.Never) {
+    let output = Dagger
+      .k3S
+      .kubectl(seed: "k3s-test")
+      .withExec(["sh", "-c", "for i in $(seq 1 60); do kubectl cluster-info && exit 0; sleep 1; done; kubectl cluster-info"])
+      .stdout
+
+    assert { output.contains("Kubernetes control plane is running") }
+
+    output
+  }
+
+  """
+  A Pod can be started and reached through a fixed NodePort on the K3s service hostname.
+  """
+  pub podNodePort: String! @check @cache(policy: FunctionCachePolicy.Never) {
+    let output = Dagger
+      .k3S
+      .kubectl(seed: "k3s-pod-test", nodePort: 30080)
+      .withExec(["sh", "-c", self.podNodePortScript])
+      .stdout
+
+    assert { output.contains("Welcome to nginx") }
+
+    output
+  }
+
+  let podNodePortScript: String! = """set -eu
+
+for i in $(seq 1 60); do
+  kubectl cluster-info >/dev/null 2>&1 && break
+  sleep 1
+done
+kubectl cluster-info >/dev/null
+
+for i in $(seq 1 60); do
+  kubectl get serviceaccount default >/dev/null 2>&1 && break
+  sleep 1
+done
+kubectl get serviceaccount default >/dev/null
+
+kubectl run web --image=nginx:1.27-alpine --port=80 --restart=Never --labels app=web
+kubectl wait --for=condition=Ready pod/web --timeout=180s
+
+cat <<'EOF' | kubectl apply -f -
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+spec:
+  type: NodePort
+  selector:
+    app: web
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+      nodePort: 30080
+EOF
+
+for i in $(seq 1 60); do
+  endpoint="$(kubectl get endpoints web -o=jsonpath='{.subsets[0].addresses[0].ip}' 2>/dev/null || true)"
+  test -n "$endpoint" && break
+  sleep 1
+done
+test -n "$endpoint"
+
+node_port="$(kubectl get service web -o=jsonpath='{.spec.ports[0].nodePort}')"
+test "$node_port" = "30080"
+printf 'node_port=%s\n' "$node_port"
+
+for i in $(seq 1 30); do
+  if curl -fsS --connect-timeout 1 --max-time 2 http://k3s:30080 >/tmp/nodeport.html; then
+    break
+  fi
+  sleep 1
+done
+
+cat /tmp/nodeport.html
+grep -q "Welcome to nginx" /tmp/nodeport.html
+"""
+}

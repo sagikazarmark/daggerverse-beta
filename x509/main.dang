@@ -110,7 +110,6 @@ type RootCA {
       bundle: self.bundle,
     )
   }
-
 }
 
 type IntermediateCA {
@@ -127,7 +126,6 @@ type IntermediateCA {
       bundle: self.bundle,
     )
   }
-
 }
 
 type ImportedCA {

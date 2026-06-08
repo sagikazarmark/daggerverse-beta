@@ -85,66 +85,46 @@ type X509 {
     """
     bundle: File = null,
   ): ImportedCA! {
-    ImportedCA(certificate, key, bundle ?? certificate, password)
+    ImportedCA(certificate, key, password, bundle ?? certificate)
   }
 }
 
 type CertificateAuthority {
   pub certificate: File!
   pub key: File!
-
-  """
-  CA certificate bundle starting with this CA certificate.
-  """
-  pub bundle: File!
   pub password: Secret!
+  pub bundle: File!
 }
 
 type RootCA {
-  let container: Container!
   pub certificate: File!
   pub key: File!
   pub password: Secret
-  let bundleFile: String!
-
-  """
-  Certificate bundle for this CA certificate.
-  """
-  pub bundle: File! {
-    self.container.file(self.bundleFile)
-  }
+  pub bundle: File!
 
   pub asCa: CertificateAuthority! {
     CertificateAuthority(
       certificate: self.certificate,
       key: self.key,
-      bundle: self.bundle,
       password: self.password ?? emptyPassword,
+      bundle: self.bundle,
     )
   }
 
 }
 
 type IntermediateCA {
-  let container: Container!
   pub certificate: File!
   pub key: File!
   pub password: Secret
-  let bundleFile: String!
-
-  """
-  Certificate bundle for this CA certificate and its issuing chain.
-  """
-  pub bundle: File! {
-    self.container.file(self.bundleFile)
-  }
+  pub bundle: File!
 
   pub asCa: CertificateAuthority! {
     CertificateAuthority(
       certificate: self.certificate,
       key: self.key,
-      bundle: self.bundle,
       password: self.password ?? emptyPassword,
+      bundle: self.bundle,
     )
   }
 
@@ -153,32 +133,24 @@ type IntermediateCA {
 type ImportedCA {
   pub certificate: File!
   pub key: File!
-  pub bundle: File!
   pub password: Secret
+  pub bundle: File!
 
   pub asCa: CertificateAuthority! {
     CertificateAuthority(
       certificate: self.certificate,
       key: self.key,
-      bundle: self.bundle,
       password: self.password ?? emptyPassword,
+      bundle: self.bundle,
     )
   }
 }
 
 type Certificate {
-  let container: Container!
   pub certificate: File!
   pub key: File!
   pub password: Secret
-  let bundleFile: String!
-
-  """
-  Certificate bundle starting with this certificate and its issuing chain.
-  """
-  pub bundle: File! {
-    self.container.file(self.bundleFile)
-  }
+  pub bundle: File!
 }
 
 type CertificateRequest {

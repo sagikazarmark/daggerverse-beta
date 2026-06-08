@@ -174,11 +174,10 @@ type Creator {
       .withExec(args)
 
     RootCA(
-      container: container,
       certificate: container.file(certFile),
       key: self.key ?? container.file(keyFile),
       password: self.password,
-      bundleFile: certFile,
+      bundle: container.file(certFile),
     )
   }
 
@@ -231,11 +230,12 @@ type Creator {
       .withExec(args)
 
     IntermediateCA(
-      container: container.withExec(["step", "certificate", "bundle", certFile, caBundleFile, bundleFile]),
       certificate: container.file(certFile),
       key: self.key ?? container.file(keyFile),
       password: self.password,
-      bundleFile: bundleFile,
+      bundle: container
+        .withExec(["step", "certificate", "bundle", certFile, caBundleFile, bundleFile])
+        .file(bundleFile),
     )
   }
 
@@ -293,11 +293,10 @@ type Creator {
       .withExec(args)
 
     Certificate(
-      container: container.withExec(["step", "certificate", "bundle", certFile, caBundleFile, bundleFile]),
       certificate: container.file(certFile),
       key: self.key ?? container.file(keyFile),
       password: self.password,
-      bundleFile: bundleFile,
+      bundle: container.withExec(["step", "certificate", "bundle", certFile, caBundleFile, bundleFile]).file(bundleFile),
     )
   }
 
@@ -350,11 +349,10 @@ type Creator {
       .withExec(args)
 
     Certificate(
-      container: container,
       certificate: container.file(certFile),
       key: self.key ?? container.file(keyFile),
       password: self.password,
-      bundleFile: certFile,
+      bundle: container.file(certFile),
     )
   }
 

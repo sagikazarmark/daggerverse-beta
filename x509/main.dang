@@ -65,7 +65,7 @@ type X509 {
   }
 
   """
-  Import existing certificate and key files as a Certificate Authority.
+  Import existing certificate and key files as a certificate authority.
   """
   pub importCa(
     """

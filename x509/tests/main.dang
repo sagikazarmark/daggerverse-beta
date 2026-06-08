@@ -1,0 +1,75 @@
+type Tests {
+  """
+  Step CLI is installed and can be executed.
+  """
+  pub step: Container! @check {
+    x509.container.withExec(["step", "version"])
+  }
+
+  """
+  Root CA generation returns certificate and key files.
+  """
+  pub rootCa: File! @check {
+    x509.generate("test-root-ca").withRsaKey(2048).rootCa.certificate
+  }
+
+  """
+  Intermediate and leaf certificate bundles can be generated and verified.
+  """
+  pub leafBundle: String! @check {
+    let root = x509.generate("test-root-ca").withRsaKey(2048).rootCa
+    let intermediate = root.issuer.intermediateCa("test-intermediate-ca", bundle: true)
+    let leaf = intermediate.issuer.certificate("test.local", sans: ["test.local"], bundle: true)
+
+    x509
+      .container
+      .withWorkdir("/work")
+      .withMountedFile("root.crt", root.certificate)
+      .withMountedFile("leaf.crt", leaf.directory.file("leaf-bundle.crt"))
+      .withExec(["step", "certificate", "verify", "--roots", "root.crt", "leaf.crt"])
+      .stdout
+  }
+
+  """
+  Passwords are mounted as secret files for generated keys and CA signing keys.
+  """
+  pub passwordProtectedCa: File! @check {
+    let password = Dagger.setSecret("x509-test-password", "correct horse battery staple")
+    let root = x509.generate("password-root-ca", password: password).rootCa
+
+    root.issuer.intermediateCa("password-intermediate-ca").certificate
+  }
+
+  """
+  Imported CAs keep their password so they can be used for signing.
+  """
+  pub importedCaPassword: File! @check {
+    let password = Dagger.setSecret("x509-import-test-password", "correct horse battery staple")
+    let root = x509.generate("import-root-ca", password: password).rootCa
+    let imported = x509.importCa(
+      "imported-root-ca",
+      root.certificate,
+      root.key,
+      password: root.password,
+      bundle: root.bundle,
+    )
+
+    imported.issuer.intermediateCa("imported-intermediate-ca").certificate
+  }
+
+  """
+  Existing private keys can be used instead of generating a new key.
+  """
+  pub existingKeyCsr: File! @check {
+    let first = x509.generate("existing-key.local").csr
+
+    x509.generate("existing-key.local").withKey(first.key).csr(name: "existing-key").csr
+  }
+
+  """
+  CSR generation returns a CSR file.
+  """
+  pub csr: File! @check {
+    x509.csr("test.local", sans: ["test.local"]).csr
+  }
+}

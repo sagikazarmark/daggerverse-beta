@@ -1,0 +1,96 @@
+type Restate {
+  let name: String!
+  let deployments: [Deployment!]! = []
+
+  pub container: Container!
+
+  new(
+    """
+    Restate node name.
+    """
+    name: String! = "restate",
+    """
+    Version (image tag) to use from the official image repository.
+    """
+    version: String! = "latest",
+    """
+    Custom container to use as a base container.
+    """
+    container: Container! = Dagger.container.from("docker.restate.dev/restatedev/restate:" + version),
+  ) {
+    self.name = name
+    self.container = container
+
+    self
+  }
+
+  pub withDeployment(service: Service!, port: Int = null): Restate! {
+    self.deployments += [Deployment(service, port)]
+
+    self
+  }
+
+  pub service: Service! {
+    self.client.service
+  }
+
+  let _service: Service! {
+    let container = self
+      .container
+      .withExposedPort(8080)
+      .withExposedPort(9070)
+      .withEnvVariable("CI", "true")
+      .withEnvVariable("RESTATE_ADMIN_URL", "http://localhost:9070")
+      .withEnvVariable("RESTATE_NODE_NAME", self.name)
+
+    self.deployments.each { deployment =>
+      container = container.withServiceBinding(deployment.service.hostname, deployment.service)
+    }
+
+    container.asService(args: ["restate-server", "--node-name", self.name])
+  }
+
+  pub client: Client! {
+    let service = self._service
+
+    let container = self
+      .container
+      .withServiceBinding(service.hostname, service)
+      .withEnvVariable("CI", "true")
+      .withEnvVariable("RESTATE_ADMIN_URL", service.endpoint(scheme: "http", port: 9070))
+      # .withEnvVariable("RESTATE_DEPLOYMENTS_REGISTERED", "true")
+      .withServiceBinding(service.hostname, service)
+
+    self.deployments.each { deployment =>
+      container = container.withExec(["restate", "deployments", "register", "--yes", "--force", deployment.endpoint])
+    }
+
+    Client(container.sync, service)
+  }
+
+  """
+  Returns the version of the Restate server.
+  """
+  pub version: String! {
+    self.container.withExec(["restate-server", "--version"]).stdout.trimPrefix("restate-server ")
+  }
+}
+
+type Deployment {
+  pub service: Service!
+  pub port: Int
+
+  pub endpoint: String! {
+    self.service.endpoint(self.port, "http")
+  }
+}
+
+type Client {
+  pub container: Container!
+
+  let service: Service!
+
+  pub sql(query: String!): String! {
+    self.container.withExec(["restate", "sql", query]).stdout
+  }
+}

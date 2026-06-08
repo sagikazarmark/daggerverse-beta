@@ -24,6 +24,7 @@ jobs:
           - github
           - minisign
           - php-dist
+          - restate
           - rust
           - wrangler
           - zig-dist

@@ -20,7 +20,7 @@ type X509 {
   }
 
   """
-  Create a certificate generation request.
+  Generate a new certificate.
   """
   pub generate(
     """
@@ -44,14 +44,7 @@ type X509 {
     """
     template: File = null,
   ): Generator! {
-    Generator(
-      x509: self,
-      commonName: commonName,
-      sans: sans,
-      notBefore: notBefore,
-      notAfter: notAfter,
-      template: template,
-    )
+    Generator(self, commonName, sans, notBefore, notAfter, template)
   }
 
   """
@@ -80,12 +73,7 @@ type X509 {
     password: Secret = null,
     bundle: File = null,
   ): ImportedCA! {
-    ImportedCA(
-      certificate: certificate,
-      key: key,
-      bundle: bundle ?? certificate,
-      password: password,
-    )
+    ImportedCA(certificate, key, bundle ?? certificate, password)
   }
 
   let baseContainer(certFile: String!, keyFile: String!, bundleFile: String!): Container! {
@@ -101,32 +89,15 @@ type X509 {
 
 type Generator {
   let x509: X509!
+
   let commonName: String!
-  let sans: [String!]! = []
-  let notBefore: String = null
-  let notAfter: String = null
-  let template: File = null
-
-  new(
-    x509: X509!,
-    commonName: String!,
-    sans: [String!]! = [],
-    notBefore: String = null,
-    notAfter: String = null,
-    template: File = null,
-  ) {
-    self.x509 = x509
-    self.commonName = commonName
-    self.sans = sans
-    self.notBefore = notBefore
-    self.notAfter = notAfter
-    self.template = template
-
-    self
-  }
+  let sans: [String!]!
+  let notBefore: String
+  let notAfter: String
+  let template: File
 
   """
-  Use a generated RSA key.
+  Generate a new RSA key.
   """
   pub rsa(
     """
@@ -137,12 +108,12 @@ type Generator {
     Password used to encrypt the generated private key.
     """
     password: Secret = null,
-  ): KeyedGenerator! {
-    KeyedGenerator(generator: self, keyType: KeyType.RSA, size: size, password: password)
+  ): RsaGenerator! {
+    RsaGenerator(self, size, password)
   }
 
   """
-  Use a generated EC key.
+  Generate a new EC key.
   """
   pub ec(
     """
@@ -153,25 +124,20 @@ type Generator {
     Password used to encrypt the generated private key.
     """
     password: Secret = null,
-  ): KeyedGenerator! {
-    KeyedGenerator(
-      generator: self,
-      keyType: KeyType.EC,
-      curve: ecCurveValue(curve),
-      password: password,
-    )
+  ): EcGenerator! {
+    EcGenerator(self, curve, password)
   }
 
   """
-  Use a generated Ed25519 key.
+  Generate a new Ed25519 key.
   """
   pub ed25519(
     """
     Password used to encrypt the generated private key.
     """
     password: Secret = null,
-  ): KeyedGenerator! {
-    KeyedGenerator(generator: self, keyType: KeyType.OKP, curve: "Ed25519", password: password)
+  ): Ed25519Generator! {
+    Ed25519Generator(self, password)
   }
 
   """
@@ -183,33 +149,321 @@ type Generator {
     Password used to decrypt the existing private key.
     """
     password: Secret = null,
-  ): KeyedGenerator! {
-    KeyedGenerator(generator: self, key: key, password: password)
+  ): KeyGenerator! {
+    KeyGenerator(self, key, password)
+  }
+
+  let createArgs: [String!]! {
+    let args = []
+
+    if (self.template != null) {
+      args += ["--template", templateFile]
+    }
+
+    args
+  }
+
+  let validityArgs: [String!]! {
+    let args = []
+
+    if (self.notBefore != null) {
+      args += ["--not-before", self.notBefore]
+    }
+
+    if (self.notAfter != null) {
+      args += ["--not-after", self.notAfter]
+    }
+
+    args
+  }
+
+  let sanArgs: [String!]! {
+    self.sans.reduce([]) { args, san =>
+      args + ["--san", san]
+    }
   }
 }
 
-type KeyedGenerator {
+type RsaGenerator {
   let generator: Generator!
-  let keyType: KeyType = null
-  let curve: String = null
-  let size: Int = null
+  let size: Int!
+  let password: Secret
+
+  let createArgs: [String!]! {
+    self.generator.createArgs + ["--kty", keyTypeValue(KeyType.RSA), "--size", toString(self.size)] + self.passwordArgs
+  }
+
+  let passwordArgs: [String!]! {
+    if (self.password != null) {
+      ["--password-file", keyPasswordFile]
+    } else {
+      ["--no-password", "--insecure"]
+    }
+  }
+
+  let creator: CertificateGenerator! {
+    CertificateGenerator(generator: self.generator, password: self.password, createArgs: self.createArgs)
+  }
+
+  """
+  Create a self-signed root CA certificate.
+  """
+  pub rootCa(name: String! = "root-ca"): RootCA! {
+    self.creator.rootCa(name)
+  }
+
+  """
+  Create an intermediate CA certificate signed by an issuer.
+  """
+  pub intermediateCa(
+    issuer: Issuer!,
+    name: String! = "intermediate-ca",
+    bundle: Boolean! = false,
+  ): IntermediateCA! {
+    self.creator.intermediateCa(issuer, name, bundle)
+  }
+
+  """
+  Create a leaf certificate signed by an issuer.
+  """
+  pub certificate(
+    issuer: Issuer!,
+    name: String! = "leaf",
+    bundle: Boolean! = false,
+  ): Certificate! {
+    self.creator.certificate(issuer, name, bundle)
+  }
+
+  """
+  Create a self-signed leaf certificate.
+  """
+  pub selfSignedLeaf(name: String! = "leaf"): Certificate! {
+    self.creator.selfSignedLeaf(name)
+  }
+
+  """
+  Create a certificate signing request and private key.
+  """
+  pub csr(name: String! = "certificate"): CertificateRequest! {
+    self.creator.csr(name)
+  }
+}
+
+type EcGenerator {
+  let generator: Generator!
+  let curve: EcCurve!
+  let password: Secret
+
+  let createArgs: [String!]! {
+    self.generator.createArgs + ["--kty", keyTypeValue(KeyType.EC), "--curve", ecCurveValue(self.curve)] + self.passwordArgs
+  }
+
+  let passwordArgs: [String!]! {
+    if (self.password != null) {
+      ["--password-file", keyPasswordFile]
+    } else {
+      ["--no-password", "--insecure"]
+    }
+  }
+
+  let creator: CertificateGenerator! {
+    CertificateGenerator(generator: self.generator, password: self.password, createArgs: self.createArgs)
+  }
+
+  """
+  Create a self-signed root CA certificate.
+  """
+  pub rootCa(name: String! = "root-ca"): RootCA! {
+    self.creator.rootCa(name)
+  }
+
+  """
+  Create an intermediate CA certificate signed by an issuer.
+  """
+  pub intermediateCa(
+    issuer: Issuer!,
+    name: String! = "intermediate-ca",
+    bundle: Boolean! = false,
+  ): IntermediateCA! {
+    self.creator.intermediateCa(issuer, name, bundle)
+  }
+
+  """
+  Create a leaf certificate signed by an issuer.
+  """
+  pub certificate(
+    issuer: Issuer!,
+    name: String! = "leaf",
+    bundle: Boolean! = false,
+  ): Certificate! {
+    self.creator.certificate(issuer, name, bundle)
+  }
+
+  """
+  Create a self-signed leaf certificate.
+  """
+  pub selfSignedLeaf(name: String! = "leaf"): Certificate! {
+    self.creator.selfSignedLeaf(name)
+  }
+
+  """
+  Create a certificate signing request and private key.
+  """
+  pub csr(name: String! = "certificate"): CertificateRequest! {
+    self.creator.csr(name)
+  }
+}
+
+type Ed25519Generator {
+  let generator: Generator!
+  let password: Secret
+
+  let createArgs: [String!]! {
+    self.generator.createArgs + ["--kty", keyTypeValue(KeyType.OKP), "--curve", "Ed25519"] + self.passwordArgs
+  }
+
+  let passwordArgs: [String!]! {
+    if (self.password != null) {
+      ["--password-file", keyPasswordFile]
+    } else {
+      ["--no-password", "--insecure"]
+    }
+  }
+
+  let creator: CertificateGenerator! {
+    CertificateGenerator(generator: self.generator, password: self.password, createArgs: self.createArgs)
+  }
+
+  """
+  Create a self-signed root CA certificate.
+  """
+  pub rootCa(name: String! = "root-ca"): RootCA! {
+    self.creator.rootCa(name)
+  }
+
+  """
+  Create an intermediate CA certificate signed by an issuer.
+  """
+  pub intermediateCa(
+    issuer: Issuer!,
+    name: String! = "intermediate-ca",
+    bundle: Boolean! = false,
+  ): IntermediateCA! {
+    self.creator.intermediateCa(issuer, name, bundle)
+  }
+
+  """
+  Create a leaf certificate signed by an issuer.
+  """
+  pub certificate(
+    issuer: Issuer!,
+    name: String! = "leaf",
+    bundle: Boolean! = false,
+  ): Certificate! {
+    self.creator.certificate(issuer, name, bundle)
+  }
+
+  """
+  Create a self-signed leaf certificate.
+  """
+  pub selfSignedLeaf(name: String! = "leaf"): Certificate! {
+    self.creator.selfSignedLeaf(name)
+  }
+
+  """
+  Create a certificate signing request and private key.
+  """
+  pub csr(name: String! = "certificate"): CertificateRequest! {
+    self.creator.csr(name)
+  }
+}
+
+type KeyGenerator {
+  let generator: Generator!
+  let key: File!
+  let password: Secret
+
+  let createArgs: [String!]! {
+    self.generator.createArgs + ["--key", existingKeyFile] + self.passwordArgs
+  }
+
+  let passwordArgs: [String!]! {
+    if (self.password != null) {
+      ["--password-file", keyPasswordFile]
+    } else {
+      []
+    }
+  }
+
+  let creator: CertificateGenerator! {
+    CertificateGenerator(
+      generator: self.generator,
+      key: self.key,
+      password: self.password,
+      createArgs: self.createArgs,
+    )
+  }
+
+  """
+  Create a self-signed root CA certificate.
+  """
+  pub rootCa(name: String! = "root-ca"): RootCA! {
+    self.creator.rootCa(name)
+  }
+
+  """
+  Create an intermediate CA certificate signed by an issuer.
+  """
+  pub intermediateCa(
+    issuer: Issuer!,
+    name: String! = "intermediate-ca",
+    bundle: Boolean! = false,
+  ): IntermediateCA! {
+    self.creator.intermediateCa(issuer, name, bundle)
+  }
+
+  """
+  Create a leaf certificate signed by an issuer.
+  """
+  pub certificate(
+    issuer: Issuer!,
+    name: String! = "leaf",
+    bundle: Boolean! = false,
+  ): Certificate! {
+    self.creator.certificate(issuer, name, bundle)
+  }
+
+  """
+  Create a self-signed leaf certificate.
+  """
+  pub selfSignedLeaf(name: String! = "leaf"): Certificate! {
+    self.creator.selfSignedLeaf(name)
+  }
+
+  """
+  Create a certificate signing request and private key.
+  """
+  pub csr(name: String! = "certificate"): CertificateRequest! {
+    self.creator.csr(name)
+  }
+}
+
+type CertificateGenerator {
+  let generator: Generator!
   let key: File = null
   let password: Secret = null
+  let createArgs: [String!]! = []
 
   new(
     generator: Generator!,
-    keyType: KeyType = null,
-    curve: String = null,
-    size: Int = null,
     key: File = null,
     password: Secret = null,
+    createArgs: [String!]! = [],
   ) {
     self.generator = generator
-    self.keyType = keyType
-    self.curve = curve
-    self.size = size
     self.key = key
     self.password = password
+    self.createArgs = createArgs
 
     self
   }
@@ -217,32 +471,19 @@ type KeyedGenerator {
   """
   Create a self-signed root CA certificate.
   """
-  pub rootCa(name: String! = "root-ca"): RootCA! {
+  let rootCa(name: String!): RootCA! {
     let certFile = name + ".crt"
     let keyFile = name + ".key"
     let bundleFile = name + "-bundle.crt"
 
     let container = self.generator.x509.baseContainer(certFile, keyFile, bundleFile)
 
-    let args = createArgs(self.generator.commonName, certFile, keyFile, self.key) + ["--profile", "root-ca", "--force"]
-    args += commonCreateArgs(
-      self.keyType,
-      self.curve,
-      self.size,
-      self.generator.notBefore,
-      self.generator.notAfter,
-      [],
-      self.generator.template,
-    )
-    args += keyArgs(self.key, self.password)
+    let args = self.commandArgs(certFile, keyFile) + ["--profile", "root-ca", "--force"]
+    args += self.createArgs
+    args += self.generator.validityArgs
 
-    let prepared = prepareCreate(
-      container,
-      self.password,
-      null,
-      self.generator.template,
-      self.key,
-    )
+    let prepared = self
+      .prepareCreate(container)
       .withExec(args)
       .withExec(["cp", certFile, bundleFile])
 
@@ -250,7 +491,6 @@ type KeyedGenerator {
     let resultKey = self.key ?? directory.file(keyFile)
 
     RootCA(
-      x509: self.generator.x509,
       commonName: self.generator.commonName,
       certificate: directory.file(certFile),
       key: resultKey,
@@ -263,10 +503,10 @@ type KeyedGenerator {
   """
   Create an intermediate CA certificate signed by an issuer.
   """
-  pub intermediateCa(
+  let intermediateCa(
     issuer: Issuer!,
-    name: String! = "intermediate-ca",
-    bundle: Boolean! = false,
+    name: String!,
+    bundle: Boolean!,
   ): IntermediateCA! {
     let certFile = name + ".crt"
     let keyFile = name + ".key"
@@ -281,27 +521,13 @@ type KeyedGenerator {
       .withMountedFile(caKeyFile, issuer.key)
       .withMountedFile(issuerBundleFile, issuer.bundle)
 
-    let args = createArgs(self.generator.commonName, certFile, keyFile, self.key) + ["--profile", "intermediate-ca", "--ca", caCertFile, "--ca-key", caKeyFile, "--force"]
-    args += commonCreateArgs(
-      self.keyType,
-      self.curve,
-      self.size,
-      self.generator.notBefore,
-      self.generator.notAfter,
-      [],
-      self.generator.template,
-    )
-    args += keyArgs(self.key, self.password)
-    let signingPassword = authorityPassword(authority)
-    args += caPasswordArgs(signingPassword)
+    let args = self.commandArgs(certFile, keyFile) + ["--profile", "intermediate-ca", "--ca", caCertFile, "--ca-key", caKeyFile, "--force"]
+    args += self.createArgs
+    args += self.generator.validityArgs
+    args += authority.createArgs
 
-    container = prepareCreate(
-      container,
-      self.password,
-      signingPassword,
-      self.generator.template,
-      self.key,
-    )
+    container = self
+      .prepareCreate(container, authority)
       .withExec(args)
 
     if (bundle) {
@@ -313,7 +539,6 @@ type KeyedGenerator {
     let certificateBundle = if (bundle) { directory.file(bundleFile) } else { null }
 
     IntermediateCA(
-      x509: self.generator.x509,
       commonName: self.generator.commonName,
       certificate: directory.file(certFile),
       key: resultKey,
@@ -326,10 +551,10 @@ type KeyedGenerator {
   """
   Create a leaf certificate signed by an issuer.
   """
-  pub certificate(
+  let certificate(
     issuer: Issuer!,
-    name: String! = "leaf",
-    bundle: Boolean! = false,
+    name: String!,
+    bundle: Boolean!,
   ): Certificate! {
     let certFile = name + ".crt"
     let keyFile = name + ".key"
@@ -344,27 +569,14 @@ type KeyedGenerator {
       .withMountedFile(caKeyFile, authority.key)
       .withMountedFile(issuerBundleFile, authority.bundle)
 
-    let args = createArgs(self.generator.commonName, certFile, keyFile, self.key) + ["--profile", "leaf", "--ca", caCertFile, "--ca-key", caKeyFile, "--force"]
-    args += commonCreateArgs(
-      self.keyType,
-      self.curve,
-      self.size,
-      self.generator.notBefore,
-      self.generator.notAfter,
-      self.generator.sans,
-      self.generator.template,
-    )
-    args += keyArgs(self.key, self.password)
-    let signingPassword = authorityPassword(authority)
-    args += caPasswordArgs(signingPassword)
+    let args = self.commandArgs(certFile, keyFile) + ["--profile", "leaf", "--ca", caCertFile, "--ca-key", caKeyFile, "--force"]
+    args += self.createArgs
+    args += self.generator.validityArgs
+    args += self.generator.sanArgs
+    args += authority.createArgs
 
-    container = prepareCreate(
-      container,
-      self.password,
-      signingPassword,
-      self.generator.template,
-      self.key,
-    )
+    container = self
+      .prepareCreate(container, authority)
       .withExec(args)
 
     if (bundle) {
@@ -386,32 +598,20 @@ type KeyedGenerator {
   """
   Create a self-signed leaf certificate.
   """
-  pub selfSignedLeaf(name: String! = "leaf"): Certificate! {
+  let selfSignedLeaf(name: String!): Certificate! {
     let certFile = name + ".crt"
     let keyFile = name + ".key"
     let bundleFile = name + "-bundle.crt"
 
     let container = self.generator.x509.baseContainer(certFile, keyFile, bundleFile)
 
-    let args = createArgs(self.generator.commonName, certFile, keyFile, self.key) + ["--profile", "self-signed", "--subtle", "--force"]
-    args += commonCreateArgs(
-      self.keyType,
-      self.curve,
-      self.size,
-      self.generator.notBefore,
-      self.generator.notAfter,
-      self.generator.sans,
-      self.generator.template,
-    )
-    args += keyArgs(self.key, self.password)
+    let args = self.commandArgs(certFile, keyFile) + ["--profile", "self-signed", "--subtle", "--force"]
+    args += self.createArgs
+    args += self.generator.validityArgs
+    args += self.generator.sanArgs
 
-    container = prepareCreate(
-      container,
-      self.password,
-      null,
-      self.generator.template,
-      self.key,
-    )
+    container = self
+      .prepareCreate(container)
       .withExec(args)
       .withExec(["cp", certFile, bundleFile])
 
@@ -430,32 +630,19 @@ type KeyedGenerator {
   """
   Create a certificate signing request and private key.
   """
-  pub csr(name: String! = "certificate"): CertificateRequest! {
+  let csr(name: String!): CertificateRequest! {
     let csrFile = name + ".csr"
     let keyFile = name + ".key"
     let bundleFile = name + "-bundle.crt"
 
     let container = self.generator.x509.baseContainer(csrFile, keyFile, bundleFile)
 
-    let args = createArgs(self.generator.commonName, csrFile, keyFile, self.key) + ["--csr", "--force"]
-    args += commonCreateArgs(
-      self.keyType,
-      self.curve,
-      self.size,
-      null,
-      null,
-      self.generator.sans,
-      self.generator.template,
-    )
-    args += keyArgs(self.key, self.password)
+    let args = self.commandArgs(csrFile, keyFile) + ["--csr", "--force"]
+    args += self.createArgs
+    args += self.generator.sanArgs
 
-    container = prepareCreate(
-      container,
-      self.password,
-      null,
-      self.generator.template,
-      self.key,
-    )
+    container = self
+      .prepareCreate(container)
       .withExec(args)
 
     let directory = container.directory("/work")
@@ -467,6 +654,42 @@ type KeyedGenerator {
       password: self.password,
       directory: directory,
     )
+  }
+
+  let commandArgs(certFile: String!, keyFile: String!): [String!]! {
+    if (self.key != null) {
+      ["step", "certificate", "create", self.generator.commonName, certFile]
+    } else {
+      ["step", "certificate", "create", self.generator.commonName, certFile, keyFile]
+    }
+  }
+
+  let prepareCreate(
+    container: Container!,
+    authority: CertificateAuthority = null,
+  ): Container! {
+    let password = self.password
+    if (password != null) {
+      container = container.withMountedSecret(keyPasswordFile, password)
+    }
+
+    if (authority != null) {
+      if (authority.passwordProtected) {
+        container = container.withMountedSecret(caPasswordFile, authority.password)
+      }
+    }
+
+    let template = self.generator.template
+    if (template != null) {
+      container = container.withMountedFile(templateFile, template)
+    }
+
+    let key = self.key
+    if (key != null) {
+      container = container.withMountedFile(existingKeyFile, key)
+    }
+
+    container
   }
 }
 
@@ -490,11 +713,17 @@ type CertificateAuthority {
   pub bundle: File!
   pub password: Secret!
   pub passwordProtected: Boolean! = false
+
+  let createArgs: [String!]! {
+    if (self.passwordProtected) {
+      ["--ca-password-file", caPasswordFile]
+    } else {
+      []
+    }
+  }
 }
 
 type RootCA {
-  let x509: X509!
-
   pub commonName: String!
   pub certificate: File!
   pub key: File!
@@ -518,8 +747,6 @@ type RootCA {
 }
 
 type IntermediateCA {
-  let x509: X509!
-
   pub commonName: String!
   pub certificate: File!
   pub key: File!
@@ -602,113 +829,6 @@ let templateFile = "/inputs/template.json"
 
 let emptyPassword: Secret! {
   Dagger.setSecret("x509-empty-password", "")
-}
-
-let authorityPassword(authority: CertificateAuthority!): Secret {
-  if (authority.passwordProtected) { authority.password } else { null }
-}
-
-let prepareCreate(
-  container: Container!,
-  password: Secret,
-  caPassword: Secret,
-  template: File,
-  key: File,
-): Container! {
-  if (password != null) {
-    container = container.withMountedSecret(keyPasswordFile, password)
-  }
-
-  if (caPassword != null) {
-    container = container.withMountedSecret(caPasswordFile, caPassword)
-  }
-
-  if (template != null) {
-    container = container.withMountedFile(templateFile, template)
-  }
-
-  if (key != null) {
-    container = container.withMountedFile(existingKeyFile, key)
-  }
-
-  container
-}
-
-let createArgs(
-  commonName: String!,
-  certFile: String!,
-  keyFile: String!,
-  key: File,
-): [String!]! {
-  if (key != null) {
-    ["step", "certificate", "create", commonName, certFile]
-  } else {
-    ["step", "certificate", "create", commonName, certFile, keyFile]
-  }
-}
-
-let commonCreateArgs(
-  keyType: KeyType,
-  curve: String,
-  size: Int,
-  notBefore: String,
-  notAfter: String,
-  sans: [String!]!,
-  template: File,
-): [String!]! {
-  let args = []
-
-  if (keyType != null) {
-    args += ["--kty", keyTypeValue(keyType)]
-  }
-
-  if (curve != null) {
-    args += ["--curve", curve]
-  }
-
-  if (size != null) {
-    args += ["--size", toString(size)]
-  }
-
-  if (notBefore != null) {
-    args += ["--not-before", notBefore]
-  }
-
-  if (notAfter != null) {
-    args += ["--not-after", notAfter]
-  }
-
-  if (template != null) {
-    args += ["--template", templateFile]
-  }
-
-  sans.reduce(args) { args, san =>
-    args + ["--san", san]
-  }
-}
-
-let keyArgs(key: File, password: Secret): [String!]! {
-  if (key != null) {
-    let args = ["--key", existingKeyFile]
-
-    if (password != null) {
-      args += ["--password-file", keyPasswordFile]
-    }
-
-    args
-  } else if (password != null) {
-    ["--password-file", keyPasswordFile]
-  } else {
-    ["--no-password", "--insecure"]
-  }
-}
-
-let caPasswordArgs(password: Secret): [String!]! {
-  if (password != null) {
-    ["--ca-password-file", caPasswordFile]
-  } else {
-    []
-  }
 }
 
 let keyTypeValue(keyType: KeyType!): String! {

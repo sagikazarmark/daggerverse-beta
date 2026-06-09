@@ -1,0 +1,160 @@
+type KeysTests {
+  pub rsa: KeyPairTests! { KeyPairTests("rsa") }
+
+  pub rsa_fixture: KeyPairTests! { KeyPairTests("rsa-fixture") }
+
+  pub rsa_password: KeyPairTests! { KeyPairTests("rsa-password") }
+
+  pub rsa_fixture_password: KeyPairTests! { KeyPairTests("rsa-fixture-password") }
+
+  pub ec: KeyPairTests! { KeyPairTests("ec") }
+
+  pub ec_password: KeyPairTests! { KeyPairTests("ec-password") }
+
+  pub ec_fixture: KeyPairTests! { KeyPairTests("ec-fixture") }
+
+  pub ec_fixture_password: KeyPairTests! { KeyPairTests("ec-fixture-password") }
+
+  pub ed25519: KeyPairTests! { KeyPairTests("ed25519") }
+
+  pub ed25519_password: KeyPairTests! { KeyPairTests("ed25519-password") }
+
+  pub ed25519_fixture: KeyPairTests! { KeyPairTests("ed25519-fixture") }
+
+  pub ed25519_fixture_password: KeyPairTests! { KeyPairTests("ed25519-fixture-password") }
+}
+
+type KeyPairTests {
+  let keyPair: CryptoKeyPair!
+  let password: Secret
+
+  new(testCase: String!) {
+    case (testCase) {
+      "rsa" => {
+        self.keyPair = Dagger.crypto.key.generate.rsa
+        self.password = null
+      }
+
+      "rsa-fixture" => {
+        self.keyPair = fixtureKeyPair("without-password/rsa")
+        self.password = null
+      }
+
+      "rsa-password" => {
+        self.password = Dagger.setSecret("rsa", Random.string)
+        self.keyPair = Dagger.crypto.key.generate(password: self.password).rsa
+      }
+
+      "rsa-fixture-password" => {
+        self.keyPair = fixtureKeyPair("with-password/rsa")
+        self.password = Dagger.setSecret("password", fixtureFile("with-password/password").contents)
+      }
+
+      "ec" => {
+        self.keyPair = Dagger.crypto.key.generate.ec
+        self.password = null
+      }
+
+      "ec-fixture" => {
+        self.keyPair = fixtureKeyPair("without-password/ec_p256")
+        self.password = null
+      }
+
+      "ec-password" => {
+        self.password = Dagger.setSecret("ec", Random.string)
+        self.keyPair = Dagger.crypto.key.generate(password: self.password).ec
+      }
+
+      "ec-fixture-password" => {
+        self.keyPair = fixtureKeyPair("with-password/ec_p256")
+        self.password = Dagger.setSecret("password", fixtureFile("with-password/password").contents)
+      }
+
+      "ed25519" => {
+        self.keyPair = Dagger.crypto.key.generate.ed25519
+        self.password = null
+      }
+
+      "ed25519-fixture" => {
+        self.keyPair = fixtureKeyPair("without-password/ed25519")
+        self.password = null
+      }
+
+      "ed25519-password" => {
+        self.password = Dagger.setSecret("ed25519", Random.string)
+        self.keyPair = Dagger.crypto.key.generate(password: self.password).ed25519
+      }
+
+      "ed25519-fixture-password" => {
+        self.keyPair = fixtureKeyPair("with-password/ed25519")
+        self.password = Dagger.setSecret("password", fixtureFile("with-password/password").contents)
+      }
+    }
+
+    self
+  }
+
+  pub default: Void @check {
+    self.signature(self.keyPair.privateKey, self.password, self.keyPair.publicKey)
+  }
+
+  pub inspect: Void @check {
+    self.keyPair.privateKey.inspect(self.password)
+    self.keyPair.publicKey.inspect
+    self.keyPair.privateKey.publicKey(self.password).inspect
+
+    null
+  }
+
+  pub fingerprint: Void @check {
+    self.keyPair.publicKey.fingerprint
+    self.keyPair.privateKey.publicKey(self.password).fingerprint
+
+    CryptoFingerprintFormat.values.each { format =>
+      self.keyPair.publicKey.fingerprint(format)
+      self.keyPair.privateKey.publicKey(self.password).fingerprint(format)
+    }
+
+    null
+  }
+
+  pub passwordChange: Void @check {
+    let privateKey = self.keyPair.privateKey
+    let publicKey = self.keyPair.publicKey
+
+    let newPassword = Dagger.setSecret(privateKey.file.name, "foo")
+
+    self.passwordChangeTest(privateKey, self.password, newPassword)
+  }
+
+  let passwordChangeTest(key: CryptoPrivateKey!, old: Secret, new: Secret): Void {
+    key = key.changePassword(old, new)
+    self.signature(key, new)
+
+    key = key.changePassword(new, null)
+    self.signature(key, null)
+  }
+
+  let signature(
+    privateKey: CryptoPrivateKey!,
+    password: Secret = null,
+    publicKey: CryptoPublicKey = { privateKey.publicKey(password) },
+  ): Void {
+    let file = Dagger.file("foo.txt", "bar")
+
+    let signature = privateKey.sign(file, password)
+
+    publicKey.verify(file, signature)
+    privateKey.publicKey(password).verify(file, signature)
+
+    null
+  }
+}
+
+let fixtureFile(path: String!): File! {
+  Dagger.currentModule.source.directory("fixtures").file(path)
+}
+
+let fixtureKeyPair(path: String!): CryptoKeyPair! {
+  Dagger.crypto.key.pair(fixtureFile(path + ".pub"), fixtureFile(path + ".key"))
+}

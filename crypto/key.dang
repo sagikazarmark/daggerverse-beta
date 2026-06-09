@@ -1,6 +1,6 @@
 type PublicKey {
   """
-  Public key file in PEM format.
+  Key file in PEM format.
   """
   pub file: File!
 
@@ -28,16 +28,43 @@ type PublicKey {
   }
 
   """
-  Details of the public key in a human readable format.
+  Details of the key in a human readable format.
   """
   pub inspect: String! {
     Command(["crypto", "key", "inspect"]).withFileArg(self.file).run.stdout
   }
+
+  """
+  Fingerprint of the key.
+  """
+  pub fingerprint(
+    """
+    Fingerprint format.
+    """
+    format: FingerprintFormat = null,
+  ): String! {
+    let cmd = Command(["crypto", "key", "fingerprint"]).withFileArg(file)
+
+    if (format != null) {
+      cmd = cmd.withArgs(["--format", toString(format).trim("\"").toLower.replace("_", "-")])
+    }
+
+    cmd.run.stdout
+  }
+}
+
+enum FingerprintFormat {
+  HEX
+  BASE64
+  BASE64_URL
+  BASE64_RAW
+  BASE64_URL_RAW
+  EMOJI
 }
 
 type PrivateKey {
   """
-  Private key file in PEM format.
+  Key file in PEM format.
   """
   pub file: File!
 
@@ -87,7 +114,7 @@ type PrivateKey {
   }
 
   """
-  Details of a private key in a human readable format.
+  Details of a key in a human readable format.
   """
   pub inspect(
     """
@@ -143,17 +170,10 @@ type KeyPair {
   pub privateKey: PrivateKey!
 
   """
-  List of key files.
-  """
-  pub files: [File!]! {
-    [self.publicKey.file, self.privateKey.file]
-  }
-
-  """
   Directory containing the key pair files.
   """
   pub directory: Directory! {
-    Dagger.directory.withFiles("", self.files)
+    Dagger.directory.withFiles("", [self.publicKey.file, self.privateKey.file])
   }
 }
 

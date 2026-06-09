@@ -1,17 +1,41 @@
 type Tests {
-  pub keys: KeysTests! { KeysTests }
+  pub key: KeysTests! { KeysTests }
 
   pub fixtures: Changeset! {
-    let dir = Dagger
-      .directory
-      .withDirectory("", Dagger.crypto.key.generate.rsa.directory)
-      .withDirectory("", Dagger.crypto.key.generate.ec.directory)
-      .withDirectory("", Dagger.crypto.key.generate.ed25519.directory)
+    Fixtures.generate
+  }
+}
+
+type Fixtures {
+  pub fixtures: Directory! {
+    let password = Dagger.setSecret("password", Random.string)
 
     Dagger
-      .currentModule
-      .source
-      .withDirectory("fixtures", dir)
-      .changes(Dagger.currentModule.source)
+      .directory
+      .withDirectory("without-password", self.keypairs(Dagger.crypto.key.generate))
+      .withDirectory(
+        "with-password",
+        self
+          .keypairs(Dagger.crypto.key.generate(password: password))
+          .withNewFile("password", password.plaintext),
+      )
+  }
+
+  let keypairs(generator: CryptoKeyGenerator!): Directory! {
+    Dagger
+      .directory
+      .withDirectory("", generator.rsa.directory)
+      .withDirectory("", generator.ec.directory)
+      .withDirectory("", generator.ed25519.directory)
+  }
+
+  let source: Directory! = Dagger.currentModule.source
+
+  let changes(dir: Directory!): Changeset! {
+    self.source.withDirectory("fixtures", dir).changes(self.source)
+  }
+
+  pub generate: Changeset! {
+    self.changes(self.fixtures)
   }
 }

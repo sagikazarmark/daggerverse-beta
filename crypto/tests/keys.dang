@@ -1,0 +1,50 @@
+type KeysTests {
+  pub privateKey: PrivateKeyTests! { PrivateKeyTests }
+
+}
+
+type PrivateKeyTests {
+  pub rsa: Void {
+    self.test(Dagger.crypto.key.generate.rsa)
+  }
+
+  let test(pair: CryptoKeyPair!, password: Secret = null): Void {
+    let privateKey = pair.privateKey
+    let publicKey = pair.publicKey
+
+    self.testInner(privateKey, password, publicKey)
+
+    let newPassword = Dagger.setSecret(pair.privateKey.file.name, "foo")
+
+    if (password == null) {
+      privateKey = privateKey.changePassword(password, newPassword)
+      self.testInner(privateKey, newPassword)
+
+      privateKey = privateKey.changePassword(newPassword, null)
+      self.testInner(privateKey, null)
+    } else {
+      privateKey = privateKey.changePassword(null, newPassword)
+      self.testInner(privateKey, newPassword)
+
+      privateKey = privateKey.changePassword(newPassword, null)
+      self.testInner(privateKey, null)
+    }
+
+    null
+  }
+
+  let testInner(
+    privateKey: CryptoPrivateKey!,
+    password: Secret = null,
+    publicKey: CryptoPublicKey = { privateKey.publicKey(password) },
+  ): Void {
+    let file = Dagger.file("foo.txt", "bar")
+
+    let signature = privateKey.sign(file, password)
+
+    publicKey.verify(file, signature)
+    privateKey.publicKey(password).verify(file, signature)
+
+    null
+  }
+}

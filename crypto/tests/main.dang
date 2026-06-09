@@ -1,0 +1,17 @@
+type Tests {
+  pub keys: KeysTests! { KeysTests }
+
+  pub fixtures: Changeset! {
+    let dir = Dagger
+      .directory
+      .withDirectory("", Dagger.crypto.key.generate.rsa.directory)
+      .withDirectory("", Dagger.crypto.key.generate.ec.directory)
+      .withDirectory("", Dagger.crypto.key.generate.ed25519.directory)
+
+    Dagger
+      .currentModule
+      .source
+      .withDirectory("fixtures", dir)
+      .changes(Dagger.currentModule.source)
+  }
+}

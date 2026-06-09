@@ -1,0 +1,249 @@
+type PublicKey {
+  """
+  Public key file in PEM format.
+  """
+  pub file: File!
+
+  """
+  Verify a signature of a file.
+  """
+  pub verify(
+    """
+    File to verify.
+    """
+    file: File!,
+    """
+    The base64-encoded signature.
+    """
+    signature: String!,
+  ): Void {
+    Command(["crypto", "key", "verify"])
+      .withFileArg(file)
+      .withKey(self.file)
+      .withArgs(["--signature", signature])
+      .run
+      .sync
+
+    null
+  }
+
+  """
+  Details of the public key in a human readable format.
+  """
+  pub inspect: String! {
+    Command(["crypto", "key", "inspect"]).withFileArg(self.file).run.stdout
+  }
+}
+
+type PrivateKey {
+  """
+  Private key file in PEM format.
+  """
+  pub file: File!
+
+  """
+  Generate a signature for a file.
+  """
+  pub sign(
+    """
+    File to sign.
+    """
+    file: File!,
+    """
+    Password used to decrypt the private key.
+    """
+    password: Secret = null,
+  ): String! {
+    # This is a workaround: sign seems to try to read from TTY even when a password file is provided
+    if (password != null) {
+      return self.changePassword(password, null).sign(file, null)
+    }
+
+    Command(["crypto", "key", "sign"])
+      .withFileArg(file)
+      .withKey(self.file, password)
+      .run
+      .stdout
+  }
+
+  """
+  Get the public key associated with this private key.
+  """
+  pub publicKey(
+    """
+    Password used to decrypt the private key.
+    """
+    password: Secret = null,
+  ): PublicKey! {
+    let fileName = self.file.name.trimSuffix(".key") + ".pub"
+
+    PublicKey(
+      Command(["crypto", "key", "public"])
+        .withKeyArg(self.file, password)
+        .withArgs(["--out", fileName])
+        .run
+        .file(fileName),
+    )
+  }
+
+  """
+  Details of a private key in a human readable format.
+  """
+  pub inspect(
+    """
+    Password used to decrypt the private key.
+    """
+    password: Secret = null,
+  ): String! {
+    Command(["crypto", "key", "inspect"]).withKeyArg(self.file, password).run.stdout
+  }
+
+  """
+  Change the password of the private key.
+  """
+  pub changePassword(
+    """
+    Old password (if any).
+    """
+    old: Secret,
+    """
+    New password (do not provide if you want to remove the password).
+    """
+    new: Secret,
+  ): PrivateKey! {
+    let fileName = self.file.name
+
+    let cmd = Command(["crypto", "change-pass"])
+      .withFileArg(self.file)
+      .withArgs(["--out", fileName])
+
+    if (old != null) {
+      cmd = cmd.withSecret("old-password", old, "password-file")
+    }
+
+    cmd = if (new != null) {
+      cmd.withSecret("new-password", new, "new-password-file")
+    } else {
+      cmd.withArgs(["--no-password", "--insecure"])
+    }
+
+    PrivateKey(cmd.run.file(fileName))
+  }
+}
+
+type KeyPair {
+  """
+  Public key.
+  """
+  pub publicKey: PublicKey!
+
+  """
+  Private key.
+  """
+  pub privateKey: PrivateKey!
+
+  """
+  List of key files.
+  """
+  pub files: [File!]! {
+    [self.publicKey.file, self.privateKey.file]
+  }
+
+  """
+  Directory containing the key pair files.
+  """
+  pub directory: Directory! {
+    Dagger.directory.withFiles("", self.files)
+  }
+}
+
+type Keys {
+  """
+  Generate a new key pair in PEM format.
+  """
+  pub generate(
+    """
+    File name for the key pair (default: selected algorithm).
+
+    Resulting keys will be called NAME.pub and NAME.key.
+    """
+    name: String = null,
+    """
+    Password used to encrypt the generated private key.
+    """
+    password: Secret = null,
+  ): KeyGenerator! {
+    KeyGenerator(name, password)
+  }
+
+  """
+  Load a public key from a file.
+  """
+  pub publicKey(file: File!): PublicKey! {
+    PublicKey(file)
+  }
+
+  """
+  Load a private key from a file.
+  """
+  pub privateKey(file: File!): PrivateKey! {
+    PrivateKey(file)
+  }
+
+  """
+  Load a key pair from a public and private key file.
+  """
+  pub pair(publicKey: File!, privateKey: File!): KeyPair! {
+    KeyPair(PublicKey(publicKey), PrivateKey(privateKey))
+  }
+}
+
+type KeyGenerator {
+  let name: String
+  let password: Secret
+
+  """
+  Generate a new RSA key pair.
+  """
+  pub rsa(
+    """
+    RSA key size (default: 2048).
+    """
+    size: Int = null,
+  ): KeyPair! {
+    self.generate(RsaKeyParams(size))
+  }
+
+  """
+  Generate a new EC private key pair.
+  """
+  pub ec(
+    """
+    Elliptic curve to use for the generated EC key (default: P256).
+    """
+    curve: EcCurve = null,
+  ): KeyPair! {
+    self.generate(EcKeyParams(curve))
+  }
+
+  """
+  Generate a new Ed25519 key pair.
+  """
+  pub ed25519: KeyPair! {
+    self.generate(Ed25519KeyParams)
+  }
+
+  let generate(params: KeyParams!): KeyPair! {
+    let name = self.name ?? params.defaultName
+
+    let cmd = Command(["crypto", "keypair", name + ".pub", name + ".key"])
+      .withKeyParams(params)
+      .withPassword(self.password)
+      .run
+
+    KeyPair(
+      PublicKey(cmd.file(name + ".pub")),
+      PrivateKey(cmd.file(name + ".key")),
+    )
+  }
+}

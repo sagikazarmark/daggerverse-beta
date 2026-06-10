@@ -4,5 +4,5 @@ runtime.source = "dang"
 include = ["!tests"]
 
 [[dependencies]]
-name = "github"
-source = "../github"
+name = "x509"
+source = "../x509"

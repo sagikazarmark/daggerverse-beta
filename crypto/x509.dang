@@ -1,0 +1,179 @@
+type Certificate {
+  """
+  A certificate file.
+  """
+  pub file: File!
+
+  """
+  The issuer chain file, if any.
+  """
+  pub chain: File
+
+  new(file: File!, chain: File = null) {
+    self.file = file
+    self.chain = chain
+
+    self
+  }
+
+  """
+  The full certificate chain (including the certificate and the issuer chain) file.
+  """
+  pub fullChain: File! {
+    let fileName = self.file.name.trimSuffix(".crt") + "-fullchain.crt"
+
+    let chain = self.chain
+    if (chain == null) {
+      return self.file.withName(fileName)
+    }
+
+    Command(["certificate", "bundle"])
+      .withFileArg(self.file)
+      .withFileArg(chain)
+      .withArgs([fileName])
+      .run
+      .file(fileName)
+  }
+}
+
+type CertificateIdentity {
+  """
+  The certificate.
+  """
+  pub certificate: Certificate!
+
+  """
+  The private key.
+  """
+  pub key: PrivateKey!
+}
+
+type CertificateAuthority {
+  """
+  The certificate.
+  """
+  pub certificate: Certificate!
+
+  """
+  The private key.
+  """
+  pub key: PrivateKey!
+
+  """
+  Create an issuer from the certificate and private key.
+  """
+  pub issuer(password: Secret): Issuer! {
+    Issuer(self.certificate, self.key, password)
+  }
+}
+
+type Issuer {
+  """
+  The certificate.
+  """
+  pub certificate: Certificate!
+
+  """
+  The private key.
+  """
+  pub key: PrivateKey!
+
+  """
+  The password, if any.
+  """
+  pub password: Secret
+}
+
+type X509 {
+  """
+  Create a certificate or a certificate signing request (CSR).
+  """
+  pub create(
+    """
+    Certificate template file.
+    """
+    template: File = null,
+    """
+    Certificate validity end time or duration.
+    """
+    notAfter: String = null,
+    """
+    Certificate validity start time or duration.
+    """
+    notBefore: String = null,
+  ): X509CreateKeySelector! {
+    X509CreateKeySelector(template, notAfter, notBefore)
+  }
+}
+
+# type CertificateAuthority {
+#   pub certificate: File!
+#   pub key: File!
+#   pub password: Secret!
+#   pub bundle: File!
+
+#   pub files: [File!]! {
+#     [self.certificate, self.key, self.bundle]
+#   }
+# }
+
+# type Certificate {
+#   pub certificate: File!
+#   pub key: File!
+#   pub password: Secret
+#   pub bundle: File!
+
+#   pub files: [File!]! {
+#     [self.certificate, self.key, self.bundle]
+#   }
+# }
+
+type CertificateRequest {
+  pub csr: File!
+  pub key: File!
+  pub password: Secret
+
+  pub files: [File!]! {
+    [self.csr, self.key]
+  }
+}
+
+enum KeyType {
+  EC
+  OKP
+  RSA
+}
+
+enum EcCurve {
+  P256
+  P384
+  P521
+}
+
+let keyPasswordFile = "/run/secrets/x509-password"
+let caPasswordFile = "/run/secrets/x509-ca-password"
+let existingKeyFile = "/inputs/key.pem"
+let caCertFile = "/inputs/ca.crt"
+let caKeyFile = "/inputs/ca.key"
+let caBundleFile = "/inputs/ca-bundle.crt"
+let templateFile = "/inputs/template.json"
+
+let emptyPassword: Secret! {
+  Dagger.setSecret("x509-empty-password", "")
+}
+
+let ecCurveValue(curve: EcCurve!): String! {
+  case (curve) {
+    EcCurve.P256 => "P-256"
+    EcCurve.P384 => "P-384"
+    EcCurve.P521 => "P-521"
+  }
+}
+
+let arch(platform: Platform!): String! {
+  case (platform) {
+    "linux/amd64" => "amd64"
+    "linux/arm64" => "arm64"
+    else => raise "unsupported platform: " + toString(platform).trim("\"")
+  }
+}

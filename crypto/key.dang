@@ -69,6 +69,19 @@ type PrivateKey {
   pub file: File!
 
   """
+  Whether the key is known to be encrypted.
+  """
+  let isEncrypted: Boolean
+
+  let ensurePassword(password: Secret): Void {
+    if (isEncrypted == true and password == null) {
+      raise "Key is encrypted but no password was provided"
+    } else if (isEncrypted == false and password != null) {
+      raise "Key is not encrypted but a password was provided"
+    }
+  }
+
+  """
   Generate a signature for a file.
   """
   pub sign(
@@ -81,6 +94,8 @@ type PrivateKey {
     """
     password: Secret = null,
   ): String! {
+    self.ensurePassword(password)
+
     # This is a workaround: sign seems to try to read from TTY even when a password file is provided
     if (password != null) {
       return self.changePassword(password, null).sign(file, null)
@@ -102,6 +117,8 @@ type PrivateKey {
     """
     password: Secret = null,
   ): PublicKey! {
+    self.ensurePassword(password)
+
     let fileName = self.file.name.trimSuffix(".key") + ".pub"
 
     PublicKey(
@@ -122,6 +139,8 @@ type PrivateKey {
     """
     password: Secret = null,
   ): String! {
+    self.ensurePassword(password)
+
     Command(["crypto", "key", "inspect"]).withKeyArg(self.file, password).run.stdout
   }
 
@@ -138,6 +157,8 @@ type PrivateKey {
     """
     new: Secret,
   ): PrivateKey! {
+    self.ensurePassword(old)
+
     let fileName = self.file.name
 
     let cmd = Command(["crypto", "change-pass"])
@@ -154,7 +175,7 @@ type PrivateKey {
       cmd.withArgs(["--no-password", "--insecure"])
     }
 
-    PrivateKey(cmd.run.file(fileName))
+    PrivateKey(cmd.run.file(fileName), isEncrypted: new != null)
   }
 }
 
@@ -263,7 +284,7 @@ type KeyGenerator {
 
     KeyPair(
       PublicKey(cmd.file(name + ".pub")),
-      PrivateKey(cmd.file(name + ".key")),
+      PrivateKey(cmd.file(name + ".key"), isEncrypted: self.password != null),
     )
   }
 }

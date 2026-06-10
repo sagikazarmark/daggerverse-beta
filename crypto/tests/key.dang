@@ -128,11 +128,30 @@ type KeyPairTests {
   }
 
   let passwordChangeTest(key: CryptoPrivateKey!, old: Secret, new: Secret): Void {
+    key = key.changePassword(old, old)
+    self.signature(key, old)
+
     key = key.changePassword(old, new)
     self.signature(key, new)
 
+    try {
+      self.signature(key, null)
+
+      raise "Key is encrypted, this should have failed"
+    } catch {
+      err => assert { err.message.contains("Key is encrypted but no password was provided") }
+    }
+
     key = key.changePassword(new, null)
     self.signature(key, null)
+
+    try {
+      self.signature(key, new)
+
+      raise "Key is not encrypted, this should have failed"
+    } catch {
+      err => assert { err.message.contains("Key is not encrypted but a password was provided") }
+    }
   }
 
   let signature(

@@ -8,6 +8,7 @@ type Command {
       .from("smallstep/step-cli:0.30.2@sha256:c75414251d4d8234945fb01e1374707dcc6a7adced88679bae4f0fd526331e74")
       .withUser("root")
       .withWorkdir("/work/out")
+      .withDirectory(".", Dagger.directory)
 
     if (args[0] != "step") {
       args = ["step"] + args

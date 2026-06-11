@@ -7,46 +7,6 @@ type K3s {
   }
 
   """
-  Return a kubeconfig for the generated system:admin client certificate.
-  """
-  pub kubeconfig(
-    seed: String! = "k3s",
-    server: String! = "https://k3s:6443",
-  ): File! {
-    Dagger
-      .container
-      .from("rancher/k3s:latest")
-      .withExec(["mkdir", "-p", "/work"])
-      .withWorkdir("/work")
-      .withDirectory("/certs", self.certs(seed))
-      .withEnvVariable("KUBECONFIG", "/work/kubeconfig")
-      .withExec([
-        "kubectl",
-        "config", "set-cluster", "default",
-        "--server", server, "--tls-server-name", "k3s",
-        "--certificate-authority", "/certs/server-ca.crt",
-        "--embed-certs",
-      ])
-      .withExec([
-        "kubectl",
-        "config", "set-credentials", "cluster-admin",
-        "--client-certificate", "/certs/client-admin.crt", "--client-key", "/certs/client-admin.key",
-        "--embed-certs",
-      ])
-      .withExec([
-        "kubectl",
-        "config", "set-context", "default",
-        "--cluster", "default",
-        "--user", "cluster-admin",
-      ])
-      .withExec([
-        "kubectl",
-        "config", "use-context", "default",
-      ])
-      .file("/work/kubeconfig")
-  }
-
-  """
   Return a K3s server service bootstrapped from generated CA certificates.
   """
   pub service(
@@ -64,8 +24,6 @@ type K3s {
     let container = Dagger
       .container
       .from(image)
-      # .withNewFile("/usr/bin/entrypoint.sh", ENTRYPOINT, permissions: 755)
-      # .withEntrypoint(["entrypoint.sh"])
       .withDirectory("/var/lib/rancher/k3s/server/tls", self.certs(seed))
       .withMountedTemp("/etc/rancher/k3s")
       .withMountedTemp("/etc/lib/cni")
@@ -81,7 +39,6 @@ type K3s {
       .asService(
         args: args,
         insecureRootCapabilities: true,
-        # useEntrypoint: false,
         experimentalPrivilegedNesting: true,
         noInit: true,
       )
@@ -92,49 +49,25 @@ type K3s {
   """
   pub kubectl(
     seed: String! = "k3s",
-    k3sImage: String! = "rancher/k3s:latest",
-    kubectlImage: String! = "bitnami/kubectl:latest",
+    image: String! = "rancher/k3s:latest",
     nodePort: Int = null,
   ): Container! {
+    let certs = self.certs(seed)
+
     Dagger
-      .container
-      .from(kubectlImage)
-      .withoutEntrypoint
-      .withServiceBinding(
+      .kubectl(Dagger.container.from(image))
+      .withClusterService(
         "k3s",
-        self.service(seed: seed, image: k3sImage, nodePort: nodePort),
+        self.service(seed: seed, image: image, nodePort: nodePort),
+        serverName: "k3s",
+        ca: certs.file("server-ca.crt"),
       )
-      .withFile("/tmp/kubeconfig", self.kubeconfig(seed), permissions: 420)
-      .withEnvVariable("KUBECONFIG", "/tmp/kubeconfig")
+      .withCredentials(
+        "system:admin",
+        certs.file("client-admin.crt"),
+        certs.file("client-admin.key"),
+      )
+      .withContext("k3s", cluster: "k3s", user: "system:admin", use: true)
+      .container
   }
-
-  # NOTE: written at column 0 on purpose: dang multiline strings preserve
-  # indentation and the heredoc terminator (EOF) only works at column 0.
-  let kubeconfigScript: String! = """set -eu
-  ca="$(base64 < /certs/server-ca.crt | tr -d '\n')"
-  cert="$(base64 < /certs/client-admin.crt | tr -d '\n')"
-  key="$(base64 < /certs/client-admin.key | tr -d '\n')"
-
-  cat <<EOF
-  apiVersion: v1
-  kind: Config
-  clusters:
-  - name: k3s
-    cluster:
-      server: ${SERVER}
-      tls-server-name: k3s
-      certificate-authority-data: ${ca}
-  users:
-  - name: system:admin
-    user:
-      client-certificate-data: ${cert}
-      client-key-data: ${key}
-  contexts:
-  - name: k3s
-    context:
-      cluster: k3s
-      user: system:admin
-  current-context: k3s
-  EOF
-  """
 }

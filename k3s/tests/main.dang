@@ -74,7 +74,7 @@ test "$node_port" = "30080"
 printf 'node_port=%s\n' "$node_port"
 
 for i in $(seq 1 30); do
-  if curl -fsS --connect-timeout 1 --max-time 2 http://k3s:30080 >/tmp/nodeport.html; then
+  if wget -q -T 2 -O /tmp/nodeport.html http://k3s:30080; then
     break
   fi
   sleep 1

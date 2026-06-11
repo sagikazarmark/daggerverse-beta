@@ -6,3 +6,7 @@ include = ["!tests"]
 [[dependencies]]
 name = "crypto"
 source = "../crypto"
+
+[[dependencies]]
+name = "kubectl"
+source = "../kubectl"

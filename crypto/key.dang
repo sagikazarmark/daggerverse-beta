@@ -16,15 +16,17 @@ type PublicKey {
     The base64-encoded signature.
     """
     signature: String!,
-  ): Void {
-    Command(["crypto", "key", "verify"])
-      .withFileArg(file)
+  ): VerificationResult! {
+    let result = Command(["crypto", "key", "verify"])
+      .withFileArg(self.file)
       .withKey(self.file)
       .withArgs(["--signature", signature])
-      .run
-      .sync
+      .run(expect: ReturnType.ANY)
 
-    null
+    VerificationResult(
+      verified: result.exitCode == 0,
+      message: result.stdout,
+    )
   }
 
   """
@@ -43,14 +45,24 @@ type PublicKey {
     """
     format: FingerprintFormat = null,
   ): String! {
-    let cmd = Command(["crypto", "key", "fingerprint"]).withFileArg(file)
-
-    if (format != null) {
-      cmd = cmd.withArgs(["--format", toString(format).trim("\"").toLower.replace("_", "-")])
-    }
-
-    cmd.run.stdout
+    Command(["crypto", "key", "fingerprint"])
+      .withFileArg(self.file)
+      .withArgs(fingerprintFormatArgs(format))
+      .run
+      .stdout
   }
+}
+
+type VerificationResult {
+  """
+  Whether the verification was successful.
+  """
+  pub verified: Boolean!
+
+  """
+  The verification message.
+  """
+  pub message: String!
 }
 
 enum FingerprintFormat {
@@ -60,6 +72,14 @@ enum FingerprintFormat {
   BASE64_RAW
   BASE64_URL_RAW
   EMOJI
+}
+
+let fingerprintFormatArgs(format: FingerprintFormat): [String!]! {
+  if (format == null) {
+    return []
+  }
+
+  ["--format", toString(format).trim("\"").toLower.replace("_", "-")]
 }
 
 type PrivateKey {
@@ -74,9 +94,9 @@ type PrivateKey {
   let isEncrypted: Boolean
 
   let ensurePassword(password: Secret): Void {
-    if (isEncrypted == true and password == null) {
+    if (self.isEncrypted == true and password == null) {
       raise "Key is encrypted but no password was provided"
-    } else if (isEncrypted == false and password != null) {
+    } else if (self.isEncrypted == false and password != null) {
       raise "Key is not encrypted but a password was provided"
     }
   }
@@ -161,21 +181,28 @@ type PrivateKey {
 
     let fileName = self.file.name
 
-    let cmd = Command(["crypto", "change-pass"])
+    let result = Command(["crypto", "change-pass"])
       .withFileArg(self.file)
       .withArgs(["--out", fileName])
+      .with { cmd =>
+        if (old != null) {
+          cmd = cmd.withArg("--password-file").withSecretArg("old-password", old)
+        }
 
-    if (old != null) {
-      cmd = cmd.withSecret("old-password", old, "password-file")
-    }
+        cmd
+      }
+      .with { cmd =>
+        if (new != null) {
+          cmd
+            .withArg("--new-password-file")
+            .withSecretArg("new-password", new)
+        } else {
+          cmd.withArgs(["--no-password", "--insecure"])
+        }
+      }
+      .run
 
-    cmd = if (new != null) {
-      cmd.withSecret("new-password", new, "new-password-file")
-    } else {
-      cmd.withArgs(["--no-password", "--insecure"])
-    }
-
-    PrivateKey(cmd.run.file(fileName), isEncrypted: new != null)
+    PrivateKey(result.file(fileName), isEncrypted: new != null)
   }
 }
 
@@ -195,6 +222,98 @@ type KeyPair {
   """
   pub directory: Directory! {
     Dagger.directory.withFiles("", [self.publicKey.file, self.privateKey.file])
+  }
+}
+
+enum KeyType {
+  EC
+  OKP
+  RSA
+}
+
+interface KeyParams {
+  pub keyType: KeyType!
+  pub args: [String!]!
+  pub defaultName: String!
+}
+
+type RsaKeyParams implements KeyParams {
+  pub size: Int
+
+  pub keyType: KeyType! {
+    KeyType.RSA
+  }
+
+  pub args: [String!]! {
+    let args = []
+
+    let size = self.size
+    if (size != null) {
+      args += ["--size", toString(size)]
+    }
+
+    args
+  }
+
+  pub defaultName: String! {
+    "rsa"
+  }
+}
+
+enum EcCurve {
+  P256
+  P384
+  P521
+}
+
+type EcKeyParams implements KeyParams {
+  pub curve: EcCurve
+
+  pub keyType: KeyType! {
+    KeyType.EC
+  }
+
+  pub args: [String!]! {
+    let args = []
+
+    let curve = self.curve
+    if (curve != null) {
+      args += ["--curve", self.curveString]
+    }
+
+    args
+  }
+
+  pub defaultName: String! {
+    "ec_" + (
+      if (self.curve != null) {
+        self.curveString.replace("-", "").toLower
+      } else {
+        "p256"
+      }
+    )
+  }
+
+  let curveString: String! {
+    case (self.curve) {
+      EcCurve.P256 => "P-256"
+      EcCurve.P384 => "P-384"
+      EcCurve.P521 => "P-521"
+    }
+  }
+}
+
+type Ed25519KeyParams implements KeyParams {
+  pub keyType: KeyType! {
+    KeyType.OKP
+  }
+
+  pub args: [String!]! {
+    ["--curve", "Ed25519"]
+  }
+
+  pub defaultName: String! {
+    "ed25519"
   }
 }
 
@@ -277,14 +396,14 @@ type KeyGenerator {
   let generate(params: KeyParams!): KeyPair! {
     let name = self.name ?? params.defaultName
 
-    let cmd = Command(["crypto", "keypair", name + ".pub", name + ".key"])
+    let result = Command(["crypto", "keypair", name + ".pub", name + ".key"])
       .withKeyParams(params)
       .withPassword(self.password)
       .run
 
     KeyPair(
-      PublicKey(cmd.file(name + ".pub")),
-      PrivateKey(cmd.file(name + ".key"), isEncrypted: self.password != null),
+      PublicKey(result.file(name + ".pub")),
+      PrivateKey(result.file(name + ".key"), isEncrypted: self.password != null),
     )
   }
 }

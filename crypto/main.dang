@@ -1,11 +1,11 @@
-let container: Container! = Dagger
-  .container
-  .from("smallstep/step-cli:0.30.2@sha256:c75414251d4d8234945fb01e1374707dcc6a7adced88679bae4f0fd526331e74")
-  .withWorkdir("/work/out")
-
 type Crypto {
   """
   Cryptographic key management.
   """
   pub key: Keys! { Keys }
+
+  """
+  X.509 certificate management.
+  """
+  pub x509: X509! { X509 }
 }

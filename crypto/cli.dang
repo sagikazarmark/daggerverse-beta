@@ -1,15 +1,3 @@
-let inputs = {{
-  path: "/work/inputs/"
-}}
-
-let inputPath(name: String!): String! {
-  `/work/inputs/${name}`
-}
-
-let secretPath(name: String!): String! {
-  `/run/secrets/${name}`
-}
-
 type Command {
   let container: Container!
   let args: [String!]!
@@ -30,8 +18,18 @@ type Command {
     self
   }
 
-  pub run(args: [String!]! = []): Container! {
-    self.container.withExec(self.args + args)
+  pub run(
+    args: [String!]! = [],
+    expect: ReturnType = null,
+    redirectStdout: String = null,
+  ): Container! {
+    self
+      .container
+      .withExec(
+        self.args + args,
+        expect: expect,
+        redirectStdout: redirectStdout,
+      )
   }
 
   pub with(&block(cmd: Command!): Command!): Command! {
@@ -44,8 +42,8 @@ type Command {
     self
   }
 
-  let newArg(arg: String!, value: String!): [String!]! {
-    ["--" + arg.trimPrefix("--"), value]
+  pub withArg(arg: String!): Command! {
+    self.withArgs([arg])
   }
 
   pub withFileArg(file: File!): Command! {
@@ -57,21 +55,18 @@ type Command {
     self
   }
 
-  pub withSecret(name: String!, secret: Secret!, arg: String = null): Command! {
+  pub withSecretArg(name: String!, secret: Secret!): Command! {
     let path = secretPath(name)
 
     self.container = self.container.withMountedSecret(path, secret)
-
-    if (arg != null) {
-      self.args += newArg(arg, path)
-    }
+    self.args += [path]
 
     self
   }
 
   pub withPassword(secret: Secret): Command! {
     if (secret != null) {
-      self.withSecret("password", secret, "password-file")
+      self.withArg("--password-file").withSecretArg("password", secret)
     } else {
       self.withArgs(["--no-password", "--insecure"])
     }
@@ -87,7 +82,7 @@ type Command {
     let cmd = self.withFileArg(file)
 
     if (password != null) {
-      cmd = cmd.withSecret("password", password, "password-file")
+      cmd = cmd.withArg("--password-file").withSecretArg("password", password)
     }
 
     cmd
@@ -98,92 +93,10 @@ type Command {
   }
 }
 
-enum KeyType {
-  EC
-  OKP
-  RSA
+let inputPath(name: String!): String! {
+  `/work/inputs/${name}`
 }
 
-interface KeyParams {
-  pub keyType: KeyType!
-  pub args: [String!]!
-  pub defaultName: String!
-}
-
-type RsaKeyParams implements KeyParams {
-  pub size: Int
-
-  pub keyType: KeyType! {
-    KeyType.RSA
-  }
-
-  pub args: [String!]! {
-    let args = []
-
-    if (self.size != null) {
-      args += ["--size", toString(self.size)]
-    }
-
-    args
-  }
-
-  pub defaultName: String! {
-    "rsa"
-  }
-}
-
-enum EcCurve {
-  P256
-  P384
-  P521
-}
-
-type EcKeyParams implements KeyParams {
-  pub curve: EcCurve
-
-  pub keyType: KeyType! {
-    KeyType.EC
-  }
-
-  pub args: [String!]! {
-    let args = []
-
-    if (self.curve != null) {
-      args += ["--curve", self.curveString]
-    }
-
-    args
-  }
-
-  pub defaultName: String! {
-    "ec_" + (
-      if (self.curve != null) {
-        self.curveString.replace("-", "").toLower
-      } else {
-        "p256"
-      }
-    )
-  }
-
-  let curveString: String! {
-    case (self.curve) {
-      EcCurve.P256 => "P-256"
-      EcCurve.P384 => "P-384"
-      EcCurve.P521 => "P-521"
-    }
-  }
-}
-
-type Ed25519KeyParams implements KeyParams {
-  pub keyType: KeyType! {
-    KeyType.OKP
-  }
-
-  pub args: [String!]! {
-    ["--curve", "Ed25519"]
-  }
-
-  pub defaultName: String! {
-    "ed25519"
-  }
+let secretPath(name: String!): String! {
+  `/run/secrets/${name}`
 }

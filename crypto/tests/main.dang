@@ -1,6 +1,8 @@
 type Tests {
   pub key: KeysTests! { KeysTests }
 
+  pub x509: X509Tests! { X509Tests }
+
   pub fixtures: Changeset! {
     Fixtures.generate
   }

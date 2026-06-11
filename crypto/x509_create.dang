@@ -1,4 +1,4 @@
-type X509CreateKeySelector {
+type CreateCertificateKeySelector {
   let template: File
   let notAfter: String
   let notBefore: String
@@ -11,58 +11,57 @@ type X509CreateKeySelector {
     RSA key size (default: 2048).
     """
     size: Int = null,
-  ): Creator! {
+  ): CertificateCreator! {
     self.creator(RsaKeyParams(size))
   }
 
-  # """
-  # Generate a new EC private key.
-  # """
-  # pub ec(
-  #   """
-  #   Elliptic curve to use for the generated EC key.
-  #   """
-  #   curve: EcCurve!,
-  #   """
-  #   Password used to encrypt the generated private key.
-  #   """
-  #   password: Secret = null,
-  # ): Creator! {
-  #   # self.creator(GeneratedKey(KeyType.EC, ["--curve", ecCurveValue(curve)]), password)
-  #   self.creator(GeneratedKey(KeyType.EC, ["--curve", ""]), password)
-  # }
+  """
+  Generate a new EC private key for the certificate.
+  """
+  pub ec(
+    """
+    Elliptic curve to use for the generated EC key (default: P256).
+    """
+    curve: EcCurve = null,
+  ): CertificateCreator! {
+    self.creator(EcKeyParams(curve))
+  }
 
-  # """
-  # Generate a new Ed25519 private key.
-  # """
-  # pub ed25519(
-  #   """
-  #   Password used to encrypt the generated private key.
-  #   """
-  #   password: Secret = null,
-  # ): Creator! {
-  #   self.creator(GeneratedKey(KeyType.OKP, ["--curve", "Ed25519"]), password)
-  # }
+  """
+  Generate a new Ed25519 private key for the certificate.
+  """
+  pub ed25519: CertificateCreator! {
+    self.creator(Ed25519KeyParams)
+  }
 
-  # """
-  # Use an existing private key instead of generating one.
-  # """
-  # pub key(
-  #   """
-  #   Existing private key file.
-  #   """
-  #   key: File!,
-  #   """
-  #   Password used to decrypt the existing private key.
-  #   """
-  #   password: Secret = null,
-  # ): Creator! {
-  #   self.creator(ExistingKey(key), password)
-  # }
+  """
+  Use an existing private key for the certificate instead of generating one.
+  """
+  pub key(
+    """
+    Existing private key.
+    """
+    key: PrivateKey!,
+    """
+    Password used to decrypt the existing private key.
+    """
+    password: Secret = null,
+  ): CertificateCreator! {
+    CertificateCreator(
+      keyArgs: null,
+      key: key,
+      keyPassword: password,
+      template: self.template,
+      notAfter: self.notAfter,
+      notBefore: self.notBefore,
+    )
+  }
 
-  let creator(keyParams: KeyParams!): Creator! {
-    Creator(
-      keyParams: keyParams,
+  let creator(keyParams: KeyParams!): CertificateCreator! {
+    CertificateCreator(
+      keyArgs: ["--kty", toString(keyParams.keyType).trim("\"")] + keyParams.args,
+      key: null,
+      keyPassword: null,
       template: self.template,
       notAfter: self.notAfter,
       notBefore: self.notBefore,
@@ -70,8 +69,10 @@ type X509CreateKeySelector {
   }
 }
 
-type Creator {
-  let keyParams: KeyParams!
+type CertificateCreator {
+  let keyArgs: [String!]
+  let key: PrivateKey
+  let keyPassword: Secret
 
   let template: File
   let notAfter: String
@@ -109,21 +110,20 @@ type Creator {
     let certFile = name + ".crt"
     let keyFile = name + ".key"
 
-    let cmd = Command(["certificate", "create", subject, certFile, keyFile])
-      .withKeyParams(self.keyParams)
-      .withPassword(password)
-      .withArgs(self.validityArgs(notAfter, notBefore))
-      .with { cmd => self.withTemplate(cmd, template, "root-ca") }
+    let result = self
+      .command(subject, certFile, keyFile, password)
+      .with { cmd => withTemplate(cmd, template, "root-ca") }
+      .withArgs(validityArgs(notAfter, notBefore))
       .run
 
     CertificateAuthority(
-      certificate: Certificate(cmd.file(certFile), null),
-      key: PrivateKey(cmd.file(keyFile), isEncrypted: password != null),
+      certificate: Certificate(result.file(certFile)),
+      key: key ?? PrivateKey(result.file(keyFile), isEncrypted: password != null),
     )
   }
 
   """
-  Create an intermediate CA certificate signed by a certificate authority.
+  Create an intermediate CA certificate signed by an issuing authority.
   """
   pub intermediate(
     """
@@ -157,35 +157,22 @@ type Creator {
   ): CertificateAuthority! {
     let certFile = name + ".crt"
     let keyFile = name + ".key"
-    let bundleFile = name + "-bundle.crt"
 
-    let args = self.certArgs(
-      subject,
-      certFile,
-      keyFile,
-      "intermediate-ca",
-      template,
-      notAfter,
-      notBefore,
-    )
-    args += self.caArgs
-
-    let container = self
-      .withTemplate(self.withCertificateAuthority(self.container, ca), template)
-      .withExec(args)
+    let result = self
+      .command(subject, certFile, keyFile, password)
+      .with { cmd => self.withIssuer(cmd, issuer) }
+      .with { cmd => withTemplate(cmd, template, "intermediate-ca") }
+      .withArgs(validityArgs(notAfter, notBefore))
+      .run
 
     CertificateAuthority(
-      certificate: container.file(certFile),
-      key: self.key ?? container.file(keyFile),
-      password: self.password ?? emptyPassword,
-      bundle: container
-        .withExec(["step", "certificate", "bundle", certFile, caBundleFile, bundleFile])
-        .file(bundleFile),
+      certificate: Certificate(result.file(certFile), issuer.chain),
+      key: key ?? PrivateKey(result.file(keyFile), isEncrypted: password != null),
     )
   }
 
   """
-  Create a leaf certificate signed by a certificate authority.
+  Create a leaf certificate signed by an issuing authority.
   """
   pub certificate(
     """
@@ -193,9 +180,9 @@ type Creator {
     """
     subject: String!,
     """
-    Certificate authority that signs the certificate.
+    Issuing authority that signs the certificate.
     """
-    ca: CertificateAuthority!,
+    issuer: Issuer!,
     """
     Base name for generated files.
     """
@@ -216,32 +203,25 @@ type Creator {
     Certificate validity start time or duration.
     """
     notBefore: String = self.notBefore,
-  ): Certificate! {
+    """
+    Password used to encrypt the generated private key.
+    """
+    password: Secret = null,
+  ): CertificateIdentity! {
     let certFile = name + ".crt"
     let keyFile = name + ".key"
-    let bundleFile = name + "-bundle.crt"
 
-    let args = self.certArgs(
-      subject,
-      certFile,
-      keyFile,
-      "leaf",
-      template,
-      notAfter,
-      notBefore,
-    )
-    args += self.caArgs
-    args += self.sanArgs(sans)
+    let result = self
+      .command(subject, certFile, keyFile, password)
+      .with { cmd => self.withIssuer(cmd, issuer) }
+      .with { cmd => withTemplate(cmd, template, "leaf") }
+      .withArgs(validityArgs(notAfter, notBefore))
+      .withArgs(self.sanArgs(sans))
+      .run
 
-    let container = self
-      .withTemplate(self.withCertificateAuthority(self.container, ca), template)
-      .withExec(args)
-
-    Certificate(
-      certificate: container.file(certFile),
-      key: self.key ?? container.file(keyFile),
-      password: self.password,
-      bundle: container.withExec(["step", "certificate", "bundle", certFile, caBundleFile, bundleFile]).file(bundleFile),
+    CertificateIdentity(
+      certificate: Certificate(result.file(certFile), issuer.chain),
+      key: key ?? PrivateKey(result.file(keyFile), isEncrypted: password != null),
     )
   }
 
@@ -273,31 +253,25 @@ type Creator {
     Certificate validity start time or duration.
     """
     notBefore: String = self.notBefore,
-  ): Certificate! {
+    """
+    Password used to encrypt the generated private key.
+    """
+    password: Secret = null,
+  ): CertificateIdentity! {
     let certFile = name + ".crt"
     let keyFile = name + ".key"
 
-    let args = self.certArgs(
-      subject,
-      certFile,
-      keyFile,
-      "self-signed",
-      template,
-      notAfter,
-      notBefore,
-    )
-    args += ["--subtle"]
-    args += self.sanArgs(sans)
+    let result = self
+      .command(subject, certFile, keyFile, password)
+      .with { cmd => withTemplate(cmd, template, "self-signed") }
+      .withArgs(validityArgs(notAfter, notBefore))
+      .withArgs(self.sanArgs(sans))
+      .withArg("--subtle")
+      .run
 
-    let container = self
-      .withTemplate(self.container, template)
-      .withExec(args)
-
-    Certificate(
-      certificate: container.file(certFile),
-      key: self.key ?? container.file(keyFile),
-      password: self.password,
-      bundle: container.file(certFile),
+    CertificateIdentity(
+      certificate: Certificate(result.file(certFile)),
+      key: key ?? PrivateKey(result.file(keyFile), isEncrypted: password != null),
     )
   }
 
@@ -321,63 +295,62 @@ type Creator {
     Certificate template file.
     """
     template: File = self.template,
+    """
+    Password used to encrypt the generated private key.
+    """
+    password: Secret = null,
   ): CertificateRequest! {
     let csrFile = name + ".csr"
     let keyFile = name + ".key"
 
-    let args = self.args(subject, csrFile, keyFile, template)
-    args += ["--csr"]
-    args += self.sanArgs(sans)
+    let result = self
+      .command(subject, csrFile, keyFile, password)
+      .withArg("--csr")
+      .withArgs(self.sanArgs(sans))
+      .with { cmd =>
+        if (template != null) {
+          cmd = cmd.withArg("--template").withFileArg(template)
+        }
 
-    let container = self
-      .withTemplate(self.container, template)
-      .withExec(args)
+        cmd
+      }
+      .run
 
     CertificateRequest(
-      csr: container.file(csrFile),
-      key: self.key ?? container.file(keyFile),
-      password: self.password,
+      csr: result.file(csrFile),
+      key: key ?? PrivateKey(result.file(keyFile), isEncrypted: password != null),
     )
   }
 
-  let caArgs: [String!]! {
-    ["--ca", caCertFile, "--ca-key", caKeyFile, "--ca-password-file", caPasswordFile]
-  }
+  let command(
+    subject: String!,
+    outFile: String!,
+    keyFile: String!,
+    password: Secret,
+  ): Command! {
+    let cmd = Command(["certificate", "create", subject, outFile])
 
-  let withCertificateAuthority(
-    container: Container!,
-    ca: CertificateAuthority!,
-  ): Container! {
-    container = container
-      .withMountedFile(caCertFile, ca.certificate)
-      .withMountedFile(caKeyFile, ca.key)
-      .withMountedFile(caBundleFile, ca.bundle)
-
-    container = container.withMountedSecret(caPasswordFile, ca.password)
-
-    container
-  }
-
-  let withTemplate(cmd: Command!, template: File, profile: String!): Command! {
-    if (template == null) {
-      return cmd.withArgs(["--profile", profile])
+    let key = self.key
+    if (key != null) {
+      return cmd.withKey(key.file, self.keyPassword)
     }
 
-    cmd.withArgs(["--template"]).withFileArg(template)
+    let keyArgs = self.keyArgs
+    if (keyArgs == null) {
+      raise "no key source provided"
+    }
+
+    cmd.withArgs([keyFile]).withArgs(keyArgs).withPassword(password)
   }
 
-  let validityArgs(notAfter: String, notBefore: String): [String!]! {
-    let args = []
-
-    if (notAfter != null) {
-      args += ["--not-after", notAfter]
-    }
-
-    if (notBefore != null) {
-      args += ["--not-before", notBefore]
-    }
-
-    args
+  let withIssuer(cmd: Command!, issuer: Issuer!): Command! {
+    cmd
+      .withArg("--ca")
+      .withFileArg(issuer.certificate)
+      .withArg("--ca-key")
+      .withFileArg(issuer.key.file)
+      .withArg("--ca-password-file")
+      .withSecretArg("ca-password", issuer.password)
   }
 
   let sanArgs(sans: [String!]!): [String!]! {

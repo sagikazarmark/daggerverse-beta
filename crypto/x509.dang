@@ -30,9 +30,82 @@ type Certificate {
     Command(["certificate", "bundle"])
       .withFileArg(self.file)
       .withFileArg(chain)
-      .withArgs([fileName])
+      .withArg(fileName)
       .run
       .file(fileName)
+  }
+
+  """
+  Details of the certificate in a human readable format.
+  """
+  pub inspect: String! {
+    Command(["certificate", "inspect"]).withFileArg(self.file).run.stdout
+  }
+
+  """
+  Fingerprint of the certificate.
+  """
+  pub fingerprint(
+    """
+    Fingerprint format.
+    """
+    format: FingerprintFormat = null,
+  ): String! {
+    Command(["certificate", "fingerprint"])
+      .withFileArg(self.file)
+      .withArgs(fingerprintFormatArgs(format))
+      .run
+      .stdout
+  }
+
+  """
+  Lint the certificate details.
+  """
+  pub lint: String! {
+    Command(["certificate", "lint"]).withFileArg(self.file).run.stdout
+  }
+
+  """
+  Check if the certificate needs to be renewed.
+  """
+  pub needsRenewal(
+    """
+    Renewal window as a duration (e.g. "8h") or a percentage
+    of the certificate lifetime (e.g. "25%") (default: 66%).
+    """
+    expiresIn: String = null,
+  ): Boolean! {
+    let result = Command(["certificate", "needs-renewal"])
+      .withFileArg(self.file)
+      .with { cmd =>
+        if (expiresIn != null) {
+          cmd = cmd.withArgs(["--expires-in", expiresIn])
+        }
+
+        cmd
+      }
+      .run(expect: ReturnType.ANY)
+
+    case (result.exitCode) {
+      0 => true
+      1 => false
+      else => raise "checking certificate renewal failed: " + result.stderr
+    }
+  }
+
+  """
+  The public key embedded in the certificate.
+  """
+  pub publicKey: PublicKey! {
+    let fileName = self.file.name.trimSuffix(".crt") + ".pub"
+
+    PublicKey(
+      Command(["certificate", "key"])
+        .withFileArg(self.file)
+        .withArgs(["--out", fileName])
+        .run
+        .file(fileName),
+    )
   }
 }
 
@@ -62,16 +135,35 @@ type CertificateAuthority {
   """
   Create an issuer from the certificate and private key.
   """
-  pub issuer(password: Secret): Issuer! {
-    Issuer(self.certificate, self.key, password)
+  pub issuer(
+    """
+    Password used to decrypt the private key.
+    """
+    password: Secret = null,
+  ): Issuer! {
+    self.key.ensurePassword(password)
+
+    Issuer(
+      certificate: self.certificate.file,
+      chain: self.certificate.fullChain,
+      key: self.key,
+      password: password ?? emptyPassword,
+    )
   }
 }
 
+# Note: fields are intentionally non-null, because nullable object fields
+# cannot cross the module boundary as call inputs.
 type Issuer {
   """
-  The certificate.
+  The issuer certificate.
   """
-  pub certificate: Certificate!
+  pub certificate: File!
+
+  """
+  The full issuer certificate chain (including the certificate itself).
+  """
+  pub chain: File!
 
   """
   The private key.
@@ -79,9 +171,192 @@ type Issuer {
   pub key: PrivateKey!
 
   """
-  The password, if any.
+  Password used to decrypt the private key (empty if the key is not encrypted).
   """
-  pub password: Secret
+  pub password: Secret!
+}
+
+type CertificateRequest {
+  """
+  The certificate signing request file.
+  """
+  pub csr: File!
+
+  """
+  The private key.
+  """
+  pub key: PrivateKey!
+
+  """
+  Details of the certificate signing request in a human readable format.
+  """
+  pub inspect: String! {
+    Command(["certificate", "inspect"]).withFileArg(self.csr).run.stdout
+  }
+
+  """
+  The public key embedded in the certificate signing request.
+  """
+  pub publicKey: PublicKey! {
+    let fileName = self.csr.name.trimSuffix(".csr") + ".pub"
+
+    PublicKey(
+      Command(["certificate", "key"])
+        .withFileArg(self.csr)
+        .withArgs(["--out", fileName])
+        .run
+        .file(fileName),
+    )
+  }
+
+  """
+  Sign the CSR to create a certificate.
+  """
+  pub sign(
+    """
+    Issuing authority that signs the certificate.
+    """
+    issuer: Issuer!,
+    """
+    Certificate template file.
+    """
+    template: File = null,
+    """
+    Certificate validity end time or duration.
+    """
+    notAfter: String = null,
+    """
+    Certificate validity start time or duration.
+    """
+    notBefore: String = null,
+  ): CertificateRequestSigner! {
+    CertificateRequestSigner(
+      csr: self.csr,
+      key: self.key,
+      issuer: issuer,
+      template: template,
+      notAfter: notAfter,
+      notBefore: notBefore,
+    )
+  }
+}
+
+type CertificateRequestSigner {
+  let csr: File!
+  let key: PrivateKey!
+  let issuer: Issuer!
+
+  let template: File
+  let notAfter: String
+  let notBefore: String
+
+  """
+  Sign a leaf certificate.
+  """
+  pub certificate(
+    """
+    Certificate template file.
+    """
+    template: File = self.template,
+    """
+    Certificate validity end time or duration.
+    """
+    notAfter: String = self.notAfter,
+    """
+    Certificate validity start time or duration.
+    """
+    notBefore: String = self.notBefore,
+  ): CertificateIdentity! {
+    CertificateIdentity(
+      certificate: self.signed("leaf", template, notAfter, notBefore),
+      key: self.key,
+    )
+  }
+
+  """
+  Sign an intermediate CA certificate.
+  """
+  pub intermediate(
+    """
+    Maximum path length to set in the pathLenConstraint of the certificate (default: 0; -1 for no limit).
+    """
+    pathLen: Int = null,
+    """
+    Certificate template file.
+    """
+    template: File = self.template,
+    """
+    Certificate validity end time or duration.
+    """
+    notAfter: String = self.notAfter,
+    """
+    Certificate validity start time or duration.
+    """
+    notBefore: String = self.notBefore,
+  ): CertificateAuthority! {
+    let args = []
+
+    if (pathLen != null) {
+      args = ["--path-len", toString(pathLen)]
+    }
+
+    CertificateAuthority(
+      certificate: self.signed(
+        "intermediate-ca",
+        template,
+        notAfter,
+        notBefore,
+        args,
+      ),
+      key: self.key,
+    )
+  }
+
+  """
+  Sign a certificate without modifying the CSR.
+  """
+  pub verbatim(
+    """
+    Certificate template file.
+    """
+    template: File = self.template,
+    """
+    Certificate validity end time or duration.
+    """
+    notAfter: String = self.notAfter,
+    """
+    Certificate validity start time or duration.
+    """
+    notBefore: String = self.notBefore,
+  ): CertificateIdentity! {
+    CertificateIdentity(
+      certificate: self.signed("csr", template, notAfter, notBefore),
+      key: self.key,
+    )
+  }
+
+  let signed(
+    profile: String!,
+    template: File,
+    notAfter: String,
+    notBefore: String,
+    args: [String!]! = [],
+  ): Certificate! {
+    let fileName = self.csr.name.trimSuffix(".csr") + ".crt"
+
+    let result = Command(["certificate", "sign"])
+      .withFileArg(self.csr)
+      .withFileArg(self.issuer.certificate)
+      .withFileArg(self.issuer.key.file)
+      .withArg("--password-file")
+      .withSecretArg("password", self.issuer.password)
+      .with { cmd => withTemplate(cmd, template, profile) }
+      .withArgs(validityArgs(notAfter, notBefore))
+      .withArgs(args)
+      .run(redirectStdout: fileName)
+
+    Certificate(result.file(fileName), self.issuer.chain)
+  }
 }
 
 type X509 {
@@ -101,79 +376,33 @@ type X509 {
     Certificate validity start time or duration.
     """
     notBefore: String = null,
-  ): X509CreateKeySelector! {
-    X509CreateKeySelector(template, notAfter, notBefore)
+  ): CreateCertificateKeySelector! {
+    CreateCertificateKeySelector(template, notAfter, notBefore)
   }
 }
-
-# type CertificateAuthority {
-#   pub certificate: File!
-#   pub key: File!
-#   pub password: Secret!
-#   pub bundle: File!
-
-#   pub files: [File!]! {
-#     [self.certificate, self.key, self.bundle]
-#   }
-# }
-
-# type Certificate {
-#   pub certificate: File!
-#   pub key: File!
-#   pub password: Secret
-#   pub bundle: File!
-
-#   pub files: [File!]! {
-#     [self.certificate, self.key, self.bundle]
-#   }
-# }
-
-type CertificateRequest {
-  pub csr: File!
-  pub key: File!
-  pub password: Secret
-
-  pub files: [File!]! {
-    [self.csr, self.key]
-  }
-}
-
-enum KeyType {
-  EC
-  OKP
-  RSA
-}
-
-enum EcCurve {
-  P256
-  P384
-  P521
-}
-
-let keyPasswordFile = "/run/secrets/x509-password"
-let caPasswordFile = "/run/secrets/x509-ca-password"
-let existingKeyFile = "/inputs/key.pem"
-let caCertFile = "/inputs/ca.crt"
-let caKeyFile = "/inputs/ca.key"
-let caBundleFile = "/inputs/ca-bundle.crt"
-let templateFile = "/inputs/template.json"
 
 let emptyPassword: Secret! {
   Dagger.setSecret("x509-empty-password", "")
 }
 
-let ecCurveValue(curve: EcCurve!): String! {
-  case (curve) {
-    EcCurve.P256 => "P-256"
-    EcCurve.P384 => "P-384"
-    EcCurve.P521 => "P-521"
+let withTemplate(cmd: Command!, template: File, profile: String!): Command! {
+  if (template == null) {
+    return cmd.withArgs(["--profile", profile])
   }
+
+  cmd.withArgs(["--template"]).withFileArg(template)
 }
 
-let arch(platform: Platform!): String! {
-  case (platform) {
-    "linux/amd64" => "amd64"
-    "linux/arm64" => "arm64"
-    else => raise "unsupported platform: " + toString(platform).trim("\"")
+let validityArgs(notAfter: String, notBefore: String): [String!]! {
+  let args = []
+
+  if (notAfter != null) {
+    args += ["--not-after", notAfter]
   }
+
+  if (notBefore != null) {
+    args += ["--not-before", notBefore]
+  }
+
+  args
 }

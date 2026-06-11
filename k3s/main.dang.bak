@@ -1,3 +1,40 @@
+# let ENTRYPOINT = """#!/bin/sh
+# set -o errexit
+# set -o nounset
+
+# #########################################################################################################################################
+# # DISCLAIMER																																																														#
+# # Copied from https://github.com/moby/moby/blob/ed89041433a031cafc0a0f19cfe573c31688d377/hack/dind#L28-L37															#
+# # Permission granted by Akihiro Suda <akihiro.suda.cz@hco.ntt.co.jp> (https://github.com/k3d-io/k3d/issues/493#issuecomment-827405962)	#
+# # Moby License Apache 2.0: https://github.com/moby/moby/blob/ed89041433a031cafc0a0f19cfe573c31688d377/LICENSE														#
+# #########################################################################################################################################
+# if [ -f /sys/fs/cgroup/cgroup.controllers ]; then
+#   echo "[$(date -Iseconds)] [CgroupV2 Fix] Evacuating Root Cgroup ..."
+#   # move the processes from the root group to the /init group,
+#   # otherwise writing subtree_control fails with EBUSY.
+#   mkdir -p /sys/fs/cgroup/init
+#   xargs -rn1 < /sys/fs/cgroup/cgroup.procs > /sys/fs/cgroup/init/cgroup.procs || :
+#   # enable controllers
+#   sed -e 's/ / +/g' -e 's/^/+/' <"/sys/fs/cgroup/cgroup.controllers" >"/sys/fs/cgroup/cgroup.subtree_control"
+#   echo "[$(date -Iseconds)] [CgroupV2 Fix] Done"
+# fi
+
+# exec "$@"
+# """
+
+# let ENTRYPOINTbak = """#!/bin/sh
+# set -o errexit
+# set -o nounset
+
+# if [ -f /sys/fs/cgroup/cgroup.controllers ]; then
+#   mkdir -p /sys/fs/cgroup/init
+#   xargs -rn1 < /sys/fs/cgroup/cgroup.procs > /sys/fs/cgroup/init/cgroup.procs || :
+#   sed -e 's/ / +/g' -e 's/^/+/' < /sys/fs/cgroup/cgroup.controllers > /sys/fs/cgroup/cgroup.subtree_control
+# fi
+
+# exec "$@"
+# """
+
 type K3s {
   """
   Generate custom CA certificates for bootstrapping K3s.
@@ -15,34 +52,12 @@ type K3s {
   ): File! {
     Dagger
       .container
-      .from("rancher/k3s:latest")
+      .from("alpine:latest")
       .withExec(["mkdir", "-p", "/work"])
       .withWorkdir("/work")
       .withDirectory("/certs", self.certs(seed))
-      .withEnvVariable("KUBECONFIG", "/work/kubeconfig")
-      .withExec([
-        "kubectl",
-        "config", "set-cluster", "default",
-        "--server", server, "--tls-server-name", "k3s",
-        "--certificate-authority", "/certs/server-ca.crt",
-        "--embed-certs",
-      ])
-      .withExec([
-        "kubectl",
-        "config", "set-credentials", "cluster-admin",
-        "--client-certificate", "/certs/client-admin.crt", "--client-key", "/certs/client-admin.key",
-        "--embed-certs",
-      ])
-      .withExec([
-        "kubectl",
-        "config", "set-context", "default",
-        "--cluster", "default",
-        "--user", "cluster-admin",
-      ])
-      .withExec([
-        "kubectl",
-        "config", "use-context", "default",
-      ])
+      .withEnvVariable("SERVER", server)
+      .withExec(["sh", "-c", self.kubeconfigScript], redirectStdout: "kubeconfig")
       .file("/work/kubeconfig")
   }
 

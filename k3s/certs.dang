@@ -1,129 +1,87 @@
 type CertGenerator {
-  let version: String!
-  let container: Container!
-
-  new(
-    version: String! = "latest",
-    container: Container! = Dagger.container.from("smallstep/step-cli:" + version).withUser("root"),
-  ) {
-    self.version = version
-    self.container = container
-
-    self
-  }
-
   pub generate(seed: String!): Directory! {
     let suffix = "@" + seed
 
-    let x509 = Dagger.x509(version: self.version, container: self.container)
+    let crypto = Dagger.crypto
+    let x509 = crypto.x509
 
-    # TODO: use crypto for this
-    let service = x509.create.rsa(2048).csr("k3s-service" + suffix, name: "service")
+    let service = crypto.key.generate(name: "service" + suffix).rsa(2048)
 
     let rsagen = x509.create.rsa(4096)
 
-    let root = rsagen.rootCa("k3s-root-ca" + suffix, notAfter: "175200h")
+    let root = rsagen.root("k3s-root-ca" + suffix, notAfter: "175200h")
 
-    let intermediate = rsagen.intermediateCa(
+    let intermediate = rsagen.intermediate(
       "k3s-intermediate-ca" + suffix,
-      root,
+      root.issuer,
       notAfter: "88800h",
     )
 
-    let ecgen = x509.create(notAfter: "88800h").ec(X509EcCurve.P_256)
+    let issuer = intermediate.issuer
 
-    let client = ecgen.intermediateCa(
+    let ecgen = x509.create(notAfter: "88800h").ec(CryptoEcCurve.P_256)
+
+    let client = ecgen.intermediate(
       "k3s-client-ca" + suffix,
-      intermediate,
+      issuer,
       name: "client-ca",
     )
 
-    let server = ecgen.intermediateCa(
+    let server = ecgen.intermediate(
       "k3s-server-ca" + suffix,
-      intermediate,
+      issuer,
       name: "server-ca",
     )
 
-    let requestHeader = ecgen.intermediateCa(
+    let requestHeader = ecgen.intermediate(
       "k3s-request-header-ca" + suffix,
-      intermediate,
+      issuer,
       name: "request-header-ca",
     )
 
-    let etcdPeer = ecgen.intermediateCa(
+    let etcdPeer = ecgen.intermediate(
       "k3s-etcd-peer-ca" + suffix,
-      intermediate,
+      issuer,
       name: "etcd-peer-ca",
     )
 
-    let etcdServer = ecgen.intermediateCa(
+    let etcdServer = ecgen.intermediate(
       "k3s-etcd-server-ca" + suffix,
-      intermediate,
+      issuer,
       name: "etcd-server-ca",
     )
 
     let admin = x509
       .create(template: Dagger.file("admin.tpl", self.adminTemplate), notAfter: "8760h")
       .rsa(2048)
-      .certificate("system:admin", client, name: "client-admin")
-
-    # Dagger
-    #   .directory
-    #   .withFiles("", [
-    #     root.key,
-    #     root.certificate,
-    #     root.bundle,
-    #     intermediate.key,
-    #     intermediate.certificate,
-    #     intermediate.bundle,
-    #     client.key,
-    #     client.certificate,
-    #     client.bundle,
-    #     server.key,
-    #     server.certificate,
-    #     server.bundle,
-    #     requestHeader.key,
-    #     requestHeader.certificate,
-    #     requestHeader.bundle,
-    #     admin.key,
-    #     admin.certificate,
-    #     admin.bundle,
-    #   ])
-    #   .withFiles("etcd/", [
-    #     etcdPeer.key,
-    #     etcdPeer.certificate,
-    #     etcdPeer.bundle,
-    #     etcdServer.key,
-    #     etcdServer.certificate,
-    #     etcdServer.bundle,
-    #   ])
+      .certificate("system:admin", client.issuer, name: "client-admin")
 
     Dagger
       .directory
-      .withFile("service.key", service.key)
-      .withFile("root-ca.key", root.key)
-      .withFile("root-ca.pem", root.certificate)
-      .withFile("root-ca.crt", root.bundle)
-      .withFile("intermediate-ca.key", intermediate.key)
-      .withFile("intermediate-ca.pem", intermediate.certificate)
-      .withFile("intermediate-ca.crt", intermediate.bundle)
-      .withFile("client-ca.key", client.key)
-      .withFile("client-ca.pem", client.certificate)
-      .withFile("client-ca.crt", client.bundle)
-      .withFile("server-ca.key", server.key)
-      .withFile("server-ca.pem", server.certificate)
-      .withFile("server-ca.crt", server.bundle)
-      .withFile("request-header-ca.key", requestHeader.key)
-      .withFile("request-header-ca.pem", requestHeader.certificate)
-      .withFile("request-header-ca.crt", requestHeader.bundle)
-      .withFile("etcd/peer-ca.key", etcdPeer.key)
-      .withFile("etcd/peer-ca.pem", etcdPeer.certificate)
-      .withFile("etcd/peer-ca.crt", etcdPeer.bundle)
-      .withFile("etcd/server-ca.key", etcdServer.key)
-      .withFile("etcd/server-ca.pem", etcdServer.certificate)
-      .withFile("etcd/server-ca.crt", etcdServer.bundle)
-      .withFile("client-admin.key", admin.key)
-      .withFile("client-admin.crt", admin.bundle)
+      .withFile("service.key", service.privateKey.file)
+      .withFile("root-ca.key", root.key.file)
+      .withFile("root-ca.pem", root.certificate.file)
+      .withFile("root-ca.crt", root.certificate.fullChain)
+      .withFile("intermediate-ca.key", intermediate.key.file)
+      .withFile("intermediate-ca.pem", intermediate.certificate.file)
+      .withFile("intermediate-ca.crt", intermediate.certificate.fullChain)
+      .withFile("client-ca.key", client.key.file)
+      .withFile("client-ca.pem", client.certificate.file)
+      .withFile("client-ca.crt", client.certificate.fullChain)
+      .withFile("server-ca.key", server.key.file)
+      .withFile("server-ca.pem", server.certificate.file)
+      .withFile("server-ca.crt", server.certificate.fullChain)
+      .withFile("request-header-ca.key", requestHeader.key.file)
+      .withFile("request-header-ca.pem", requestHeader.certificate.file)
+      .withFile("request-header-ca.crt", requestHeader.certificate.fullChain)
+      .withFile("etcd/peer-ca.key", etcdPeer.key.file)
+      .withFile("etcd/peer-ca.pem", etcdPeer.certificate.file)
+      .withFile("etcd/peer-ca.crt", etcdPeer.certificate.fullChain)
+      .withFile("etcd/server-ca.key", etcdServer.key.file)
+      .withFile("etcd/server-ca.pem", etcdServer.certificate.file)
+      .withFile("etcd/server-ca.crt", etcdServer.certificate.fullChain)
+      .withFile("client-admin.key", admin.key.file)
+      .withFile("client-admin.crt", admin.certificate.fullChain)
   }
 
   let adminTemplate: String! = """{
@@ -135,18 +93,4 @@ type CertGenerator {
     "extKeyUsage": ["clientAuth"]
   }
   """
-}
-
-union GeneratedCert = X509Certificate | X509CertificateAuthority
-
-let certFiles(cert: GeneratedCert): [File!]! {
-  case (cert) {
-    cert: X509Certificate => [
-      cert.certificate.withName(cert.certificate.name.trimSuffix(".crt") + ".pem"),
-      cert.key,
-      cert.bundle.withName(cert.bundle.name.trimSuffix("-bundle.crt") + ".crt"),
-    ]
-
-    X509CertificateAuthority => [files.certificate, files.key]
-  }
 }

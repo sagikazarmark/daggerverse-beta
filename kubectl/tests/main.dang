@@ -1,0 +1,17 @@
+type Tests {
+  pub default: Container! @check {
+    let kubeApiServer = Dagger.kubeApiServer
+
+    let kubectl = Dagger
+      .kubectl
+      .withClusterService(
+        "default",
+        kubeApiServer.service,
+        ca: kubeApiServer.ca,
+      )
+      .withCredentials("default", kubeApiServer.clientCertificate, kubeApiServer.clientKey)
+      .withContext("default", "default", "default", use: true)
+
+    kubectl.container
+  }
+}

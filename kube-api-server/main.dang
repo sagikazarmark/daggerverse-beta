@@ -1,0 +1,94 @@
+type KubeApiServer {
+  """
+  The Kubernetes API server service (exposed on port 6443).
+  """
+  pub service: Service!
+
+  """
+  The CA certificate that signed the API server's serving certificate.
+  """
+  pub ca: File!
+
+  """
+  Client certificate in the system:masters group.
+  """
+  pub clientCertificate: File!
+
+  """
+  Client key in the system:masters group.
+  """
+  pub clientKey: File!
+
+  new(
+    name: String! = "kube-api-server",
+    hostname: String! = name,
+    registry: String! = "registry.k8s.io",
+    kubeVersion: String! = "v1.36.0",
+    apiServerContainer: Container! = Dagger.container.from(`${registry}/kube-apiserver:${kubeVersion}`),
+    etcdVersion: String! = "3.5.21-0",
+    etcdContainer: Container! = Dagger.container.from(`${registry}/etcd:${etcdVersion}`),
+  ) {
+    let etcd = etcdContainer
+      .withExposedPort(2379)
+      .withMountedTemp("/tmp/etcd")
+      .asService(args: [
+        "etcd",
+        "--data-dir=/tmp/etcd",
+        "--listen-client-urls=http://0.0.0.0:2379",
+        "--advertise-client-urls=http://etcd:2379",
+      ])
+
+    let suffix = "@" + name
+    let ecgen = Dagger.crypto.x509.create.ec
+
+    let serverCa = ecgen.root("server-ca" + suffix, name: "server-ca")
+    let server = ecgen.certificate(
+      "kube-apiserver" + suffix,
+      serverCa.issuer,
+      name: "apiserver",
+      sans: [hostname, "apiserver", "k8s", "localhost", "127.0.0.1"],
+    )
+
+    let clientCa = ecgen.root("client-ca" + suffix, name: "client-ca")
+
+    let client = ecgen
+      .certificate(
+        "kubectl-admin" + suffix,
+        clientCa.issuer,
+        name: "client",
+        template: Dagger.currentModule.source.file("client.json"),
+      )
+
+    let certs = Dagger
+      .directory
+      .withFile("apiserver.crt", server.certificate.fullChain)
+      .withFile("apiserver.key", server.key.file)
+      .withFile("client-ca.crt", clientCa.certificate.file)
+      .withDirectory(
+        "",
+        Dagger.crypto.key.generate(name: "sa").rsa.directory,
+      )
+
+    self.service = apiServerContainer
+      .withServiceBinding("etcd", etcd)
+      .withDirectory("/certs", certs)
+      .withExposedPort(6443)
+      .asService(args: [
+        "kube-apiserver",
+        "--etcd-servers", "http://etcd:2379",
+        "--tls-cert-file", "/certs/apiserver.crt",
+        "--tls-private-key-file", "/certs/apiserver.key",
+        "--client-ca-file", "/certs/client-ca.crt",
+        "--service-account-issuer", "https://kubernetes.default.svc.cluster.local",
+        "--service-account-key-file", "/certs/sa.pub",
+        "--service-account-signing-key-file", "/certs/sa.key",
+        "--authorization-mode", "RBAC",
+      ])
+      .withHostname(hostname)
+    self.ca = serverCa.certificate.file
+    self.clientCertificate = client.certificate.file
+    self.clientKey = client.key.file
+
+    self
+  }
+}

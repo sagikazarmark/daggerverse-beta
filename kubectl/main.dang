@@ -1,0 +1,231 @@
+type Kubectl {
+  pub container: Container!
+
+  new(container: Container! = Dagger.container.from("alpine/kubectl:latest")) {
+    self.container = container
+      .withDirectory("/kube", Dagger.directory)
+      .withEnvVariable("KUBECONFIG", "/kube/config")
+
+    self
+  }
+
+  """
+  Loads the kubeconfig directory, overwriting any existing kubeconfig.
+  """
+  pub loadConfig(config: Directory!): Kubectl! {
+    self.container = self
+      .container
+      .withoutDirectory("/kube")
+      .withDirectory("/kube", config)
+
+    self
+  }
+
+  """
+  Returns the merged and flattened kubeconfig file.
+  """
+  pub config: File! {
+    self
+      .container
+      .withExec(
+        ["kubectl", "config", "view", "--flatten", "--merge", "--output", "yaml"],
+        redirectStdout: "/kubeconfig",
+      )
+      .file("/kubeconfig")
+  }
+
+  """
+  Set a cluster entry in kubeconfig.
+  """
+  pub withCluster(
+    """
+    Name of the cluster entry in kubeconfig.
+    """
+    name: String!,
+    """
+    Server for the cluster entry in kubeconfig.
+    """
+    server: String!,
+    """
+    TLS server name for the cluster entry in kubeconfig.
+    """
+    tlsServerName: String!,
+    """
+    CA certificate for the cluster entry in kubeconfig.
+    """
+    ca: File = null,
+  ): Kubectl! {
+    let container = self.container
+    let args = [
+      "kubectl",
+      "config", "set-cluster", name,
+      "--server", server, "--tls-server-name", tlsServerName,
+    ]
+
+    if (ca != null) {
+      let path = `/kube/certs/servers/${name}/ca.crt`
+
+      container = container.withMountedFile(path, ca)
+      args += ["--certificate-authority", path]
+    } else {
+      args += ["--insecure-skip-tls-verify"]
+    }
+
+    self.container = container.withExec(args)
+
+    self
+  }
+
+  """
+  Set a cluster entry from a service in kubeconfig.
+  """
+  pub withClusterService(
+    """
+    Name of the cluster entry in kubeconfig.
+    """
+    name: String!,
+    """
+    Server for the cluster entry in kubeconfig.
+    """
+    service: Service!,
+    """
+    Port of the service to use (in case the service has multiple ports exposed).
+    """
+    servicePort: Int = null,
+    """
+    TLS server name for the cluster entry in kubeconfig.
+    """
+    serverName: String! = service.hostname,
+    """
+    CA certificate for the cluster entry in kubeconfig.
+    """
+    ca: File = null,
+  ): Kubectl! {
+    self
+      .withServiceBinding(name, service)
+      .withCluster(
+        name,
+        service.endpoint(scheme: "https", port: servicePort),
+        serverName,
+        ca,
+      )
+  }
+
+  let withServiceBinding(name: String!, service: Service!): Kubectl! {
+    self.container = self.container.withServiceBinding(name, service)
+
+    self
+  }
+
+  """
+  Set a user entry in kubeconfig using client certificate and key.
+  """
+  pub withCredentials(
+    """
+    Name of the user entry in kubeconfig.
+    """
+    name: String!,
+    """
+    Client certificate for the user entry in kubeconfig.
+    """
+    certificate: File!,
+    """
+    Client key for the user entry in kubeconfig.
+    """
+    key: File!,
+  ): Kubectl! {
+    let path = `/kube/certs/users/${name}/`
+    let certPath = path + "client.crt"
+    let keyPath = path + "client.key"
+
+    let args = [
+      "kubectl",
+      "config", "set-credentials", name,
+      "--client-certificate", certPath, "--client-key", keyPath,
+      "--embed-certs",
+    ]
+
+    self.container = self
+      .container
+      .withMountedFile(certPath, certificate)
+      .withMountedFile(keyPath, key)
+      .withExec(args)
+
+    self
+  }
+
+  """
+  Set a context entry in kubeconfig.
+  """
+  pub withContext(
+    """
+    Name of the context entry in kubeconfig.
+    """
+    name: String!,
+    """
+    Name of the cluster entry in kubeconfig.
+    """
+    cluster: String!,
+    """
+    Name of the user entry in kubeconfig.
+    """
+    user: String!,
+    """
+    Set the context as the current context.
+    """
+    use: Boolean! = false,
+    """
+    Namespace for the context entry in kubeconfig.
+    """
+    namespace: String = null,
+  ): Kubectl! {
+    let args = [
+      "kubectl",
+      "config", "set-context", name,
+      "--cluster", cluster, "--user", user,
+    ]
+
+    if (namespace != null) {
+      args += ["--namespace", namespace]
+    }
+
+    self.container = self.container.withExec(args)
+
+    if (use) {
+      self.container = self.container.withExec(["kubectl", "config", "use-context", name])
+    }
+
+    self
+  }
+
+  """
+  Set the namespace (for the current or a specific context).
+  """
+  pub withNamespace(
+    """
+    Namespace for a context entry in kubeconfig.
+    """
+    namespace: String!,
+    """
+    Name of the context entry in kubeconfig.
+    """
+    context: String = null,
+  ): Kubectl! {
+    let args = [
+      "kubectl",
+      "config", "set-context",
+    ]
+
+    if (context != null) {
+      args += [context]
+    } else {
+      args += ["--current"]
+    }
+
+    args += ["--namespace", namespace]
+
+    self.container = self.container.withExec(args)
+
+    self
+  }
+}

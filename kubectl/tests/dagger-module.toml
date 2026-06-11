@@ -1,0 +1,15 @@
+name = "tests"
+engineVersion = "v1.0.0-beta.3"
+runtime.source = "dang"
+
+[[dependencies]]
+name = "kubectl"
+source = ".."
+
+[[dependencies]]
+name = "crypto"
+source = "../../crypto"
+
+[[dependencies]]
+name = "kube-api-server"
+source = "../../kube-api-server"

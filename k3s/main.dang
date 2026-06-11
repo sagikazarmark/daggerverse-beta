@@ -1,65 +1,43 @@
 type K3s {
-  """
-  Generate custom CA certificates for bootstrapping K3s.
-  """
-  pub certs(seed: String!): Directory! {
-    CertGenerator.generate(seed)
-  }
+  pub service: Service!
+  pub kubectl: Container!
 
-  """
-  Return a K3s server service bootstrapped from generated CA certificates.
-  """
-  pub service(
-    seed: String! = "k3s",
-    image: String! = "rancher/k3s:latest",
-    enableTraefik: Boolean! = false,
-    nodePort: Int = null,
-  ): Service! {
-    let args = ["k3s", "server", "--debug", "--tls-san", "k3s", "--disable", "metrics-server", "--egress-selector-mode=disabled", "--snapshotter=native"]
+  new(
+    name: String! = "k3s",
+    """
+    Node ports to expose on the k3s service.
+    """
+    nodePorts: [Int!]! = [],
+    version: String! = "latest",
+    container: Container! = Dagger.container.from("rancher/k3s:" + version),
+  ) {
+    let certs = gencerts(name)
 
-    if (!enableTraefik) {
-      args = args + ["--disable", "traefik"]
-    }
-
-    let container = Dagger
-      .container
-      .from(image)
-      .withDirectory("/var/lib/rancher/k3s/server/tls", self.certs(seed))
+    self.service = container
+      .withDirectory("/var/lib/rancher/k3s/server/tls", certs)
       .withMountedTemp("/etc/rancher/k3s")
       .withMountedTemp("/etc/lib/cni")
       .withMountedTemp("/var/lib/kubelet")
       .withMountedTemp("/var/log")
       .withExposedPort(6443)
-
-    if (nodePort != null) {
-      container = container.withExposedPort(nodePort, experimentalSkipHealthcheck: true)
-    }
-
-    container
       .asService(
-        args: args,
+        args: [
+          "k3s", "server",
+          "--debug",
+          "--tls-san", name,
+          "--disable", "metrics-server",
+          "--egress-selector-mode", "disabled",
+          "--snapshotter=native",
+        ],
         insecureRootCapabilities: true,
-        experimentalPrivilegedNesting: true,
         noInit: true,
       )
-  }
 
-  """
-  Return a kubectl container configured to talk to the K3s service.
-  """
-  pub kubectl(
-    seed: String! = "k3s",
-    image: String! = "rancher/k3s:latest",
-    nodePort: Int = null,
-  ): Container! {
-    let certs = self.certs(seed)
-
-    Dagger
-      .kubectl(Dagger.container.from(image))
+    self.kubectl = Dagger
+      .kubectl(container)
       .withClusterService(
-        "k3s",
-        self.service(seed: seed, image: image, nodePort: nodePort),
-        serverName: "k3s",
+        "default",
+        self.service.withHostname("k3s"),
         ca: certs.file("server-ca.crt"),
       )
       .withCredentials(
@@ -67,7 +45,94 @@ type K3s {
         certs.file("client-admin.crt"),
         certs.file("client-admin.key"),
       )
-      .withContext("k3s", cluster: "k3s", user: "system:admin", use: true)
+      .withContext("default", cluster: "default", user: "system:admin", use: true)
       .container
+
+    self
+  }
+
+  let gencerts(seed: String!): Directory! {
+    let suffix = "@" + seed
+
+    let crypto = Dagger.crypto
+    let x509 = crypto.x509
+
+    let service = crypto.key.generate(name: "service" + suffix).rsa(2048)
+
+    let rsagen = x509.create.rsa(4096)
+
+    let root = rsagen.root("k3s-root-ca" + suffix, notAfter: "175200h")
+
+    let intermediate = rsagen.intermediate(
+      "k3s-intermediate-ca" + suffix,
+      root.issuer,
+      notAfter: "88800h",
+    )
+
+    let issuer = intermediate.issuer
+
+    let ecgen = x509.create(notAfter: "88800h").ec(CryptoEcCurve.P_256)
+
+    let client = ecgen.intermediate(
+      "k3s-client-ca" + suffix,
+      issuer,
+      name: "client-ca",
+    )
+
+    let server = ecgen.intermediate(
+      "k3s-server-ca" + suffix,
+      issuer,
+      name: "server-ca",
+    )
+
+    let requestHeader = ecgen.intermediate(
+      "k3s-request-header-ca" + suffix,
+      issuer,
+      name: "request-header-ca",
+    )
+
+    let etcdPeer = ecgen.intermediate(
+      "k3s-etcd-peer-ca" + suffix,
+      issuer,
+      name: "etcd-peer-ca",
+    )
+
+    let etcdServer = ecgen.intermediate(
+      "k3s-etcd-server-ca" + suffix,
+      issuer,
+      name: "etcd-server-ca",
+    )
+
+    let admin = x509
+      .create(template: Dagger.currentModule.source.file("client.json"), notAfter: "8760h")
+      .rsa(2048)
+      .certificate("system:admin", client.issuer, name: "client-admin")
+
+    Dagger
+      .directory
+      .withFile("service.key", service.privateKey.file)
+      .withFile("root-ca.key", root.key.file)
+      .withFile("root-ca.pem", root.certificate.file)
+      .withFile("root-ca.crt", root.certificate.fullChain)
+      .withFile("intermediate-ca.key", intermediate.key.file)
+      .withFile("intermediate-ca.pem", intermediate.certificate.file)
+      .withFile("intermediate-ca.crt", intermediate.certificate.fullChain)
+      .withFile("client-ca.key", client.key.file)
+      .withFile("client-ca.pem", client.certificate.file)
+      .withFile("client-ca.crt", client.certificate.fullChain)
+      .withFile("server-ca.key", server.key.file)
+      .withFile("server-ca.pem", server.certificate.file)
+      .withFile("server-ca.crt", server.certificate.fullChain)
+      .withFile("request-header-ca.key", requestHeader.key.file)
+      .withFile("request-header-ca.pem", requestHeader.certificate.file)
+      .withFile("request-header-ca.crt", requestHeader.certificate.fullChain)
+      .withFile("etcd/peer-ca.key", etcdPeer.key.file)
+      .withFile("etcd/peer-ca.pem", etcdPeer.certificate.file)
+      .withFile("etcd/peer-ca.crt", etcdPeer.certificate.fullChain)
+      .withFile("etcd/server-ca.key", etcdServer.key.file)
+      .withFile("etcd/server-ca.pem", etcdServer.certificate.file)
+      .withFile("etcd/server-ca.crt", etcdServer.certificate.fullChain)
+      .withFile("client-admin.key", admin.key.file)
+      .withFile("client-admin.crt", admin.certificate.fullChain)
   }
 }

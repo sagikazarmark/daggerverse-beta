@@ -184,14 +184,14 @@ type PrivateKey {
     let result = Command(["crypto", "change-pass"])
       .withFileArg(self.file)
       .withArgs(["--out", fileName])
-      .with { cmd =>
+      .{ cmd =>
         if (old != null) {
           cmd = cmd.withArg("--password-file").withSecretArg("old-password", old)
         }
 
         cmd
       }
-      .with { cmd =>
+      .{ cmd =>
         if (new != null) {
           cmd
             .withArg("--new-password-file")

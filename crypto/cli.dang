@@ -33,10 +33,6 @@ type Command {
       )
   }
 
-  pub with(&block(cmd: Command!): Command!): Command! {
-    block(self)
-  }
-
   pub withArgs(args: [String!]!): Command! {
     self.args += args
 

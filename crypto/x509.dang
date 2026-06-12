@@ -77,7 +77,7 @@ type Certificate {
   ): Boolean! {
     let result = Command(["certificate", "needs-renewal"])
       .withFileArg(self.file)
-      .with { cmd =>
+      .{ cmd =>
         if (expiresIn != null) {
           cmd = cmd.withArgs(["--expires-in", expiresIn])
         }
@@ -140,21 +140,19 @@ type CertificateAuthority {
     Password used to decrypt the private key.
     """
     password: Secret = null,
-  ): Issuer! {
+  ): CertificateIssuer! {
     self.key.ensurePassword(password)
 
-    Issuer(
+    CertificateIssuer(
       certificate: self.certificate.file,
       chain: self.certificate.fullChain,
       key: self.key,
-      password: password ?? emptyPassword,
+      password: password,
     )
   }
 }
 
-# Note: fields are intentionally non-null, because nullable object fields
-# cannot cross the module boundary as call inputs.
-type Issuer {
+type CertificateIssuer {
   """
   The issuer certificate.
   """
@@ -171,9 +169,9 @@ type Issuer {
   pub key: PrivateKey!
 
   """
-  Password used to decrypt the private key (empty if the key is not encrypted).
+  Password used to decrypt the private key (null if the key is not encrypted).
   """
-  pub password: Secret!
+  pub password: Secret
 }
 
 type CertificateRequest {
@@ -216,7 +214,7 @@ type CertificateRequest {
     """
     Issuing authority that signs the certificate.
     """
-    issuer: Issuer!,
+    issuer: CertificateIssuer!,
     """
     Certificate template file.
     """
@@ -244,7 +242,7 @@ type CertificateRequest {
 type CertificateRequestSigner {
   let csr: File!
   let key: PrivateKey!
-  let issuer: Issuer!
+  let issuer: CertificateIssuer!
 
   let template: File
   let notAfter: String
@@ -348,9 +346,15 @@ type CertificateRequestSigner {
       .withFileArg(self.csr)
       .withFileArg(self.issuer.certificate)
       .withFileArg(self.issuer.key.file)
-      .withArg("--password-file")
-      .withSecretArg("password", self.issuer.password)
-      .with { cmd => withTemplate(cmd, template, profile) }
+      .{ cmd =>
+        let password = self.issuer.password
+        if (password != null) {
+          cmd = cmd.withArg("--password-file").withSecretArg("password", password)
+        }
+
+        cmd
+      }
+      .{ withTemplate(_, template, profile) }
       .withArgs(validityArgs(notAfter, notBefore))
       .withArgs(args)
       .run(redirectStdout: fileName)
@@ -379,10 +383,6 @@ type X509 {
   ): CreateCertificateKeySelector! {
     CreateCertificateKeySelector(template, notAfter, notBefore)
   }
-}
-
-let emptyPassword: Secret! {
-  Dagger.setSecret("x509-empty-password", "")
 }
 
 let withTemplate(cmd: Command!, template: File, profile: String!): Command! {

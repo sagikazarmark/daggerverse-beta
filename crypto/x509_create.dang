@@ -111,8 +111,7 @@ type CertificateCreator {
     let keyFile = name + ".key"
 
     let result = self
-      .command(subject, certFile, keyFile, password)
-      .with { cmd => withTemplate(cmd, template, "root-ca") }
+      .command(subject, certFile, keyFile, password).{withTemplate(_, template, "root-ca")}
       .withArgs(validityArgs(notAfter, notBefore))
       .run
 
@@ -133,7 +132,7 @@ type CertificateCreator {
     """
     Issuing authority that signs the certificate.
     """
-    issuer: Issuer!,
+    issuer: CertificateIssuer!,
     """
     Base name for generated files.
     """
@@ -160,8 +159,8 @@ type CertificateCreator {
 
     let result = self
       .command(subject, certFile, keyFile, password)
-      .with { cmd => self.withIssuer(cmd, issuer) }
-      .with { cmd => withTemplate(cmd, template, "intermediate-ca") }
+      .{ self.withIssuer(_, issuer) }
+      .{ withTemplate(_, template, "intermediate-ca") }
       .withArgs(validityArgs(notAfter, notBefore))
       .run
 
@@ -182,7 +181,7 @@ type CertificateCreator {
     """
     Issuing authority that signs the certificate.
     """
-    issuer: Issuer!,
+    issuer: CertificateIssuer!,
     """
     Base name for generated files.
     """
@@ -213,8 +212,8 @@ type CertificateCreator {
 
     let result = self
       .command(subject, certFile, keyFile, password)
-      .with { cmd => self.withIssuer(cmd, issuer) }
-      .with { cmd => withTemplate(cmd, template, "leaf") }
+      .{ self.withIssuer(_, issuer) }
+      .{ withTemplate(_, template, "leaf") }
       .withArgs(validityArgs(notAfter, notBefore))
       .withArgs(self.sanArgs(sans))
       .run
@@ -263,7 +262,7 @@ type CertificateCreator {
 
     let result = self
       .command(subject, certFile, keyFile, password)
-      .with { cmd => withTemplate(cmd, template, "self-signed") }
+      .{ withTemplate(_, template, "self-signed") }
       .withArgs(validityArgs(notAfter, notBefore))
       .withArgs(self.sanArgs(sans))
       .withArg("--subtle")
@@ -307,7 +306,7 @@ type CertificateCreator {
       .command(subject, csrFile, keyFile, password)
       .withArg("--csr")
       .withArgs(self.sanArgs(sans))
-      .with { cmd =>
+      .{ cmd =>
         if (template != null) {
           cmd = cmd.withArg("--template").withFileArg(template)
         }
@@ -343,14 +342,19 @@ type CertificateCreator {
     cmd.withArgs([keyFile]).withArgs(keyArgs).withPassword(password)
   }
 
-  let withIssuer(cmd: Command!, issuer: Issuer!): Command! {
-    cmd
+  let withIssuer(cmd: Command!, issuer: CertificateIssuer!): Command! {
+    cmd = cmd
       .withArg("--ca")
       .withFileArg(issuer.certificate)
       .withArg("--ca-key")
       .withFileArg(issuer.key.file)
-      .withArg("--ca-password-file")
-      .withSecretArg("ca-password", issuer.password)
+
+    let password = issuer.password
+    if (password != null) {
+      cmd = cmd.withArg("--ca-password-file").withSecretArg("ca-password", password)
+    }
+
+    cmd
   }
 
   let sanArgs(sans: [String!]!): [String!]! {

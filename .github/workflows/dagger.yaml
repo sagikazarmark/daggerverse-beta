@@ -40,4 +40,5 @@ jobs:
         with:
           verb: check
           args: -m ${{ matrix.module }}/tests
-          version: ${{ env.DAGGER_VERSION }}
+          # version: ${{ env.DAGGER_VERSION }}
+          commit: ${{ env.DAGGER_VERSION }}

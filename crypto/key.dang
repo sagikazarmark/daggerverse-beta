@@ -261,10 +261,14 @@ type RsaKeyParams implements KeyParams {
 }
 
 enum EcCurve {
-  P256
-  P384
-  P521
+  P_256
+  P_384
+  P_521
 }
+
+# P256
+# P384
+# P521
 
 type EcKeyParams implements KeyParams {
   pub curve: EcCurve
@@ -296,9 +300,9 @@ type EcKeyParams implements KeyParams {
 
   let curveString: String! {
     case (self.curve) {
-      EcCurve.P256 => "P-256"
-      EcCurve.P384 => "P-384"
-      EcCurve.P521 => "P-521"
+      EcCurve.P_256 => "P-256"
+      EcCurve.P_384 => "P-384"
+      EcCurve.P_521 => "P-521"
     }
   }
 }

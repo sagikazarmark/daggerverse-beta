@@ -2,10 +2,10 @@ type Crypto {
   """
   Cryptographic key management.
   """
-  pub key: Keys! { Keys }
+  key: Keys! { Keys }
 
   """
   X.509 certificate management.
   """
-  pub x509: X509! { X509 }
+  x509: X509! { X509 }
 }

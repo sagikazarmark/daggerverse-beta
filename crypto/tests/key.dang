@@ -1,27 +1,27 @@
 type KeysTests {
-  pub rsa: KeyPairTests! { KeyPairTests("rsa") }
+  rsa: KeyPairTests! { KeyPairTests("rsa") }
 
-  pub rsa_fixture: KeyPairTests! { KeyPairTests("rsa-fixture") }
+  rsa_fixture: KeyPairTests! { KeyPairTests("rsa-fixture") }
 
-  pub rsa_password: KeyPairTests! { KeyPairTests("rsa-password") }
+  rsa_password: KeyPairTests! { KeyPairTests("rsa-password") }
 
-  pub rsa_fixture_password: KeyPairTests! { KeyPairTests("rsa-fixture-password") }
+  rsa_fixture_password: KeyPairTests! { KeyPairTests("rsa-fixture-password") }
 
-  pub ec: KeyPairTests! { KeyPairTests("ec") }
+  ec: KeyPairTests! { KeyPairTests("ec") }
 
-  pub ec_password: KeyPairTests! { KeyPairTests("ec-password") }
+  ec_password: KeyPairTests! { KeyPairTests("ec-password") }
 
-  pub ec_fixture: KeyPairTests! { KeyPairTests("ec-fixture") }
+  ec_fixture: KeyPairTests! { KeyPairTests("ec-fixture") }
 
-  pub ec_fixture_password: KeyPairTests! { KeyPairTests("ec-fixture-password") }
+  ec_fixture_password: KeyPairTests! { KeyPairTests("ec-fixture-password") }
 
-  pub ed25519: KeyPairTests! { KeyPairTests("ed25519") }
+  ed25519: KeyPairTests! { KeyPairTests("ed25519") }
 
-  pub ed25519_password: KeyPairTests! { KeyPairTests("ed25519-password") }
+  ed25519_password: KeyPairTests! { KeyPairTests("ed25519-password") }
 
-  pub ed25519_fixture: KeyPairTests! { KeyPairTests("ed25519-fixture") }
+  ed25519_fixture: KeyPairTests! { KeyPairTests("ed25519-fixture") }
 
-  pub ed25519_fixture_password: KeyPairTests! { KeyPairTests("ed25519-fixture-password") }
+  ed25519_fixture_password: KeyPairTests! { KeyPairTests("ed25519-fixture-password") }
 }
 
 type KeyPairTests {
@@ -94,11 +94,11 @@ type KeyPairTests {
     self
   }
 
-  pub default: Void @check {
+  default: Void @check {
     self.signature(self.keyPair.privateKey, self.password, self.keyPair.publicKey)
   }
 
-  pub inspect: Void @check {
+  inspect: Void @check {
     self.keyPair.privateKey.inspect(self.password)
     self.keyPair.publicKey.inspect
     self.keyPair.privateKey.publicKey(self.password).inspect
@@ -106,7 +106,7 @@ type KeyPairTests {
     null
   }
 
-  pub fingerprint: Void @check {
+  fingerprint: Void @check {
     self.keyPair.publicKey.fingerprint
     self.keyPair.privateKey.publicKey(self.password).fingerprint
 
@@ -118,7 +118,7 @@ type KeyPairTests {
     null
   }
 
-  pub passwordChange: Void @check {
+  passwordChange: Void @check {
     let privateKey = self.keyPair.privateKey
     let publicKey = self.keyPair.publicKey
 

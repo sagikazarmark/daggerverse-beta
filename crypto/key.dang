@@ -2,12 +2,12 @@ type PublicKey {
   """
   Key file in PEM format.
   """
-  pub file: File!
+  file: File!
 
   """
   Verify a signature of a file.
   """
-  pub verify(
+  verify(
     """
     File to verify.
     """
@@ -32,14 +32,14 @@ type PublicKey {
   """
   Details of the key in a human readable format.
   """
-  pub inspect: String! {
+  inspect: String! {
     Command(["crypto", "key", "inspect"]).withFileArg(self.file).run.stdout
   }
 
   """
   Fingerprint of the key.
   """
-  pub fingerprint(
+  fingerprint(
     """
     Fingerprint format.
     """
@@ -47,7 +47,7 @@ type PublicKey {
   ): String! {
     Command(["crypto", "key", "fingerprint"])
       .withFileArg(self.file)
-      .withArgs(fingerprintFormatArgs(format))
+      .{ withFingerprintFormat(_, format) }
       .run
       .stdout
   }
@@ -57,12 +57,12 @@ type VerificationResult {
   """
   Whether the verification was successful.
   """
-  pub verified: Boolean!
+  verified: Boolean!
 
   """
   The verification message.
   """
-  pub message: String!
+  message: String!
 }
 
 enum FingerprintFormat {
@@ -74,19 +74,19 @@ enum FingerprintFormat {
   EMOJI
 }
 
-let fingerprintFormatArgs(format: FingerprintFormat): [String!]! {
-  if (format == null) {
-    return []
+let withFingerprintFormat(cmd: Command!, format: FingerprintFormat): Command! {
+  if (format != null) {
+    cmd = cmd.withArgs(["--format", toString(format).trim("\"").toLower.replace("_", "-")])
   }
 
-  ["--format", toString(format).trim("\"").toLower.replace("_", "-")]
+  cmd
 }
 
 type PrivateKey {
   """
   Key file in PEM format.
   """
-  pub file: File!
+  file: File!
 
   """
   Whether the key is known to be encrypted.
@@ -104,7 +104,7 @@ type PrivateKey {
   """
   Generate a signature for a file.
   """
-  pub sign(
+  sign(
     """
     File to sign.
     """
@@ -131,7 +131,7 @@ type PrivateKey {
   """
   Get the public key associated with this private key.
   """
-  pub publicKey(
+  publicKey(
     """
     Password used to decrypt the private key.
     """
@@ -153,7 +153,7 @@ type PrivateKey {
   """
   Details of a key in a human readable format.
   """
-  pub inspect(
+  inspect(
     """
     Password used to decrypt the private key.
     """
@@ -167,7 +167,7 @@ type PrivateKey {
   """
   Change the password of the private key.
   """
-  pub changePassword(
+  changePassword(
     """
     Old password (if any).
     """
@@ -210,17 +210,17 @@ type KeyPair {
   """
   Public key.
   """
-  pub publicKey: PublicKey!
+  publicKey: PublicKey!
 
   """
   Private key.
   """
-  pub privateKey: PrivateKey!
+  privateKey: PrivateKey!
 
   """
   Directory containing the key pair files.
   """
-  pub directory: Directory! {
+  directory: Directory! {
     Dagger.directory.withFiles("", [self.publicKey.file, self.privateKey.file])
   }
 }
@@ -232,19 +232,19 @@ enum KeyType {
 }
 
 interface KeyParams {
-  pub keyType: KeyType!
-  pub args: [String!]!
-  pub defaultName: String!
+  keyType: KeyType!
+  args: [String!]!
+  defaultName: String!
 }
 
 type RsaKeyParams implements KeyParams {
-  pub size: Int
+  size: Int
 
-  pub keyType: KeyType! {
+  keyType: KeyType! {
     KeyType.RSA
   }
 
-  pub args: [String!]! {
+  args: [String!]! {
     let args = []
 
     let size = self.size
@@ -255,7 +255,7 @@ type RsaKeyParams implements KeyParams {
     args
   }
 
-  pub defaultName: String! {
+  defaultName: String! {
     "rsa"
   }
 }
@@ -271,13 +271,13 @@ enum EcCurve {
 # P521
 
 type EcKeyParams implements KeyParams {
-  pub curve: EcCurve
+  curve: EcCurve
 
-  pub keyType: KeyType! {
+  keyType: KeyType! {
     KeyType.EC
   }
 
-  pub args: [String!]! {
+  args: [String!]! {
     let args = []
 
     let curve = self.curve
@@ -288,7 +288,7 @@ type EcKeyParams implements KeyParams {
     args
   }
 
-  pub defaultName: String! {
+  defaultName: String! {
     "ec_" + (
       if (self.curve != null) {
         self.curveString.replace("-", "").toLower
@@ -308,15 +308,15 @@ type EcKeyParams implements KeyParams {
 }
 
 type Ed25519KeyParams implements KeyParams {
-  pub keyType: KeyType! {
+  keyType: KeyType! {
     KeyType.OKP
   }
 
-  pub args: [String!]! {
+  args: [String!]! {
     ["--curve", "Ed25519"]
   }
 
-  pub defaultName: String! {
+  defaultName: String! {
     "ed25519"
   }
 }
@@ -325,7 +325,7 @@ type Keys {
   """
   Generate a new key pair in PEM format.
   """
-  pub generate(
+  generate(
     """
     File name for the key pair (default: selected algorithm).
 
@@ -343,21 +343,21 @@ type Keys {
   """
   Load a public key from a file.
   """
-  pub publicKey(file: File!): PublicKey! {
+  publicKey(file: File!): PublicKey! {
     PublicKey(file)
   }
 
   """
   Load a private key from a file.
   """
-  pub privateKey(file: File!): PrivateKey! {
+  privateKey(file: File!): PrivateKey! {
     PrivateKey(file)
   }
 
   """
   Load a key pair from a public and private key file.
   """
-  pub pair(publicKey: File!, privateKey: File!): KeyPair! {
+  pair(publicKey: File!, privateKey: File!): KeyPair! {
     KeyPair(PublicKey(publicKey), PrivateKey(privateKey))
   }
 }
@@ -369,7 +369,7 @@ type KeyGenerator {
   """
   Generate a new RSA key pair.
   """
-  pub rsa(
+  rsa(
     """
     RSA key size (default: 2048).
     """
@@ -381,7 +381,7 @@ type KeyGenerator {
   """
   Generate a new EC private key pair.
   """
-  pub ec(
+  ec(
     """
     Elliptic curve to use for the generated EC key (default: P256).
     """
@@ -393,7 +393,7 @@ type KeyGenerator {
   """
   Generate a new Ed25519 key pair.
   """
-  pub ed25519: KeyPair! {
+  ed25519: KeyPair! {
     self.generate(Ed25519KeyParams)
   }
 

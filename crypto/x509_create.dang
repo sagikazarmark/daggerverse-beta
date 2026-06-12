@@ -6,7 +6,7 @@ type CreateCertificateKeySelector {
   """
   Generate a new RSA private key for the certificate.
   """
-  pub rsa(
+  rsa(
     """
     RSA key size (default: 2048).
     """
@@ -18,7 +18,7 @@ type CreateCertificateKeySelector {
   """
   Generate a new EC private key for the certificate.
   """
-  pub ec(
+  ec(
     """
     Elliptic curve to use for the generated EC key (default: P256).
     """
@@ -30,14 +30,14 @@ type CreateCertificateKeySelector {
   """
   Generate a new Ed25519 private key for the certificate.
   """
-  pub ed25519: CertificateCreator! {
+  ed25519: CertificateCreator! {
     self.creator(Ed25519KeyParams)
   }
 
   """
   Use an existing private key for the certificate instead of generating one.
   """
-  pub key(
+  key(
     """
     Existing private key.
     """
@@ -81,7 +81,7 @@ type CertificateCreator {
   """
   Create a self-signed root CA certificate.
   """
-  pub root(
+  root(
     """
     The subject of the certificate.
     """
@@ -111,7 +111,14 @@ type CertificateCreator {
     let keyFile = name + ".key"
 
     let result = self
-      .command(subject, certFile, keyFile, password).{withTemplate(_, template, "root-ca")}
+      .command(subject, certFile, keyFile, password)
+      .{
+        withTemplate(
+          _,
+          template,
+          "root-ca",
+        )
+      }
       .withArgs(validityArgs(notAfter, notBefore))
       .run
 
@@ -124,7 +131,7 @@ type CertificateCreator {
   """
   Create an intermediate CA certificate signed by an issuing authority.
   """
-  pub intermediate(
+  intermediate(
     """
     The subject of the certificate.
     """
@@ -160,7 +167,13 @@ type CertificateCreator {
     let result = self
       .command(subject, certFile, keyFile, password)
       .{ self.withIssuer(_, issuer) }
-      .{ withTemplate(_, template, "intermediate-ca") }
+      .{
+        withTemplate(
+          _,
+          template,
+          "intermediate-ca",
+        )
+      }
       .withArgs(validityArgs(notAfter, notBefore))
       .run
 
@@ -173,7 +186,7 @@ type CertificateCreator {
   """
   Create a leaf certificate signed by an issuing authority.
   """
-  pub certificate(
+  certificate(
     """
     The subject of the certificate.
     """
@@ -213,7 +226,13 @@ type CertificateCreator {
     let result = self
       .command(subject, certFile, keyFile, password)
       .{ self.withIssuer(_, issuer) }
-      .{ withTemplate(_, template, "leaf") }
+      .{
+        withTemplate(
+          _,
+          template,
+          "leaf",
+        )
+      }
       .withArgs(validityArgs(notAfter, notBefore))
       .withArgs(self.sanArgs(sans))
       .run
@@ -227,7 +246,7 @@ type CertificateCreator {
   """
   Create a self-signed certificate.
   """
-  pub selfSigned(
+  selfSigned(
     """
     The subject of the certificate.
     """
@@ -262,7 +281,13 @@ type CertificateCreator {
 
     let result = self
       .command(subject, certFile, keyFile, password)
-      .{ withTemplate(_, template, "self-signed") }
+      .{
+        withTemplate(
+          _,
+          template,
+          "self-signed",
+        )
+      }
       .withArgs(validityArgs(notAfter, notBefore))
       .withArgs(self.sanArgs(sans))
       .withArg("--subtle")
@@ -277,7 +302,7 @@ type CertificateCreator {
   """
   Create a certificate signing request (CSR).
   """
-  pub csr(
+  csr(
     """
     The subject of the certificate.
     """

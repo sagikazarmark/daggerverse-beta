@@ -2,12 +2,12 @@ type Certificate {
   """
   A certificate file.
   """
-  pub file: File!
+  file: File!
 
   """
   The issuer chain file, if any.
   """
-  pub chain: File
+  chain: File
 
   new(file: File!, chain: File = null) {
     self.file = file
@@ -19,7 +19,7 @@ type Certificate {
   """
   The full certificate chain (including the certificate and the issuer chain) file.
   """
-  pub fullChain: File! {
+  fullChain: File! {
     let fileName = self.file.name.trimSuffix(".crt") + "-fullchain.crt"
 
     let chain = self.chain
@@ -38,14 +38,14 @@ type Certificate {
   """
   Details of the certificate in a human readable format.
   """
-  pub inspect: String! {
+  inspect: String! {
     Command(["certificate", "inspect"]).withFileArg(self.file).run.stdout
   }
 
   """
   Fingerprint of the certificate.
   """
-  pub fingerprint(
+  fingerprint(
     """
     Fingerprint format.
     """
@@ -53,7 +53,7 @@ type Certificate {
   ): String! {
     Command(["certificate", "fingerprint"])
       .withFileArg(self.file)
-      .withArgs(fingerprintFormatArgs(format))
+      .{ withFingerprintFormat(_, format) }
       .run
       .stdout
   }
@@ -61,14 +61,14 @@ type Certificate {
   """
   Lint the certificate details.
   """
-  pub lint: String! {
+  lint: String! {
     Command(["certificate", "lint"]).withFileArg(self.file).run.stdout
   }
 
   """
   Check if the certificate needs to be renewed.
   """
-  pub needsRenewal(
+  needsRenewal(
     """
     Renewal window as a duration (e.g. "8h") or a percentage
     of the certificate lifetime (e.g. "25%") (default: 66%).
@@ -96,7 +96,7 @@ type Certificate {
   """
   The public key embedded in the certificate.
   """
-  pub publicKey: PublicKey! {
+  publicKey: PublicKey! {
     let fileName = self.file.name.trimSuffix(".crt") + ".pub"
 
     PublicKey(
@@ -113,29 +113,29 @@ type CertificateIdentity {
   """
   The certificate.
   """
-  pub certificate: Certificate!
+  certificate: Certificate!
 
   """
   The private key.
   """
-  pub key: PrivateKey!
+  key: PrivateKey!
 }
 
 type CertificateAuthority {
   """
   The certificate.
   """
-  pub certificate: Certificate!
+  certificate: Certificate!
 
   """
   The private key.
   """
-  pub key: PrivateKey!
+  key: PrivateKey!
 
   """
   Create an issuer from the certificate and private key.
   """
-  pub issuer(
+  issuer(
     """
     Password used to decrypt the private key.
     """
@@ -156,46 +156,46 @@ type CertificateIssuer {
   """
   The issuer certificate.
   """
-  pub certificate: File!
+  certificate: File!
 
   """
   The full issuer certificate chain (including the certificate itself).
   """
-  pub chain: File!
+  chain: File!
 
   """
   The private key.
   """
-  pub key: PrivateKey!
+  key: PrivateKey!
 
   """
   Password used to decrypt the private key (null if the key is not encrypted).
   """
-  pub password: Secret
+  password: Secret
 }
 
 type CertificateRequest {
   """
   The certificate signing request file.
   """
-  pub csr: File!
+  csr: File!
 
   """
   The private key.
   """
-  pub key: PrivateKey!
+  key: PrivateKey!
 
   """
   Details of the certificate signing request in a human readable format.
   """
-  pub inspect: String! {
+  inspect: String! {
     Command(["certificate", "inspect"]).withFileArg(self.csr).run.stdout
   }
 
   """
   The public key embedded in the certificate signing request.
   """
-  pub publicKey: PublicKey! {
+  publicKey: PublicKey! {
     let fileName = self.csr.name.trimSuffix(".csr") + ".pub"
 
     PublicKey(
@@ -210,7 +210,7 @@ type CertificateRequest {
   """
   Sign the CSR to create a certificate.
   """
-  pub sign(
+  sign(
     """
     Issuing authority that signs the certificate.
     """
@@ -251,7 +251,7 @@ type CertificateRequestSigner {
   """
   Sign a leaf certificate.
   """
-  pub certificate(
+  certificate(
     """
     Certificate template file.
     """
@@ -274,7 +274,7 @@ type CertificateRequestSigner {
   """
   Sign an intermediate CA certificate.
   """
-  pub intermediate(
+  intermediate(
     """
     Maximum path length to set in the pathLenConstraint of the certificate (default: 0; -1 for no limit).
     """
@@ -313,7 +313,7 @@ type CertificateRequestSigner {
   """
   Sign a certificate without modifying the CSR.
   """
-  pub verbatim(
+  verbatim(
     """
     Certificate template file.
     """
@@ -367,7 +367,7 @@ type X509 {
   """
   Create a certificate or a certificate signing request (CSR).
   """
-  pub create(
+  create(
     """
     Certificate template file.
     """

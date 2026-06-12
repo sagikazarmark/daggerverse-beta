@@ -19,7 +19,7 @@ type Command {
     self
   }
 
-  pub run(
+  run(
     args: [String!]! = [],
     expect: ReturnType = null,
     redirectStdout: String = null,
@@ -33,17 +33,17 @@ type Command {
       )
   }
 
-  pub withArgs(args: [String!]!): Command! {
+  withArgs(args: [String!]!): Command! {
     self.args += args
 
     self
   }
 
-  pub withArg(arg: String!): Command! {
+  withArg(arg: String!): Command! {
     self.withArgs([arg])
   }
 
-  pub withFileArg(file: File!): Command! {
+  withFileArg(file: File!): Command! {
     let path = inputPath(file.name)
 
     self.container = self.container.withMountedFile(path, file)
@@ -52,7 +52,7 @@ type Command {
     self
   }
 
-  pub withSecretArg(name: String!, secret: Secret!): Command! {
+  withSecretArg(name: String!, secret: Secret!): Command! {
     let path = secretPath(name)
 
     self.container = self.container.withMountedSecret(path, secret)
@@ -61,7 +61,7 @@ type Command {
     self
   }
 
-  pub withPassword(secret: Secret): Command! {
+  withPassword(secret: Secret): Command! {
     if (secret != null) {
       self.withArg("--password-file").withSecretArg("password", secret)
     } else {
@@ -75,7 +75,7 @@ type Command {
     self
   }
 
-  pub withKeyArg(file: File!, password: Secret = null): Command! {
+  withKeyArg(file: File!, password: Secret = null): Command! {
     let cmd = self.withFileArg(file)
 
     if (password != null) {
@@ -85,7 +85,7 @@ type Command {
     cmd
   }
 
-  pub withKey(file: File!, password: Secret = null): Command! {
+  withKey(file: File!, password: Secret = null): Command! {
     self.withArgs(["--key"]).withKeyArg(file, password)
   }
 }

@@ -1,15 +1,15 @@
 type Tests {
-  pub key: KeysTests! { KeysTests }
+  key: KeysTests! { KeysTests }
 
-  pub x509: X509Tests! { X509Tests }
+  x509: X509Tests! { X509Tests }
 
-  pub fixtures: Changeset! {
+  fixtures: Changeset! {
     Fixtures.generate
   }
 }
 
 type Fixtures {
-  pub fixtures: Directory! {
+  fixtures: Directory! {
     let password = Dagger.setSecret("password", Random.string)
 
     Dagger
@@ -37,7 +37,7 @@ type Fixtures {
     self.source.withDirectory("fixtures", dir).changes(self.source)
   }
 
-  pub generate: Changeset! {
+  generate: Changeset! {
     self.changes(self.fixtures)
   }
 }

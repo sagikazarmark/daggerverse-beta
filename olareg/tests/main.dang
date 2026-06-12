@@ -2,7 +2,7 @@ type Tests {
   """
   Serves container images under the provided repositories, including nested ones.
   """
-  pub containerImage: Void @check {
+  containerImage: Void @check {
     let olareg = Dagger
       .olareg
       .withContainer("alpine", "3", Dagger.container.from("alpine"))
@@ -17,21 +17,23 @@ type Tests {
   """
   Accepts an OCI tarball directly.
   """
-  pub ociTarball: Void @check {
+  ociTarball: Void @check {
     let olareg = Dagger
       .olareg
       .withTarball("tarball/alpine", "v1", Dagger.container.from("alpine").asTarball)
 
-    assert { client(olareg).withExec(
-      ["tag", "ls", "olareg:5050/tarball/alpine"],
-      useEntrypoint: true,
-    ).stdout.trimSpace == "v1" }
+    assert {
+      client(olareg).withExec(
+        ["tag", "ls", "olareg:5050/tarball/alpine"],
+        useEntrypoint: true,
+      ).stdout.trimSpace == "v1"
+    }
   }
 
   """
   Accepts an OCI layout directory directly, overwriting any existing tag.
   """
-  pub ociLayoutDirectory: Void @check {
+  ociLayoutDirectory: Void @check {
     let olareg = Dagger
       .olareg
       .withDirectory("mirror/alpine", "latest", ociDirectory(null))
@@ -46,7 +48,7 @@ type Tests {
   """
   Rejects invalid or dangerous repository names.
   """
-  pub invalidRepository: Void @check {
+  invalidRepository: Void @check {
     [
       "../escape",
       "/alpine",
@@ -73,7 +75,7 @@ type Tests {
   """
   Rejects invalid tags.
   """
-  pub invalidTag: Void @check {
+  invalidTag: Void @check {
     [
       "",
       "with space",

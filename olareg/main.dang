@@ -20,7 +20,7 @@ type Olareg {
   """
   Add an image to the registry from a container.
   """
-  pub withContainer(
+  withContainer(
     """
     Repository to serve the image from (for example: "library/alpine").
     """
@@ -40,7 +40,7 @@ type Olareg {
   """
   Add an image to the registry from an OCI tarball.
   """
-  pub withTarball(
+  withTarball(
     """
     Repository to serve the image from (for example: "library/alpine").
     """
@@ -65,7 +65,7 @@ type Olareg {
   """
   Add an image to the registry from an OCI layout directory.
   """
-  pub withDirectory(
+  withDirectory(
     """
     Repository to serve the image from (for example: "library/alpine").
     """
@@ -86,7 +86,9 @@ type Olareg {
     repository = validateRepository(repository)
     tag = validateTag(tag)
 
-    self.repositories = self.repositories.with(repository, importDirectory(tag, directory))
+    self.repositories = self
+      .repositories
+      .with(repository, importDirectory(tag, directory))
 
     self
   }
@@ -94,7 +96,7 @@ type Olareg {
   """
   Directory containing the image repositories.
   """
-  pub data: Directory! {
+  data: Directory! {
     self.repositories.keys.reduce(Dagger.directory) { dir, repo =>
       dir.withDirectory(repo, self.repositories.get(repo)!)
     }
@@ -103,7 +105,7 @@ type Olareg {
   """
   Container with the add image repositories.
   """
-  pub container: Container! {
+  container: Container! {
     self
       .baseContainer
       .withDirectory("/data", self.data)
@@ -113,7 +115,7 @@ type Olareg {
   """
   Registry service serving the added image repositories.
   """
-  pub service(port: Int! = 5050): Service! {
+  service(port: Int! = 5050): Service! {
     self
       .baseContainer
       .withMountedDirectory("/data", self.data)
@@ -127,7 +129,7 @@ type Olareg {
   """
   Olareg version.
   """
-  pub version: String! {
+  version: String! {
     self
       .baseContainer
       .withExec(["version", "--format", "{{.VCSTag}}"], useEntrypoint: true)
@@ -138,7 +140,11 @@ type Olareg {
   Import an OCI tarball into an OCI layout directory tagged with the given tag.
   """
   let importTarball(tag: String!, tarball: File!): Directory! {
-    importImage(tag, "oci-archive:image.tar", skopeo.withMountedFile("image.tar", tarball))
+    importImage(
+      tag,
+      "oci-archive:image.tar",
+      skopeo.withMountedFile("image.tar", tarball),
+    )
   }
 
   """

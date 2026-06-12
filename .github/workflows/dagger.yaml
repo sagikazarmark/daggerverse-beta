@@ -23,6 +23,7 @@ jobs:
           - distro
           - github
           - minisign
+          - olareg
           - php-dist
           - restate
           - rust

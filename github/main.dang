@@ -27,14 +27,14 @@ type Github {
   """
   Interact with GitHub releases for the given repository.
   """
-  pub releases(repository: String = self.repository): Releases! {
+  releases(repository: String = self.repository): Releases! {
     Releases(repository: repository, authHeader: self.authHeader)
   }
 
   """
   Get a GitHub release by version. Use null or an empty string for the latest release.
   """
-  pub release(version: String = null, repository: String = self.repository): Release! {
+  release(version: String = null, repository: String = self.repository): Release! {
     self.releases(repository).get(version)
   }
 }
@@ -56,14 +56,14 @@ type Releases {
   """
   Get the latest, non-draft, non-prerelease release.
   """
-  pub latest(repository: String = self.repository): Release! {
+  latest(repository: String = self.repository): Release! {
     self.get(repository: repository)
   }
 
   """
   Get a GitHub release by version.
   """
-  pub get(
+  get(
     """
     Release tag, or null (or empty) for latest, non-draft, non-prerelease release.
     """
@@ -74,7 +74,7 @@ type Releases {
     repository: String = self.repository,
   ): Release! {
     fromJSON(Dagger.http(
-      getUrl(coerceRepository(resolveRepository(repository)), version),
+      getUrl(resolveRepository(repository)!, version),
       authHeader: authHeader,
     ).contents) :: Release!
   }
@@ -94,35 +94,35 @@ type Releases {
 A GitHub release.
 """
 type Release {
-  pub url: String!
+  url: String!
 
   let html_url: String!
 
-  pub htmlUrl: String! { self.html_url }
+  htmlUrl: String! { self.html_url }
 
   let tarball_url: String!
 
-  pub tarballUrl: String! { self.tarball_url }
+  tarballUrl: String! { self.tarball_url }
 
   let zipball_url: String!
 
-  pub zipballUrl: String! { self.zipball_url }
+  zipballUrl: String! { self.zipball_url }
 
   let tag_name: String!
 
-  pub tagName: String! { self.tag_name }
+  tagName: String! { self.tag_name }
 
-  pub name: String!
-  pub body: String!
-  pub draft: Boolean!
-  pub prerelease: Boolean!
-  pub immutable: Boolean!
-  pub assets: [ReleaseAsset!]!
+  name: String!
+  body: String!
+  draft: Boolean!
+  prerelease: Boolean!
+  immutable: Boolean!
+  assets: [ReleaseAsset!]!
 
   """
   Returns the asset with the given name, or null if no such asset exists.
   """
-  pub asset(name: String!): ReleaseAsset {
+  asset(name: String!): ReleaseAsset {
     self.assets.filter { asset => asset.name == name }[0]
   }
 }
@@ -131,27 +131,27 @@ type Release {
 A resolved GitHub release asset.
 """
 type ReleaseAsset {
-  pub name: String!
-  pub label: String
+  name: String!
+  label: String
 
   let content_type: String!
 
-  pub contentType: String! { self.content_type }
+  contentType: String! { self.content_type }
 
-  pub size: Int!
+  size: Int!
 
-  pub digest: String
+  digest: String
 
   let browser_download_url: String!
 
-  pub downloadUrl: String! {
+  downloadUrl: String! {
     self.browser_download_url
   }
 
   """
   Downloaded asset file with GitHub's asset digest enforced by Dagger.
   """
-  pub file: File! {
+  file: File! {
     Dagger.http(
       url: self.downloadUrl,
       name: self.name,
@@ -162,7 +162,7 @@ type ReleaseAsset {
   """
   Downloaded and extracted asset file.
   """
-  pub extracted(
+  extracted(
     """
     If stripParent is true, the parent directory will be stripped from the extracted file.
     """

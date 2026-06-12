@@ -2,22 +2,22 @@ type KubeApiServer {
   """
   The Kubernetes API server service (exposed on port 6443).
   """
-  pub service: Service!
+  service: Service!
 
   """
   The CA certificate that signed the API server's serving certificate.
   """
-  pub ca: File!
+  ca: File!
 
   """
   Client certificate in the system:masters group.
   """
-  pub clientCertificate: File!
+  clientCertificate: File!
 
   """
   Client key in the system:masters group.
   """
-  pub clientKey: File!
+  clientKey: File!
 
   new(
     name: String! = "kube-api-server",

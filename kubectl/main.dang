@@ -1,5 +1,11 @@
 type Kubectl {
-  pub container: Container!
+  container: Container!
+
+  # Services are only bound after all kubeconfig execs have completed.
+  #
+  # This improves cacheability of kubeconfig execs,
+  # as the service is only started when the returned container actually runs something.
+  let services: Map[Service!] = [:]
 
   new(container: Container! = Dagger.container.from("alpine/kubectl:latest")) {
     self.container = container
@@ -10,21 +16,9 @@ type Kubectl {
   }
 
   """
-  Loads the kubeconfig directory, overwriting any existing kubeconfig.
+  The merged and flattened kubeconfig file.
   """
-  pub loadConfig(config: Directory!): Kubectl! {
-    self.container = self
-      .container
-      .withoutDirectory("/kube")
-      .withDirectory("/kube", config)
-
-    self
-  }
-
-  """
-  Returns the merged and flattened kubeconfig file.
-  """
-  pub config: File! {
+  config: File! {
     self
       .container
       .withExec(
@@ -37,7 +31,7 @@ type Kubectl {
   """
   Set a cluster entry in kubeconfig.
   """
-  pub withCluster(
+  withCluster(
     """
     Name of the cluster entry in kubeconfig.
     """
@@ -55,23 +49,30 @@ type Kubectl {
     """
     ca: File = null,
   ): Kubectl! {
-    let container = self.container
+    let caPath = `/kube/certs/servers/${name}/ca.crt`
+
     let args = [
       "kubectl",
       "config", "set-cluster", name,
       "--server", server, "--tls-server-name", tlsServerName,
-    ]
+    ] + (
+      if (ca != null) {
+        ["--certificate-authority", caPath]
+      } else {
+        ["--insecure-skip-tls-verify"]
+      }
+    )
 
-    if (ca != null) {
-      let path = `/kube/certs/servers/${name}/ca.crt`
+    self.container = self
+      .container
+      .{ container =>
+        if (ca != null) {
+          container = container.withMountedFile(caPath, ca)
+        }
 
-      container = container.withMountedFile(path, ca)
-      args += ["--certificate-authority", path]
-    } else {
-      args += ["--insecure-skip-tls-verify"]
-    }
-
-    self.container = container.withExec(args)
+        container
+      }
+      .withExec(args)
 
     self
   }
@@ -79,7 +80,7 @@ type Kubectl {
   """
   Set a cluster entry from a service in kubeconfig.
   """
-  pub withClusterService(
+  withClusterService(
     """
     Name of the cluster entry in kubeconfig.
     """
@@ -102,17 +103,19 @@ type Kubectl {
     ca: File = null,
   ): Kubectl! {
     self
-      .withServiceBinding(name, service)
       .withCluster(
         name,
         service.endpoint(scheme: "https", port: servicePort),
         serverName,
         ca,
       )
+      .withService(name, service)
+
+    self
   }
 
-  let withServiceBinding(name: String!, service: Service!): Kubectl! {
-    self.container = self.container.withServiceBinding(name, service)
+  let withService(name: String!, service: Service!): Kubectl! {
+    self.services = self.services.with(name, service)
 
     self
   }
@@ -120,7 +123,7 @@ type Kubectl {
   """
   Set a user entry in kubeconfig using client certificate and key.
   """
-  pub withCredentials(
+  withCredentials(
     """
     Name of the user entry in kubeconfig.
     """
@@ -157,7 +160,7 @@ type Kubectl {
   """
   Set a context entry in kubeconfig.
   """
-  pub withContext(
+  withContext(
     """
     Name of the context entry in kubeconfig.
     """
@@ -189,11 +192,16 @@ type Kubectl {
       args += ["--namespace", namespace]
     }
 
-    self.container = self.container.withExec(args)
+    self.container = self
+      .container
+      .withExec(args)
+      .{ container =>
+        if (use) {
+          container = container.withExec(["kubectl", "config", "use-context", name])
+        }
 
-    if (use) {
-      self.container = self.container.withExec(["kubectl", "config", "use-context", name])
-    }
+        container
+      }
 
     self
   }
@@ -201,7 +209,7 @@ type Kubectl {
   """
   Set the namespace (for the current or a specific context).
   """
-  pub withNamespace(
+  withNamespace(
     """
     Namespace for a context entry in kubeconfig.
     """
@@ -214,15 +222,9 @@ type Kubectl {
     let args = [
       "kubectl",
       "config", "set-context",
+      if (context != null) { context } else { "--current" },
+      "--namespace", namespace,
     ]
-
-    if (context != null) {
-      args += [context]
-    } else {
-      args += ["--current"]
-    }
-
-    args += ["--namespace", namespace]
 
     self.container = self.container.withExec(args)
 

@@ -1,5 +1,5 @@
 type Tests {
-  pub default: Container! @check {
+  default: Container! @check {
     let kubeApiServer = Dagger.kubeApiServer
 
     let kubectl = Dagger

@@ -1,17 +1,208 @@
 type Tests {
-  default: Container! @check {
-    let kubeApiServer = Dagger.kubeApiServer
+  let kubeApiServer: KubeApiServer! { Dagger.kubeApiServer }
 
-    let kubectl = Dagger
+  let kubectl: Kubectl! {
+    Dagger
       .kubectl
       .withClusterService(
         "default",
-        kubeApiServer.service,
-        ca: kubeApiServer.ca,
+        self.kubeApiServer.service,
+        ca: self.kubeApiServer.ca,
       )
-      .withCredentials("default", kubeApiServer.clientCertificate, kubeApiServer.clientKey)
+      .withCredentials("default", self.kubeApiServer.clientCertificate, self.kubeApiServer.clientKey)
       .withContext("default", "default", "default", use: true)
-
-    kubectl.container
   }
+
+  """
+  kubeconfig is assembled from cluster, credentials and context entries.
+  """
+  default: Container! @check {
+    self.kubectl.container
+  }
+
+  """
+  "kubectl" is prepended to the command when it is not the first argument.
+  """
+  exec: Void @check @cache(policy: FunctionCachePolicy.Never) {
+    let output = Dagger.kubectl.withExec(["version", "--client"]).stdout
+
+    assert { output.contains("Client Version") }
+
+    null
+  }
+
+  """
+  The command is left untouched when it already starts with "kubectl".
+  """
+  execPrefixed: Void @check @cache(policy: FunctionCachePolicy.Never) {
+    let output = Dagger.kubectl.withExec(["kubectl", "version", "--client"]).stdout
+
+    assert { output.contains("Client Version") }
+
+    null
+  }
+
+  """
+  Commands can target a specific context.
+  """
+  execContext: Void @check @cache(policy: FunctionCachePolicy.Never) {
+    let output = self.kubectl.withExec(["version"], context: "default").stdout
+
+    assert { output.contains("Server Version") }
+
+    null
+  }
+
+  """
+  Standard input is passed to the command.
+  """
+  execStdin: Void @check @cache(policy: FunctionCachePolicy.Never) {
+    let output = self
+      .kubectl
+      .withExec(["apply", "--filename", "-"], stdin: namespaceManifest("kubectl-test-stdin"))
+      .withExec(["kubectl", "get", "namespace", "kubectl-test-stdin", "--output", "jsonpath={.status.phase}"])
+      .stdout
+
+    assert { output == "Active" }
+
+    null
+  }
+
+  """
+  Running a command with an unknown context fails.
+  """
+  execUnknownContext: Void @check {
+    try {
+      Dagger.kubectl.withExec(["get", "pods"], context: "missing").stdout
+
+      raise "expected withExec to fail"
+    } catch {
+      err => assert { err.message.contains(`context "missing" not found`) }
+    }
+  }
+
+  """
+  Adding a context with an unknown cluster fails.
+  """
+  contextUnknownCluster: Void @check {
+    try {
+      Dagger.kubectl.withContext("default", "missing", "missing").config.contents
+
+      raise "expected withContext to fail"
+    } catch {
+      err => assert { err.message.contains(`cluster "missing" not found`) }
+    }
+  }
+
+  """
+  Adding a context with unknown credentials fails.
+  """
+  contextUnknownCredentials: Void @check {
+    try {
+      Dagger
+        .kubectl
+        .withCluster("default", "https://example.com:6443", "example.com")
+        .withContext("default", "default", "missing")
+        .config
+        .contents
+
+      raise "expected withContext to fail"
+    } catch {
+      err => assert { err.message.contains(`credentials "missing" not found`) }
+    }
+  }
+
+  """
+  The namespace of a tracked context can be changed.
+  """
+  namespace: Void @check {
+    let config = self.kubectl.withNamespace("kube-system", context: "default").config.contents
+
+    assert { config.contains("namespace: kube-system") }
+
+    null
+  }
+
+  """
+  Setting the namespace of an unknown context fails.
+  """
+  namespaceUnknownContext: Void @check {
+    try {
+      Dagger.kubectl.withNamespace("default", context: "missing").config.contents
+
+      raise "expected withNamespace to fail"
+    } catch {
+      err => assert { err.message.contains(`context "missing" not found`) }
+    }
+  }
+
+  """
+  applyFile applies a manifest file to the cluster.
+  """
+  applyFile: Void @check @cache(policy: FunctionCachePolicy.Never) {
+    let output = self
+      .kubectl
+      .applyFile(fixture("manifest.yaml"), context: "default")
+      .withExec(["kubectl", "get", "configmap", "test", "--namespace", "kubectl-test-file", "--output", "jsonpath={.data.foo}"])
+      .stdout
+
+    assert { output == "bar" }
+
+    null
+  }
+
+  """
+  applyFile can apply a manifest in a specific namespace.
+  """
+  applyFileNamespace: Void @check @cache(policy: FunctionCachePolicy.Never) {
+    let output = self
+      .kubectl
+      .applyFile(fixture("namespaced-manifest.yaml"), namespace: "kubectl-test-ns")
+      .withExec(["kubectl", "get", "configmap", "test", "--namespace", "kubectl-test-ns", "--output", "jsonpath={.data.foo}"])
+      .stdout
+
+    assert { output == "bar" }
+
+    null
+  }
+
+  """
+  applyDirectory applies all manifests from a directory to the cluster.
+  """
+  applyDirectory: Void @check @cache(policy: FunctionCachePolicy.Never) {
+    let output = self
+      .kubectl
+      .applyDirectory(Dagger.currentModule.source.directory("testdata/manifests"))
+      .withExec(["kubectl", "get", "namespace", "kubectl-test-dir-1", "kubectl-test-dir-2", "--output", "name"])
+      .stdout
+
+    assert { output.contains("namespace/kubectl-test-dir-1") }
+    assert { output.contains("namespace/kubectl-test-dir-2") }
+
+    null
+  }
+
+  """
+  applyDirectory can process a directory recursively.
+  """
+  applyDirectoryRecursive: Void @check @cache(policy: FunctionCachePolicy.Never) {
+    let output = self
+      .kubectl
+      .applyDirectory(Dagger.currentModule.source.directory("testdata/nested-manifests"), recursive: true)
+      .withExec(["kubectl", "get", "namespace", "kubectl-test-dir-nested", "--output", "name"])
+      .stdout
+
+    assert { output.contains("namespace/kubectl-test-dir-nested") }
+
+    null
+  }
+
+}
+
+let namespaceManifest(name: String!): String! {
+  "apiVersion: v1\nkind: Namespace\nmetadata:\n  name: " + name + "\n"
+}
+
+let fixture(path: String!): File! {
+  Dagger.currentModule.source.file("testdata/" + path)
 }

@@ -22,6 +22,7 @@ jobs:
           # - crates
           - distro
           - github
+          - kubectl
           - minisign
           - olareg
           - php-dist

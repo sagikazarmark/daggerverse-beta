@@ -1,14 +1,15 @@
 type Kubectl {
-  container: Container!
+  let baseContainer: Container!
 
-  # Services are only bound after all kubeconfig execs have completed.
-  #
-  # This improves cacheability of kubeconfig execs,
-  # as the service is only started when the returned container actually runs something.
   let services: Map[Service!] = [:]
 
+  # Names of known kubeconfig entries, used to validate references.
+  let clusters: [String!]! = []
+  let credentials: [String!]! = []
+  let contexts: [String!]! = []
+
   new(container: Container! = Dagger.container.from("alpine/kubectl:latest")) {
-    self.container = container
+    self.baseContainer = container
       .withDirectory("/kube", Dagger.directory)
       .withEnvVariable("KUBECONFIG", "/kube/config")
 
@@ -16,11 +17,20 @@ type Kubectl {
   }
 
   """
+  Container with the kubeconfig configured and tracked services bound.
+  """
+  container: Container! {
+    self.services.keys.reduce(self.baseContainer) { container, name =>
+      container.withServiceBinding(name, self.services.get(name)!)
+    }
+  }
+
+  """
   The merged and flattened kubeconfig file.
   """
   config: File! {
     self
-      .container
+      .baseContainer
       .withExec(
         ["kubectl", "config", "view", "--flatten", "--merge", "--output", "yaml"],
         redirectStdout: "/kubeconfig",
@@ -63,8 +73,8 @@ type Kubectl {
       }
     )
 
-    self.container = self
-      .container
+    self.baseContainer = self
+      .baseContainer
       .{ container =>
         if (ca != null) {
           container = container.withMountedFile(caPath, ca)
@@ -73,6 +83,10 @@ type Kubectl {
         container
       }
       .withExec(args)
+
+    if (!self.clusters.contains(name)) {
+      self.clusters += [name]
+    }
 
     self
   }
@@ -110,8 +124,6 @@ type Kubectl {
         ca,
       )
       .withService(name, service)
-
-    self
   }
 
   let withService(name: String!, service: Service!): Kubectl! {
@@ -148,11 +160,15 @@ type Kubectl {
       "--embed-certs",
     ]
 
-    self.container = self
-      .container
+    self.baseContainer = self
+      .baseContainer
       .withMountedFile(certPath, certificate)
       .withMountedFile(keyPath, key)
       .withExec(args)
+
+    if (!self.credentials.contains(name)) {
+      self.credentials += [name]
+    }
 
     self
   }
@@ -182,6 +198,14 @@ type Kubectl {
     """
     namespace: String = null,
   ): Kubectl! {
+    if (!self.clusters.contains(cluster)) {
+      raise `cluster "${cluster}" not found in kubeconfig`
+    }
+
+    if (!self.credentials.contains(user)) {
+      raise `credentials "${user}" not found in kubeconfig`
+    }
+
     let args = [
       "kubectl",
       "config", "set-context", name,
@@ -192,8 +216,8 @@ type Kubectl {
       args += ["--namespace", namespace]
     }
 
-    self.container = self
-      .container
+    self.baseContainer = self
+      .baseContainer
       .withExec(args)
       .{ container =>
         if (use) {
@@ -202,6 +226,10 @@ type Kubectl {
 
         container
       }
+
+    if (!self.contexts.contains(name)) {
+      self.contexts += [name]
+    }
 
     self
   }
@@ -219,6 +247,10 @@ type Kubectl {
     """
     context: String = null,
   ): Kubectl! {
+    if (context != null and !self.contexts.contains(context!)) {
+      raise `context "${context}" not found in kubeconfig`
+    }
+
     let args = [
       "kubectl",
       "config", "set-context",
@@ -226,8 +258,114 @@ type Kubectl {
       "--namespace", namespace,
     ]
 
-    self.container = self.container.withExec(args)
+    self.baseContainer = self.baseContainer.withExec(args)
 
     self
   }
+
+  """
+  Run a kubectl command.
+
+  The result is never cached: kubectl commands usually act on live cluster state,
+  so each evaluation runs the command again.
+  """
+  withExec(
+    """
+    Command arguments ("kubectl" is prepended when it is not the first argument).
+    """
+    args: [String!]!,
+    """
+    Name of the context entry in kubeconfig to use.
+    """
+    context: String = null,
+    """
+    Content to write to the command's standard input.
+    """
+    stdin: String = null,
+  ): Container! @cache(policy: FunctionCachePolicy.Never) {
+    if (context != null and !self.contexts.contains(context!)) {
+      raise `context "${context}" not found in kubeconfig`
+    }
+
+    let _args = (
+      if ((args[0] ?? "") == "kubectl") { args } else { ["kubectl"] + args }
+    )
+
+    if (context != null) {
+      _args += ["--context", context]
+    }
+
+    self
+      .container
+      .withEnvVariable("DAGGER_CACHE_SEED", Random.string)
+      .withExec(_args, stdin: stdin)
+  }
+
+  """
+  Apply a manifest file to the cluster.
+  """
+  applyFile(
+    """
+    Manifest file to apply.
+    """
+    file: File!,
+    """
+    Name of the context entry in kubeconfig to use.
+    """
+    context: String = null,
+    """
+    Namespace to apply the manifest in.
+    """
+    namespace: String = null,
+  ): Container! @cache(policy: FunctionCachePolicy.Never) {
+    let path = "/work/manifest.yaml"
+
+    self.baseContainer = self.baseContainer.withMountedFile(path, file)
+
+    self.withExec(applyArgs(path, namespace), context: context)
+  }
+
+  """
+  Apply manifests from a directory to the cluster.
+  """
+  applyDirectory(
+    """
+    Directory containing the manifests to apply.
+    """
+    directory: Directory!,
+    """
+    Name of the context entry in kubeconfig to use.
+    """
+    context: String = null,
+    """
+    Namespace to apply the manifests in.
+    """
+    namespace: String = null,
+    """
+    Process the directory recursively.
+    """
+    recursive: Boolean! = false,
+  ): Container! @cache(policy: FunctionCachePolicy.Never) {
+    let path = "/work/manifests"
+
+    self.baseContainer = self.baseContainer.withMountedDirectory(path, directory)
+
+    let args = applyArgs(path, namespace)
+
+    if (recursive) {
+      args += ["--recursive"]
+    }
+
+    self.withExec(args, context: context)
+  }
+}
+
+let applyArgs(path: String!, namespace: String): [String!]! {
+  let args = ["apply", "--filename", path]
+
+  if (namespace != null) {
+    args += ["--namespace", namespace]
+  }
+
+  args
 }

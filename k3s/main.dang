@@ -3,23 +3,40 @@ type K3s {
   pub kubectl: Container!
 
   new(
+    """
+    Name of the cluster (used as the TLS SAN and service name).
+
+    Make sure to use a unique name for each cluster in the same session.
+    """
     name: String! = "k3s",
     """
     Node ports to expose on the k3s service.
     """
     nodePorts: [Int!]! = [],
+    """
+    Version (image tag) to use from the official image repository as a base container.
+    """
     version: String! = "latest",
+    """
+    Custom container to use as a base container.
+    """
     container: Container! = Dagger.container.from("rancher/k3s:" + version),
   ) {
     let certs = gencerts(name)
 
-    self.service = container
+    let base = container
       .withDirectory("/var/lib/rancher/k3s/server/tls", certs)
       .withMountedTemp("/etc/rancher/k3s")
       .withMountedTemp("/etc/lib/cni")
       .withMountedTemp("/var/lib/kubelet")
       .withMountedTemp("/var/log")
       .withExposedPort(6443)
+
+    # Node ports only open once a NodePort service is created in the cluster,
+    # so they cannot participate in the service health check.
+    nodePorts.each { port => base = base.withExposedPort(port, experimentalSkipHealthcheck: true) }
+
+    self.service = base
       .asService(
         args: [
           "k3s", "server",
@@ -32,19 +49,12 @@ type K3s {
         insecureRootCapabilities: true,
         noInit: true,
       )
+      .withHostname(name)
 
     self.kubectl = Dagger
       .kubectl(container)
-      .withClusterService(
-        "default",
-        self.service.withHostname("k3s"),
-        ca: certs.file("server-ca.crt"),
-      )
-      .withCredentials(
-        "system:admin",
-        certs.file("client-admin.crt"),
-        certs.file("client-admin.key"),
-      )
+      .withClusterService("default", self.service, ca: certs.file("server-ca.crt"))
+      .withCredentials("default", certs.file("client-admin.crt"), certs.file("client-admin.key"))
       .withContext("default", cluster: "default", user: "system:admin", use: true)
       .container
 

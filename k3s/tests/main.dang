@@ -19,7 +19,7 @@ type Tests {
   """
   pub podNodePort: String! @check @cache(policy: FunctionCachePolicy.Never) {
     let output = Dagger
-      .k3S(name: "k3s-pod-test")
+      .k3S(name: "k3s-pod-test", nodePorts: [30080])
       .kubectl
       .withExec(["sh", "-c", self.podNodePortScript])
       .stdout
@@ -29,58 +29,60 @@ type Tests {
     output
   }
 
+  # NOTE: """ strings keep leading whitespace, so the script must stay at column 0
+  # (the heredoc terminator is only recognized unindented).
   let podNodePortScript: String! = """set -eu
 
-  for i in $(seq 1 60); do
-    kubectl cluster-info >/dev/null 2>&1 && break
-    sleep 1
-  done
-  kubectl cluster-info >/dev/null
+for i in $(seq 1 60); do
+  kubectl cluster-info >/dev/null 2>&1 && break
+  sleep 1
+done
+kubectl cluster-info >/dev/null
 
-  for i in $(seq 1 60); do
-    kubectl get serviceaccount default >/dev/null 2>&1 && break
-    sleep 1
-  done
-  kubectl get serviceaccount default >/dev/null
+for i in $(seq 1 60); do
+  kubectl get serviceaccount default >/dev/null 2>&1 && break
+  sleep 1
+done
+kubectl get serviceaccount default >/dev/null
 
-  kubectl run web --image=nginx:1.27-alpine --port=80 --restart=Never --labels app=web
-  kubectl wait --for=condition=Ready pod/web --timeout=180s
+kubectl run web --image=nginx:1.27-alpine --port=80 --restart=Never --labels app=web
+kubectl wait --for=condition=Ready pod/web --timeout=180s
 
-  cat <<'EOF' | kubectl apply -f -
-  apiVersion: v1
-  kind: Service
-  metadata:
-    name: web
-  spec:
-    type: NodePort
-    selector:
-      app: web
-    ports:
-      - name: http
-        port: 80
-        targetPort: 80
-        nodePort: 30080
-  EOF
+cat <<'EOF' | kubectl apply -f -
+apiVersion: v1
+kind: Service
+metadata:
+  name: web
+spec:
+  type: NodePort
+  selector:
+    app: web
+  ports:
+    - name: http
+      port: 80
+      targetPort: 80
+      nodePort: 30080
+EOF
 
-  for i in $(seq 1 60); do
-    endpoint="$(kubectl get endpoints web -o=jsonpath='{.subsets[0].addresses[0].ip}' 2>/dev/null || true)"
-    test -n "$endpoint" && break
-    sleep 1
-  done
-  test -n "$endpoint"
+for i in $(seq 1 60); do
+  endpoint="$(kubectl get endpoints web -o=jsonpath='{.subsets[0].addresses[0].ip}' 2>/dev/null || true)"
+  test -n "$endpoint" && break
+  sleep 1
+done
+test -n "$endpoint"
 
-  node_port="$(kubectl get service web -o=jsonpath='{.spec.ports[0].nodePort}')"
-  test "$node_port" = "30080"
-  printf 'node_port=%s\n' "$node_port"
+node_port="$(kubectl get service web -o=jsonpath='{.spec.ports[0].nodePort}')"
+test "$node_port" = "30080"
+printf 'node_port=%s\n' "$node_port"
 
-  for i in $(seq 1 30); do
-    if wget -q -T 2 -O /tmp/nodeport.html http://k3s:30080; then
-      break
-    fi
-    sleep 1
-  done
+for i in $(seq 1 30); do
+  if wget -q -T 2 -O /tmp/nodeport.html http://k3s-pod-test:30080; then
+    break
+  fi
+  sleep 1
+done
 
-  cat /tmp/nodeport.html
-  grep -q "Welcome to nginx" /tmp/nodeport.html
-  """
+cat /tmp/nodeport.html
+grep -q "Welcome to nginx" /tmp/nodeport.html
+"""
 }

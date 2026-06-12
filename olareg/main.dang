@@ -1,0 +1,206 @@
+type Olareg {
+  let baseContainer: Container!
+  let repositories: Map[Directory!] = [:]
+
+  new(
+    """
+    Version (image tag) to use from the official image repository.
+    """
+    version: String! = "latest",
+    """
+    Custom container to use as a base container.
+    """
+    container: Container! = Dagger.container.from("ghcr.io/olareg/olareg:" + version),
+  ) {
+    self.baseContainer = container
+
+    self
+  }
+
+  """
+  Add an image to the registry from a container.
+  """
+  pub withContainer(
+    """
+    Repository to serve the image from (for example: "library/alpine").
+    """
+    repository: String!,
+    """
+    Tag to serve the image at (for example: "latest").
+    """
+    tag: String!,
+    """
+    Container to add to the registry.
+    """
+    container: Container!,
+  ): Olareg! {
+    self.withTarball(repository, tag, container.asTarball)
+  }
+
+  """
+  Add an image to the registry from an OCI tarball.
+  """
+  pub withTarball(
+    """
+    Repository to serve the image from (for example: "library/alpine").
+    """
+    repository: String!,
+    """
+    Tag to serve the image at (for example: "latest").
+    """
+    tag: String!,
+    """
+    OCI tarball containing the image.
+    """
+    tarball: File!,
+  ): Olareg! {
+    repository = validateRepository(repository)
+    tag = validateTag(tag)
+
+    self.repositories = self.repositories.with(repository, importTarball(tag, tarball))
+
+    self
+  }
+
+  """
+  Add an image to the registry from an OCI layout directory.
+  """
+  pub withDirectory(
+    """
+    Repository to serve the image from (for example: "library/alpine").
+    """
+    repository: String!,
+    """
+    Tag to serve the image at (for example: "latest"), overwriting any existing tag.
+    """
+    tag: String!,
+    """
+    OCI layout directory containing the image.
+    """
+    directory: Directory!,
+  ): Olareg! {
+    if (!directory.exists("index.json") or !directory.exists("oci-layout")) {
+      raise "directory is not an OCI layout: missing index.json or oci-layout"
+    }
+
+    repository = validateRepository(repository)
+    tag = validateTag(tag)
+
+    self.repositories = self.repositories.with(repository, importDirectory(tag, directory))
+
+    self
+  }
+
+  """
+  Directory containing the image repositories.
+  """
+  pub data: Directory! {
+    self.repositories.keys.reduce(Dagger.directory) { dir, repo =>
+      dir.withDirectory(repo, self.repositories.get(repo)!)
+    }
+  }
+
+  """
+  Container with the add image repositories.
+  """
+  pub container: Container! {
+    self
+      .baseContainer
+      .withDirectory("/data", self.data)
+      .withDefaultArgs(["serve", "--store-ro", "--dir", "/data"])
+  }
+
+  """
+  Registry service serving the added image repositories.
+  """
+  pub service(port: Int! = 5050): Service! {
+    self
+      .baseContainer
+      .withMountedDirectory("/data", self.data)
+      .withExposedPort(port)
+      .asService(
+        args: ["serve", "--port", toString(port), "--store-ro", "--dir", "/data"],
+        useEntrypoint: true,
+      )
+  }
+
+  """
+  Olareg version.
+  """
+  pub version: String! {
+    self
+      .baseContainer
+      .withExec(["version", "--format", "{{.VCSTag}}"], useEntrypoint: true)
+      .stdout
+  }
+
+  """
+  Import an OCI tarball into an OCI layout directory tagged with the given tag.
+  """
+  let importTarball(tag: String!, tarball: File!): Directory! {
+    importImage(tag, "oci-archive:image.tar", skopeo.withMountedFile("image.tar", tarball))
+  }
+
+  """
+  Import an OCI layout directory into an OCI layout directory tagged with the given tag.
+
+  skopeo resolves an untagged source layout to its only image, so the source does not
+  need a "org.opencontainers.image.ref.name" annotation.
+  """
+  let importDirectory(tag: String!, directory: Directory!): Directory! {
+    importImage(tag, "oci:image", skopeo.withMountedDirectory("image", directory))
+  }
+
+  """
+  Import an image from the given skopeo source transport into an OCI layout directory
+  tagged with the given tag: skopeo sets the "org.opencontainers.image.ref.name"
+  annotation in the image index to the (bare) tag, which is what olareg serves as the
+  tag of a manifest.
+  """
+  let importImage(tag: String!, source: String!, container: Container!): Directory! {
+    container
+      .withExec(["skopeo", "copy", "--all", source, "oci:out:" + tag])
+      .directory("out")
+  }
+
+  let skopeo: Container! {
+    Dagger
+      .container
+      .from("quay.io/skopeo/stable:v1.22.2")
+      .withWorkdir("/work")
+  }
+
+  """
+  Validate a repository name: it must be a valid distribution registry repository name
+  (which also rules out path traversal, absolute paths and empty components)
+  and must not contain path components reserved by the OCI layout structure.
+  """
+  let validateRepository(repository: String!): String! {
+    if (!repository.containsMatch(`^[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*(/[a-z0-9]+((\.|_|__|-+)[a-z0-9]+)*)*$`)) {
+      raise "invalid repository name: " + repository
+    }
+
+    # path components reserved by the OCI layout structure: allowing them in repository
+    # names would corrupt the layout of a parent repository (e.g. "alpine/blobs")
+    let reservedComponents = ["blobs", "index.json", "oci-layout"]
+
+    repository.split("/").each { component =>
+      if (reservedComponents.contains(component)) {
+        raise "repository name contains a path component reserved by the OCI layout structure (" + component + "): " + repository
+      }
+    }
+
+    repository
+  }
+
+  """
+  Validate a tag: it must be a valid distribution registry tag.
+  """
+  let validateTag(tag: String!): String! {
+    if (!tag.containsMatch(`^[a-zA-Z0-9_][a-zA-Z0-9._-]{0,127}$`)) {
+      raise "invalid tag: " + tag
+    }
+
+    tag
+  }
+}

@@ -1,0 +1,123 @@
+type Tests {
+  """
+  Serves container images under the provided repositories, including nested ones.
+  """
+  pub containerImage: Void @check {
+    let olareg = Dagger
+      .olareg
+      .withContainer("alpine", "3", Dagger.container.from("alpine"))
+      .withContainer("alpine/custom", "edge", Dagger.container.from("alpine"))
+
+    let c = client(olareg)
+
+    assert { c.withExec(["tag", "ls", "olareg:5050/alpine"], useEntrypoint: true).stdout.trimSpace == "3" }
+    assert { c.withExec(["tag", "ls", "olareg:5050/alpine/custom"], useEntrypoint: true).stdout.trimSpace == "edge" }
+  }
+
+  """
+  Accepts an OCI tarball directly.
+  """
+  pub ociTarball: Void @check {
+    let olareg = Dagger
+      .olareg
+      .withTarball("tarball/alpine", "v1", Dagger.container.from("alpine").asTarball)
+
+    assert { client(olareg).withExec(
+      ["tag", "ls", "olareg:5050/tarball/alpine"],
+      useEntrypoint: true,
+    ).stdout.trimSpace == "v1" }
+  }
+
+  """
+  Accepts an OCI layout directory directly, overwriting any existing tag.
+  """
+  pub ociLayoutDirectory: Void @check {
+    let olareg = Dagger
+      .olareg
+      .withDirectory("mirror/alpine", "latest", ociDirectory(null))
+      .withDirectory("mirror/other", "edge", ociDirectory("stale"))
+
+    let c = client(olareg)
+
+    assert { c.withExec(["tag", "ls", "olareg:5050/mirror/alpine"], useEntrypoint: true).stdout.trimSpace == "latest" }
+    assert { c.withExec(["tag", "ls", "olareg:5050/mirror/other"], useEntrypoint: true).stdout.trimSpace == "edge" }
+  }
+
+  """
+  Rejects invalid or dangerous repository names.
+  """
+  pub invalidRepository: Void @check {
+    [
+      "../escape",
+      "/alpine",
+      "alpine/",
+      "alpine//custom",
+      "Alpine",
+      "alpine custom",
+      "alpine/blobs",
+      "index.json",
+      "oci-layout/alpine",
+    ].each { name =>
+      try {
+        assert { Dagger.olareg.withDirectory(name, "latest", ociDirectory(null)).data.entries.length > 0 }
+
+        raise "expected an invalid name to be rejected: " + name
+      } catch {
+        err => assert { err.message.contains("repository name") }
+      }
+    }
+
+    null
+  }
+
+  """
+  Rejects invalid tags.
+  """
+  pub invalidTag: Void @check {
+    [
+      "",
+      "with space",
+      "with/slash",
+      "-leading",
+      ".leading",
+    ].each { tag =>
+      try {
+        assert { Dagger.olareg.withContainer("alpine", tag, Dagger.container.from("alpine")).data.entries.length > 0 }
+
+        raise "expected an invalid tag to be rejected: " + tag
+      } catch {
+        err => assert { err.message.contains("invalid tag") }
+      }
+    }
+
+    null
+  }
+
+  let ociDirectory(tag: String): Directory! {
+    let container = Dagger.container.from("alpine")
+
+    if (tag != null) {
+      container = container.withAnnotation(
+        "org.opencontainers.image.ref.name",
+        tag,
+      )
+    }
+
+    Dagger
+      .container
+      .from("alpine:latest")
+      .withWorkdir("/work")
+      .withExec(["mkdir", "-p", "out"])
+      .withMountedFile("image.tar", container.asTarball)
+      .withExec(["tar", "xf", "image.tar", "-C", "out"])
+      .directory("out")
+  }
+
+  let client(olareg: Olareg!): Container! {
+    Dagger
+      .container
+      .from("ghcr.io/regclient/regctl")
+      .withServiceBinding("olareg", olareg.service)
+      .withExec(["registry", "set", "olareg:5050", "--tls", "disabled"], useEntrypoint: true)
+  }
+}

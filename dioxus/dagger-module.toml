@@ -1,0 +1,20 @@
+name = "dioxus"
+engineVersion = "v0.21.7-20260612013754-dev-d87b131f0507"
+runtime.source = "dang"
+include = ["!tests"]
+
+[[dependencies]]
+name = "github"
+source = "../github"
+
+[[dependencies]]
+name = "rust"
+source = "../rust"
+
+[[dependencies]]
+name = "cargo-lock"
+source = "../cargo-lock"
+
+[[dependencies]]
+name = "overlays"
+source = "../overlays"

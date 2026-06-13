@@ -1,0 +1,214 @@
+type Dioxus {
+  let rust: Rust!
+
+  let version: String
+  let wasmPackVersion: String
+  let binaryenVersion: String
+  let esbuildVersion: String!
+
+  new(
+    """
+    Dioxus CLI version to use (default: auto-detect from Cargo.lock).
+    """
+    version: String = null,
+    """
+    Version (image tag) to use from the official Rust image repository as a base container.
+    """
+    rustVersion: String! = "latest",
+    """
+    Custom container to use as a base container.
+    """
+    container: Container! = Dagger.container.from("rust:" + rustVersion),
+    """
+    Version of wasm-pack to use (default: latest).
+    """
+    wasmPackVersion: String = null,
+    """
+    Version of Binaryen to use (default: latest).
+    """
+    binaryenVersion: String = null,
+    """
+    Version of esbuild to use.
+    """
+    esbuildVersion: String! = "0.28.0",
+  ) {
+    # Prevent dioxus CLI from downloading tool dependencies
+    container = container.withEnvVariable("NO_DOWNLOADS", "1")
+
+    self.rust = Dagger.rust(
+      container: container,
+      targets: ["wasm32-unknown-unknown"],
+      components: ["rust-std"],
+    )
+
+    self.version = version
+    self.wasmPackVersion = wasmPackVersion
+    self.binaryenVersion = binaryenVersion
+    self.esbuildVersion = esbuildVersion
+
+    self
+  }
+
+  """
+  Container with the Rust and Dioxus toolchains installed.
+  """
+  container: Container! {
+    self.overlays.reduce(self.rust.container) { container, overlay => overlay.apply(container) ?? container }
+  }
+
+  let overlays(ws: Workspace): [OverlaysOverlay]! {
+    let dioxusVersion = self.version
+    let wasmBindgenVersion: String = null
+
+    if (ws != null) {
+      dioxusVersion = dioxusVersion ?? Dagger.cargoLock(ws).findOne("dioxus").version
+      wasmBindgenVersion = wasmBindgenVersion ?? Dagger.cargoLock(ws).findOne("wasm-bindgen").version
+    }
+
+    [
+      withDioxus(dioxusVersion),
+      withWasmBindgen(wasmBindgenVersion),
+      withWasmPack(self.wasmPackVersion),
+      withBinaryen(self.binaryenVersion),
+      withEsbuild(self.esbuildVersion),
+    ]
+  }
+
+  """
+  Prepares the Dioxus toolchain for the given workspace.
+  """
+  withWorkspace(
+    ws: Workspace!,
+    """
+    Overlay to apply to the base container before mounting the source in the container.
+    """
+    overlay: Overlay,
+  ): WorkspaceContext! {
+    let overlay = Dagger.overlays.combine(self.overlays(ws) + [overlay])
+    let rust = self.rust.withWorkspace(ws, overlay)
+
+    WorkspaceContext(rust.container, rust.source, rust.cwd)
+  }
+
+  """
+  Prepares the Dioxus toolchain for the given source directory.
+  """
+  withSource(
+    """
+    Source directory to mount in the container.
+    """
+    source: Directory!,
+    """
+    Current working directory within the source directory.
+    """
+    cwd: String! = "/",
+    """
+    Overlay to apply to the base container before mounting the source in the container.
+    """
+    overlay: Overlay,
+  ): WorkspaceContext! {
+    # TODO: better path validation
+    cwd = "/" + cwd.trimPrefix("/")
+
+    let ws = source.asWorkspace(cwd)
+    let overlay = Dagger.overlays.combine(self.overlays(ws) + [overlay])
+    let rust = self.rust.withSource(source, cwd, overlay)
+
+    WorkspaceContext(rust.container, rust.source, rust.cwd)
+  }
+
+  """
+  Initializes a new Dioxus project with the given name.
+  """
+  init(
+    """
+    Name of the project to initialize.
+    """
+    name: String!,
+    """
+    Template directory to use for the project.
+
+    Defaults to the official Dioxus template repository from GitHub.
+    """
+    template: Directory! = Dagger.git("https://github.com/DioxusLabs/dioxus-template.git").branch("v0.7").tree,
+    """
+    Subtemplate to use within the template directory.
+    """
+    subtemplate: String,
+  ): Init! {
+    Init(
+      name: name,
+      template: template,
+      subtemplate: subtemplate,
+      container: self.container,
+    )
+  }
+}
+
+"""
+Represents a context with a prepared workspace.
+
+Meaning: source code is mounted into the container, workspace specific toolchain (if any) is installed.
+"""
+type WorkspaceContext {
+  """
+  The container with the workspace mounted.
+  """
+  container: Container!
+
+  """
+  The source code directory (containing the entire workspace).
+  """
+  source: Directory!
+
+  """
+  The current working directory within the workspace.
+  """
+  cwd: String!
+}
+
+type Init {
+  let name: String!
+  let template: Directory!
+  let subtemplate: String
+  let options: Map[String!]! = [:]
+
+  let container: Container!
+
+  """
+  Set an option for the template initialization.
+  """
+  withOption(key: String!, value: String!): Init! {
+    self.options = self.options.with(key, value)
+
+    self
+  }
+
+  """
+  Returns the directory of the initialized project.
+  """
+  directory: Directory! {
+    let args = [
+      "dx", "init",
+      "--yes",
+      "--name", self.name,
+      "--option", "default_platform=web",
+    ]
+
+    let subtemplate = self.subtemplate
+    if (subtemplate != null) {
+      args += ["--subtemplate", subtemplate]
+    }
+
+    self.options.each { key, value => args += ["--option", `${key}=${value}`] }
+
+    self
+      .container
+      .withEnvVariable("USER", "root") # This is needed for dx for some reason
+      .withWorkdir("/work/out")
+      .withMountedDirectory("/work/template", self.template)
+      .withExec(args)
+      .withExec(["cargo", "generate-lockfile"])
+      .directory(".")
+  }
+}

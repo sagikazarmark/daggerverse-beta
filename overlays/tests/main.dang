@@ -1,0 +1,184 @@
+type Tests {
+  combine: CombineTests! { CombineTests }
+
+  filesystem: FilesystemTests! { FilesystemTests }
+}
+
+let alpine: Container! {
+  Dagger.container.from("alpine:3.23.4@sha256:5b10f432ef3da1b8d4c7eb6c487f2f5a8f096bc91145e68878dd4a5019afde11")
+}
+
+type CombineTests {
+  """
+  combine applies overlays of different kinds, in order.
+  """
+  default: Void @check {
+    let file = Dagger.directory.withNewFile("a", "AAA").file("a")
+    let dir = Dagger.directory.withNewFile("tool", "TTT")
+
+    let result = Dagger
+      .overlays
+      .combine([
+        Dagger.overlays.withFile("/usr/local/bin/a", file),
+        Dagger.overlays.withDirectory("/opt", dir, exclude: [], include: []),
+      ])
+      .apply(Dagger.container)
+
+    assert { result.file("/usr/local/bin/a").contents == "AAA" }
+    assert { result.file("/opt/tool").contents == "TTT" }
+
+    null
+  }
+
+  """
+  combine applies overlays left to right, so a later overlay wins on conflict.
+  """
+  order: Void @check {
+    let first = Dagger.directory.withNewFile("f", "first").file("f")
+    let second = Dagger.directory.withNewFile("f", "second").file("f")
+
+    let result = Dagger
+      .overlays
+      .combine([
+        Dagger.overlays.withFile("/x", first),
+        Dagger.overlays.withFile("/x", second),
+      ])
+      .apply(Dagger.container)
+
+    assert { result.file("/x").contents == "second" }
+
+    null
+  }
+
+  """
+  combine ignores null entries and still applies the remaining overlays.
+  """
+  rejectsNull: Void @check {
+    let file = Dagger.directory.withNewFile("kept", "still-here").file("kept")
+
+    let result = Dagger
+      .overlays
+      .combine([null, Dagger.overlays.withFile("/usr/local/bin/kept", file), null])
+      .apply(Dagger.container)
+
+    assert { result.file("/usr/local/bin/kept").contents == "still-here" }
+
+    null
+  }
+
+  """
+  combine with an empty list leaves the container unchanged.
+  """
+  empty: Void @check {
+    let withMarker = Dagger.container.withNewFile("/marker", "m")
+
+    let result = Dagger.overlays.combine([]).apply(withMarker)
+
+    assert { result.file("/marker").contents == "m" }
+    assert { result.directory("/").entries == ["marker"] }
+
+    null
+  }
+}
+
+type FilesystemTests {
+  """
+  withFile adds a single file at the given path.
+  """
+  withFile: Void @check {
+    let file = Dagger.directory.withNewFile("mytool", "binary-contents").file("mytool")
+
+    let result = Dagger.overlays.withFile("/usr/local/bin/mytool", file).apply(Dagger.container)
+
+    assert { result.file("/usr/local/bin/mytool").contents == "binary-contents" }
+
+    null
+  }
+
+  """
+  withFile honours the permissions argument.
+  """
+  withFilePermissions: Void @check {
+    let file = Dagger.directory.withNewFile("mytool", "#!/bin/sh").file("mytool")
+
+    let result = Dagger.overlays.withFile("/opt/mytool", file, permissions: 493).apply(alpine)
+
+    assert { result.withExec(["stat", "-c", "%a", "/opt/mytool"]).stdout.trimSpace == "755" }
+
+    null
+  }
+
+  """
+  withFiles adds multiple files into the given directory.
+  """
+  withFiles: Void @check {
+    let fileA = Dagger.directory.withNewFile("a", "AAA").file("a")
+    let fileB = Dagger.directory.withNewFile("b", "BBB").file("b")
+
+    let result = Dagger.overlays.withFiles("/usr/local/bin", [fileA, fileB]).apply(Dagger.container)
+
+    assert { result.file("/usr/local/bin/a").contents == "AAA" }
+    assert { result.file("/usr/local/bin/b").contents == "BBB" }
+
+    null
+  }
+
+  """
+  withMountedFile mounts a file at the given path.
+  """
+  withMountedFile: Void @check {
+    let file = Dagger.directory.withNewFile("conf", "config-data").file("conf")
+
+    let result = Dagger.overlays.withMountedFile("/etc/app.conf", file).apply(Dagger.container)
+
+    assert { result.file("/etc/app.conf").contents == "config-data" }
+
+    null
+  }
+
+  """
+  withDirectory copies a directory tree to the given path.
+  """
+  withDirectory: Void @check {
+    let dir = Dagger
+      .directory
+      .withNewFile("bin/mytool", "xyz")
+      .withNewFile("lib/libthing.so", "lib-contents")
+
+    let result = Dagger.overlays.withDirectory("/usr/local", dir).apply(Dagger.container)
+
+    assert { result.file("/usr/local/bin/mytool").contents == "xyz" }
+    assert { result.file("/usr/local/lib/libthing.so").contents == "lib-contents" }
+
+    null
+  }
+
+  """
+  withDirectory respects the include filter.
+  """
+  withDirectoryInclude: Void @check {
+    let dir = Dagger
+      .directory
+      .withNewFile("keep.txt", "k")
+      .withNewFile("drop.log", "d")
+
+    let result = Dagger.overlays.withDirectory("/opt", dir, exclude: [], include: ["*.txt"]).apply(Dagger.container)
+
+    assert { result.directory("/opt").entries == ["keep.txt"] }
+
+    null
+  }
+
+  """
+  withMountedDirectory makes a directory tree readable at the given path.
+  """
+  withMountedDirectory: Void @check {
+    let dir = Dagger.directory.withNewFile("data/file", "mounted")
+
+    let result = Dagger.overlays.withMountedDirectory("/mnt", dir).apply(Dagger.container)
+
+    assert { result.file("/mnt/data/file").contents == "mounted" }
+
+    null
+  }
+}

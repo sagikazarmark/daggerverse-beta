@@ -1,0 +1,19 @@
+enum CargoAuditDeny {
+  WARNINGS
+  UNMAINTAINED
+  UNSOUND
+  YANKED
+}
+
+let withCargoAudit(container: Container!): Container! {
+  let version = "0.22.0"
+
+  let binary = Dagger
+    .github
+    .release("cargo-audit/v" + version, "rustsec/rustsec")
+    .asset(`cargo-audit-${arch}-unknown-linux-gnu-v${version}.tgz`)
+    .extracted(true)
+    .file("cargo-audit")!
+
+  container.withFile("/usr/local/bin/", binary)
+}

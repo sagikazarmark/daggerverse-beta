@@ -1,16 +1,18 @@
 type Rust {
-  pub baseContainer: Container!
-  pub container: Container!
-  pub source: Directory!
+  let baseContainer: Container!
+
+  # Workspace defaults
+  let include: [String!]
+  let exclude: [String!]
+
+  let targets: [String!]!
+  let components: [String!]!
+  let sourceDateEpoch: String
+  let cargoTargetCache: CacheVolume
 
   new(
-    workspace: Workspace = null,
     """
-    Override workspace source.
-    """
-    source: Directory = null,
-    """
-    Version (image tag) to use from the official image repository as a base container.
+    Version (image tag) to use from the official Rust image repository as a base container.
     """
     version: String! = "latest",
     """
@@ -18,9 +20,25 @@ type Rust {
     """
     container: Container! = Dagger.container.from("rust:" + version),
     """
+    Include only artifacts that match the given pattern (e.g., ["app/", "package.*"]).
+    """
+    include: [String!] = null,
+    """
+    Exclude artifacts that match the given pattern (e.g., ["node_modules/", ".git*"]).
+    """
+    exclude: [String!] = null,
+    """
+    Overlay to apply to the base container.
+    """
+    overlay: Overlay = null,
+    """
     Targets to install for cross-compilation.
     """
     targets: [String!]! = [],
+    """
+    Additional components to install.
+    """
+    components: [String!]! = [],
     """
     Override the source date epoch for reproducible builds.
 
@@ -65,143 +83,192 @@ type Rust {
       null
     },
   ) {
-    container = mountCache(container, "${CARGO_HOME}/registry/index", cargoRegistryIndexCache)
-    container = mountCache(container, "${CARGO_HOME}/registry/cache", cargoRegistryArchiveCache)
-    container = mountCache(container, "${CARGO_HOME}/git/db", cargoGitDbCache)
-
-    if (source != null) {
-      container = container
-        .withMountedDirectory("/work/src", source)
-        .withWorkdir("/work/src")
-    } else if (workspace != null) {
-      # TODO: expose exclude and include filters
-      source = workspace.directory("/", gitignore: true)
-
-      container = container
-        .withMountedDirectory(
-          "/work/src",
-          workspace.directory(
-            "/",
-            gitignore: true,
-            include: ["**/rust-toolchain.toml"],
-          ),
-        )
-        .withWorkdir("/work/src/" + workspace.cwd)
-    }
-
-    if (source == null) {
-      raise "either workspace or source is required"
-    }
-
-    container = container.withExec(["rustup", "show"])
-
-    if (!targets.isEmpty) {
-      container = container.withExec(["rustup", "target", "add"] + targets)
-    }
-
-    container = container
-      .withoutMount("/work/src")
-      .withWorkdir("/")
-      .withExec(["rustup", "component", "add", "rustfmt", "clippy"])
-
-    container = withCargoArtifacts(container)
-    container = withCargoAudit(container)
-
     self.baseContainer = container
+      .withExec(["rustup", "set", "auto-self-update", "disable"])
+      .withExec(["rustup", "set", "auto-install", "disable"])
+      .{ mountCache(_, "${CARGO_HOME}/registry/index", cargoRegistryIndexCache) }
+      .{ mountCache(_, "${CARGO_HOME}/registry/cache", cargoRegistryArchiveCache) }
+      .{ mountCache(_, "${CARGO_HOME}/git/db", cargoGitDbCache) }
+      .{
+        _.withFile(
+          "/usr/local/bin/",
+          Dagger
+            .github
+            .release("v0.2.0", "sagikazarmark/cargo-artifacts")
+            .asset(`cargo-artifacts-${arch}-unknown-linux-gnu.tar.xz`)
+            .extracted(true)
+            .file("cargo-artifacts")!,
+        )
+      }
+      .{ overlay.apply(_) ?? _ }
 
-    container = mountCache(container, "/work/target", cargoTargetCache)
-      .withEnvVariable("CARGO_TARGET_DIR", "/work/target")
-
-    sourceDateEpoch = sourceDateEpoch ?? commitDate(source)
-    if (sourceDateEpoch != null) {
-      container = container.withEnvVariable("SOURCE_DATE_EPOCH", sourceDateEpoch)
-    }
-
-    container = container
-      .withMountedDirectory("/work/src", source)
-      .withWorkdir("/work/src/" + (workspace.cwd ?? ""))
-
-    self.container = container
-    self.source = source
+    self.include = include
+    self.exclude = exclude
+    self.targets = targets
+    self.components = components
+    self.sourceDateEpoch = sourceDateEpoch
+    self.cargoTargetCache = cargoTargetCache
 
     self
   }
 
-  let mountCache(container: Container!, path: String!, cache: CacheVolume): Container! {
-    if (cache != null) {
-      container = container.withMountedCache(path, cache, expand: true)
+  """
+  Container with the Rust toolchain and common components installed.
+  """
+  container: Container! {
+    self.withTargetsComponents(self.baseContainer)
+  }
+
+  """
+  Mounts the given workspace into the container.
+  """
+  withWorkspace(
+    ws: Workspace!,
+    """
+    Overlay to apply to the container before mounting the source in the container.
+    """
+    overlay: Overlay,
+  ): WorkspaceContext! {
+    self.prepareWorkspace(ws) { container => overlay.apply(container) ?? container }
+  }
+
+  """
+  Mounts the given source directory into the container.
+  """
+  withSource(
+    """
+    Source directory to mount in the container.
+    """
+    source: Directory!,
+    """
+    Current working directory within the source directory.
+    """
+    cwd: String! = "/",
+    """
+    Overlay to apply to the container before mounting the source in the container.
+    """
+    overlay: Overlay,
+  ): WorkspaceContext! {
+    # TODO: better path validation
+    cwd = "/" + cwd.trimPrefix("/")
+
+    self.prepare(source, cwd) { container => overlay.apply(container) ?? container }
+  }
+
+  let prepareWorkspace(ws: Workspace!, &fn(container: Container!): Container!): WorkspaceContext! {
+    let source = ws.directory(
+      "/",
+      gitignore: true,
+      include: self.include,
+      exclude: self.exclude,
+    )
+    let cwd = ws.cwd
+
+    self.prepare(source, cwd) { container => fn(container) }
+  }
+
+  let prepare(
+    source: Directory!,
+    cwd: String!,
+    &fn(container: Container!): Container!,
+  ): WorkspaceContext! {
+    let container = fn(self.baseContainer)
+      .{ withToolchain(_, source, cwd) }
+      .withEnvVariable("CARGO_TARGET_DIR", "/work/target")
+      .{ mountCache(_, "${CARGO_TARGET_DIR}", self.cargoTargetCache) }
+      .{ withEnvVariable(_, "SOURCE_DATE_EPOCH", self.sourceDateEpoch ?? commitDate(source)) }
+      .withMountedDirectory("/work/src", source)
+      .withWorkdir("/work/src" + cwd)
+
+    WorkspaceContext(container, source, cwd)
+  }
+
+  let withToolchain(container: Container!, source: Directory!, cwd: String!): Container! {
+    container
+      .{ self.withRustToolchain(_, source, cwd) }
+      .{ self.withTargetsComponents(_) }
+  }
+
+  let withRustToolchain(container: Container!, source: Directory!, cwd: String!): Container! {
+    let toolchain = source.findUp("rust-toolchain.toml", cwd)
+
+    if (toolchain == null) {
+      return container
     }
 
     container
+      .withWorkdir("/work/src" + cwd)
+      .withMountedFile("/work/src" + toolchain, source.file(toolchain))
+      .withExec(["rustup", "toolchain", "install", "--no-self-update"])
   }
 
-  let commitDate(source: Directory!): String {
-    if (source.exists(".git", expectedType: ExistsType.DIRECTORY_TYPE)) {
-      Dagger
-        .container
-        .from("alpine/git:v2.52.0")
-        .withMountedDirectory("/git", source)
-        .withExec(["log", "-1", "--format=%ct"], useEntrypoint: true)
-        .stdout
-    }
-
-    null
+  let withTargetsComponents(container: Container!): Container! {
+    container
+      .{ self.withTargets(_) }
+      .{ self.withComponents(_) }
   }
 
-  let withCargoArtifacts(container: Container!): Container! {
-    let version = "0.2.0"
-
-    let name = "cargo-artifacts"
-    let tag = "v" + version
-    let fileName = "cargo-artifacts-" + arch + "-unknown-linux-gnu.tar.xz"
-
-    let binary = Dagger
-      .github
-      .release(tag, "sagikazarmark/cargo-artifacts")
-      .asset(fileName)
-      .extracted(true)
-      .file(name)
-
-    if (binary == null) {
-      raise "failed to download cargo artifacts binary"
+  let withTargets(container: Container!): Container! {
+    if (self.targets.isEmpty) {
+      return container
     }
 
-    container.withFile("/usr/local/bin/" + name, binary)
+    container.withExec(["rustup", "target", "add"] + self.targets)
   }
 
-  let withCargoAudit(container: Container!): Container! {
-    let version = "0.22.0"
+  let withComponents(container: Container!): Container! {
+    let components = ["rustfmt", "clippy"] + self.components
 
-    let name = "cargo-audit"
-    let tag = "cargo-audit/v" + version
-    let fileName = "cargo-audit-" + arch + "-unknown-linux-gnu-v" + version + ".tgz"
-
-    let binary = Dagger
-      .github
-      .release(tag, "rustsec/rustsec")
-      .asset(fileName)
-      .extracted(true)
-      .file(name)
-
-    if (binary == null) {
-      raise "failed to download cargo audit binary"
-    }
-
-    container.withFile("/usr/local/bin/" + name, binary)
+    container.withExec(["rustup", "component", "add"] + components.uniq)
   }
 
-  let arch: String! {
-    case (Dagger.defaultPlatform) {
-      "linux/amd64" => "x86_64"
-      "linux/arm64" => "aarch64"
-      else => raise "unsupported platform: " + toString(Dagger.defaultPlatform).trim("\"")
+  """
+  Audit Cargo.lock files for vulnerable crates.
+  """
+  audit(
+    ws: Workspace!,
+    """
+    Exit with an error on any violation.
+    """
+    deny: CargoAuditDeny = null,
+    """
+    Advisory id to ignore (can be specified multiple times).
+    """
+    ignore: [String!]! = [],
+    """
+    Directory containing the advisory database.
+    """
+    db: Directory! = Dagger.git("https://github.com/rustsec/advisory-db.git").head.tree,
+  ): String! @check {
+    let DB_PATH = "/var/cargo-audit/advisory-db"
+
+    let args = [
+      "cargo", "audit",
+      "--no-fetch", "--stale", "--db", DB_PATH,
+    ]
+
+    if (deny != null) {
+      args += ["--deny", toString(deny)]
     }
+
+    ignore.each { advisory =>
+      args += ["--ignore", advisory]
+    }
+
+    self
+      .prepareWorkspace(ws) { container =>
+        withCargoAudit(container).withMountedDirectory(DB_PATH, db)
+      }
+      .container
+      .withExec(args)
+      .stdout
   }
 
   """
   Compile a local package and all of its dependencies.
   """
-  pub build(
+  build(
+    ws: Workspace!,
     """
     Package to build.
     """
@@ -283,8 +350,7 @@ type Rust {
     """
     keepGoing: Boolean! = false,
   ): Directory! @check {
-    let cmd = CargoCommand
-    let args = cmd.build(
+    let args = CargoCommand.build(
       package,
       all,
       exclude,
@@ -309,10 +375,11 @@ type Rust {
 
     let expect = ReturnType.SUCCESS
     if (keepGoing) {
-      expect = ReturnType.FAILURE
+      expect = ReturnType.ANY
     }
 
-    let build = self
+    self
+      .withWorkspace(ws)
       .container
       .withExec(
         args,
@@ -327,7 +394,8 @@ type Rust {
   """
   Execute all unit and integration tests and build examples of a local package.
   """
-  pub test(
+  test(
+    ws: Workspace!,
     """
     If specified, only run tests containing this string in their names.
     """
@@ -421,8 +489,7 @@ type Rust {
     """
     profile: String! = "",
   ): String! @check {
-    let cmd = CargoCommand
-    let args = cmd.test(
+    let args = CargoCommand.test(
       testName,
       args,
       noFailFast,
@@ -448,59 +515,27 @@ type Rust {
       profile,
     )
 
-    self.container.withExec(args).combinedOutput
+    self.withWorkspace(ws).container.withExec(args).combinedOutput
   }
 
   """
-  Audit Cargo.lock files for vulnerable crates.
+  Format the codebase using rustfmt.
   """
-  pub audit(
-    """
-    Exit with an error on any violation.
-    """
-    deny: CargoAuditDeny = null,
-    """
-    Advisory id to ignore (can be specified multiple times).
-    """
-    ignore: [String!]! = [],
-    """
-    Directory containing the advisory database.
-    """
-    db: Directory! = Dagger.git("https://github.com/rustsec/advisory-db.git").head.tree,
-  ): String! @check {
-    let DB_PATH = "/var/advisory-db"
+  fmt(ws: Workspace!): Changeset! @generate {
+    let workspaceContext = self.withWorkspace(ws)
 
-    let args = [
-      "cargo", "audit",
-      "--no-fetch", "--stale", "--db", DB_PATH,
-    ]
-
-    if (deny != null) {
-      args += ["--deny", toString(deny)]
-    }
-
-    ignore.each { advisory =>
-      args += ["--ignore", advisory]
-    }
-
-    self
+    workspaceContext
       .container
-      .withMountedDirectory(DB_PATH, db)
-      .withExec(args)
-      .stdout
-  }
-
-  """
-  Checks Rust source formatting with `cargo fmt --check`.
-  """
-  pub fmt: String! @check {
-    self.container.withExec(["cargo", "fmt", "--", "--check"]).stdout
+      .withExec(["cargo", "fmt", "--", "--check"])
+      .directory("")
+      .changes(workspaceContext.source)
   }
 
   """
   Checks a package to catch common mistakes and improve your Rust code.
   """
-  pub clippy(
+  clippy(
+    ws: Workspace!,
     """
     Run Clippy only on the given crate, without linting the dependencies.
     """
@@ -534,16 +569,14 @@ type Rust {
     deny.each { d => args += ["--deny", d] }
     forbid.each { f => args += ["--forbid", f] }
 
-    self
-      .container
-      .withExec(args)
-      .stdout
+    self.withWorkspace(ws).container.withExec(args).stdout
   }
 
   """
   Build a package's documentation.
   """
-  pub doc(
+  doc(
+    ws: Workspace!,
     """
     Don't build documentation for dependencies.
     """
@@ -601,8 +634,7 @@ type Rust {
     """
     profile: String! = "",
   ): String! @check {
-    let cmd = CargoCommand
-    let args = cmd.doc(
+    let args = CargoCommand.doc(
       noDeps,
       package,
       all,
@@ -620,8 +652,10 @@ type Rust {
     )
 
     self
+      .prepareWorkspace(ws) { container =>
+        container.withEnvVariable("RUSTDOCFLAGS", "-D warnings")
+      }
       .container
-      .withEnvVariable("RUSTDOCFLAGS", "-D warnings")
       .withExec(args)
       .stdout
   }
@@ -629,14 +663,29 @@ type Rust {
   """
   Runs a set of fixers and code formatters.
   """
-  pub fix: Fix! {
+  fix: Fix! {
     Fix(self)
   }
 }
 
-enum CargoAuditDeny {
-  WARNINGS
-  UNMAINTAINED
-  UNSOUND
-  YANKED
+"""
+Represents a context with a prepared workspace.
+
+Meaning: source code is mounted into the container, workspace specific toolchain (if any) is installed.
+"""
+type WorkspaceContext {
+  """
+  The container with the workspace mounted.
+  """
+  container: Container!
+
+  """
+  The source code directory (containing the entire workspace).
+  """
+  source: Directory!
+
+  """
+  The current working directory within the workspace.
+  """
+  cwd: String!
 }

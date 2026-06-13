@@ -1,0 +1,174 @@
+type Overlays {
+  """
+  Combine a list of overlays into a single overlay.
+  """
+  combine(overlays: [Overlay]!): List! {
+    List(overlays.reject { _ == null }.map { _! })
+  }
+
+  """
+  Add a file to the container at the specified path.
+  """
+  withFile(
+    path: String!,
+    source: File!,
+    permissions: Int,
+    owner: String,
+    expand: Boolean,
+  ): WithFile! {
+    WithFile(path, source, permissions, owner, expand)
+  }
+
+  """
+  Add multiple files to the container at the specified path.
+  """
+  withFiles(
+    path: String!,
+    sources: [File!]!,
+    permissions: Int,
+    owner: String,
+    expand: Boolean,
+  ): WithFiles! {
+    WithFiles(path, sources, permissions, owner, expand)
+  }
+
+  """
+  Mount a file to the container at the specified path.
+  """
+  withMountedFile(
+    path: String!,
+    source: File!,
+    owner: String,
+    expand: Boolean,
+  ): WithMountedFile! {
+    WithMountedFile(path, source, owner, expand)
+  }
+
+  """
+  Add a directory to the container at the specified path.
+  """
+  withDirectory(
+    path: String!,
+    source: Directory!,
+    exclude: [String!]! = [],
+    include: [String!]! = [],
+    gitignore: Boolean,
+    owner: String,
+    expand: Boolean,
+    permissions: Int,
+  ): WithDirectory! {
+    WithDirectory(path, source, exclude, include, gitignore, owner, expand, permissions)
+  }
+
+  """
+  Mount a directory to the container at the specified path.
+  """
+  withMountedDirectory(
+    path: String!,
+    source: Directory!,
+    owner: String,
+    readOnly: Boolean,
+    expand: Boolean,
+  ): WithMountedDirectory! {
+    WithMountedDirectory(path, source, owner, readOnly, expand)
+  }
+}
+
+"""
+Apply changes on top of a container.
+
+The primary use case is to allow extending a container from outside a Dagger module.
+"""
+interface Overlay {
+  apply(container: Container!): Container!
+}
+
+type List implements Overlay {
+  overlays: [Overlay!]!
+
+  apply(container: Container!): Container! {
+    self.overlays.reduce(container) { container, overlay => overlay.apply(container) }
+  }
+}
+
+type WithFile implements Overlay {
+  path: String!
+  source: File!
+  permissions: Int
+  owner: String
+  expand: Boolean
+
+  apply(container: Container!): Container! {
+    container.withFile(self.path, self.source, self.permissions, self.owner, self.expand)
+  }
+}
+
+type WithFiles implements Overlay {
+  path: String!
+  sources: [File!]!
+  permissions: Int
+  owner: String
+  expand: Boolean
+
+  apply(container: Container!): Container! {
+    container.withFiles(self.path, self.sources, self.permissions, self.owner, self.expand)
+  }
+}
+
+type WithMountedFile implements Overlay {
+  path: String!
+  source: File!
+  owner: String
+  expand: Boolean
+
+  apply(container: Container!): Container! {
+    container.withMountedFile(
+      self.path,
+      self.source,
+      self.owner,
+      self.expand,
+    )
+  }
+}
+
+type WithDirectory implements Overlay {
+  path: String!
+  source: Directory!
+  exclude: [String!]!
+  include: [String!]!
+  gitignore: Boolean
+  owner: String
+  expand: Boolean
+  permissions: Int
+
+  apply(container: Container!): Container! {
+    container.withDirectory(
+      self.path,
+      self.source,
+      self.exclude,
+      self.include,
+      self.gitignore,
+      self.owner,
+      self.expand,
+      self.permissions,
+    )
+  }
+}
+
+type WithMountedDirectory implements Overlay {
+  path: String!
+  source: Directory!
+  owner: String
+  readOnly: Boolean
+  expand: Boolean
+
+  apply(container: Container!): Container! {
+    container.withMountedDirectory(
+      self.path,
+      self.source,
+      self.owner,
+      self.readOnly,
+      self.expand,
+    )
+  }
+}

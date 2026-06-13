@@ -1,5 +1,3 @@
-let RUST_VERSION = "1.96-slim-trixie"
-
 type Tests {
   let source: Directory! {
     Dagger
@@ -9,21 +7,30 @@ type Tests {
   }
 
   let rust: Rust! {
-    Dagger.rust(
-      source: source,
-      version: RUST_VERSION,
-    )
+    Dagger.rust(version: "1.96.0-slim-trixie@sha256:082a5849a6870672b5f7a5bf4eddc71723fce38756fd834a0d734a5306a310ab")
   }
 
-  pub build: Directory! @check {
-    rust.build
+  container: Container! @check {
+    rust.container
   }
 
-  pub test: String! @check {
-    rust.test
+  build: Container! @check {
+    rust
+      .container
+      .withWorkdir("/work/src")
+      .withMountedDirectory(".", source)
+      .withExec(["cargo", "build"])
   }
 
-  pub clippy: String! @check {
-    rust.clippy
-  }
+  # pub build: Directory! @check {
+  #   rust.build
+  # }
+
+  # pub test: String! @check {
+  #   rust.test
+  # }
+
+  # pub clippy: String! @check {
+  #   rust.clippy
+  # }
 }

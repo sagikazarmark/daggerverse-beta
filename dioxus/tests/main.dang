@@ -1,0 +1,34 @@
+type Tests {
+  let dioxus: Dioxus! {
+    Dagger.dioxus(rustVersion: "1.96.0-slim-trixie@sha256:082a5849a6870672b5f7a5bf4eddc71723fce38756fd834a0d734a5306a310ab")
+  }
+
+  init: Directory! @check {
+    let template = Dagger.git("https://github.com/DioxusLabs/dioxus-template.git").branch("v0.7").tree
+
+    self
+      .dioxus
+      .init("test", template, "Bare-Bones")
+      .withOption("default_platform", "web")
+      .directory
+  }
+
+  build: Container! @check {
+    self
+      .dioxus
+      .withSource(init)
+      .container
+      .withExec(["dx", "build"])
+  }
+
+  serve: Void @check {
+    let service = self
+      .build
+      .withExposedPort(8080)
+      .asService(args: ["dx", "serve", "--addr", "0.0.0.0", "--port", "8080"])
+
+    let response = Dagger.http(service.endpoint(scheme: "http"), experimentalServiceHost: service)
+
+    assert { response.contents.contains("<title>test</title>") }
+  }
+}

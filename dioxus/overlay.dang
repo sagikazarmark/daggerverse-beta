@@ -1,0 +1,81 @@
+interface Overlay implements OverlaysOverlay {
+  apply(container: Container!): Container!
+}
+
+let withDioxus(version: String): OverlaysOverlay! {
+  if (version != null and version != "") {
+    version = "v" + version.trimPrefix("v")
+  }
+
+  let binary = Dagger
+    .github
+    .release(version, "DioxusLabs/dioxus")
+    .asset(`dx-${arch}-unknown-linux-gnu.tar.gz`)
+    .extracted
+    .file("dx")!
+
+  Dagger.overlays.withFile("/usr/local/bin/", binary)
+}
+
+let withWasmBindgen(version: String): OverlaysOverlay! {
+  let binaries = Dagger
+    .github
+    .release(version, "wasm-bindgen/wasm-bindgen")
+    .{ _.asset(`wasm-bindgen-${_.tagName}-${arch}-unknown-linux-gnu.tar.gz`) }
+    .extracted(true)
+    .filter(include: ["wasm-bindgen-test-runner", "wasm2es6js", "wasm-bindgen"])!
+
+  Dagger.overlays.withDirectory("/usr/local/bin/", binaries)
+}
+
+let withWasmPack(version: String): OverlaysOverlay! {
+  let binary = Dagger
+    .github
+    .release(version, "wasm-bindgen/wasm-pack")
+    .{ _.asset(`wasm-pack-${_.tagName}-${arch}-unknown-linux-musl.tar.gz`) }
+    .extracted(true)
+    .file("wasm-pack")!
+
+  Dagger.overlays.withFile("/usr/local/bin/", binary)
+}
+
+let withBinaryen(version: String): OverlaysOverlay! {
+  let dir = Dagger
+    .github
+    .release(version, "WebAssembly/binaryen")
+    .{ _.asset(`binaryen-${_.tagName}-${arch}-linux.tar.gz`) }
+    .extracted(true)!
+
+  Dagger.overlays.withDirectory("/usr/local/", dir)
+}
+
+# Downloads the esbuild binary for the current platform from the npm registry.
+#
+# esbuild ships its native binaries as platform-specific npm packages
+# (`@esbuild/<platform>`), each a tarball containing the binary at
+# `package/bin/esbuild`. This avoids needing a Node.js toolchain just to obtain
+# the binary.
+let esbuildBinary(version: String!): File! {
+  let platform = "linux-" + esbuildArch
+  let tarball = Dagger.http(
+    `https://registry.npmjs.org/@esbuild/${platform}/-/${platform}-${version}.tgz`,
+    name: `esbuild-${version}.tgz`,
+  )
+
+  Dagger
+    .container
+    .from("alpine:3.23.4@sha256:5b10f432ef3da1b8d4c7eb6c487f2f5a8f096bc91145e68878dd4a5019afde11")
+    .withMountedFile("/tmp/esbuild.tgz", tarball)
+    .withExec(["tar", "-xzf", "/tmp/esbuild.tgz", "-C", "/tmp", "package/bin/esbuild"])
+    .file("/tmp/package/bin/esbuild")
+}
+
+let withEsbuild(version: String): OverlaysOverlay! {
+  let version = if (version == null or version == "") {
+    Dagger.github.release(null, "evanw/esbuild").tagName.trimPrefix("v")
+  } else {
+    version.trimPrefix("v")
+  }
+
+  Dagger.overlays.withFile("/usr/local/bin/esbuild", esbuildBinary(version))
+}

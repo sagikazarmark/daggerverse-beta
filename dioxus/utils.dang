@@ -1,0 +1,17 @@
+let arch: String! {
+  case (Dagger.defaultPlatform) {
+    "linux/amd64" => "x86_64"
+    "linux/arm64" => "aarch64"
+    else => raise "unsupported platform: " + toString(Dagger.defaultPlatform).trim("\"")
+  }
+}
+
+# esbuild publishes platform binaries under npm package names that use the
+# x64/arm64 architecture naming rather than the GNU x86_64/aarch64 names.
+let esbuildArch: String! {
+  case (Dagger.defaultPlatform) {
+    "linux/amd64" => "x64"
+    "linux/arm64" => "arm64"
+    else => raise "unsupported platform: " + toString(Dagger.defaultPlatform).trim("\"")
+  }
+}

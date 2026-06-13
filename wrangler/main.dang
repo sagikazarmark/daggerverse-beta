@@ -93,16 +93,16 @@ type Wrangler {
 
   let prepContainer(
     container: Container!,
-    env: String = null,
-    accountId: String = null,
-    apiToken: Secret = null,
-    logLevel: LogLevel = null,
+    env: String,
+    accountId: String,
+    apiToken: Secret,
+    logLevel: LogLevel,
   ): Container! {
     container
       .{ withEnvVariable(_, "CLOUDFLARE_ENV", env) }
       .{ withEnvVariable(_, "CLOUDFLARE_ACCOUNT_ID", accountId) }
       .{ withSecretVariable(_, "CLOUDFLARE_API_TOKEN", apiToken) }
-      .{ withEnvVariable(_, "WRANGLER_LOG", toString(logLevel).trim("\"").toLower) }
+      .{ withEnvVariable(_, "WRANGLER_LOG", if (logLevel != null) { toString(logLevel).trim("\"").toLower } else { null }) }
   }
 
   """
@@ -112,21 +112,21 @@ type Wrangler {
     """
     Environment to use for operations, and for selecting .env and .dev.vars files.
     """
-    environment: String = null,
+    environment: String,
     """
     Account ID for the Cloudflare account.
     """
-    accountId: String = null,
+    accountId: String,
     """
     API token for your Cloudflare account.
     """
-    apiToken: Secret = null,
+    apiToken: Secret,
     """
     Log level to use for Wrangler operations.
     """
-    logLevel: LogLevel = null,
+    logLevel: LogLevel,
   ): Container! {
-    self.base.{ self.prepContainer(_, environment, accountId, apiToken, logLevel) }
+    prepContainer(self.base, environment, accountId, apiToken, logLevel)
   }
 
   """
@@ -144,19 +144,19 @@ type Wrangler {
     """
     Environment to use for operations, and for selecting .env and .dev.vars files.
     """
-    environment: String = null,
+    environment: String,
     """
     Account ID for the Cloudflare account.
     """
-    accountId: String = null,
+    accountId: String,
     """
     API token for your Cloudflare account.
     """
-    apiToken: Secret = null,
+    apiToken: Secret,
     """
     Log level to use for Wrangler operations.
     """
-    logLevel: LogLevel = null,
+    logLevel: LogLevel,
   ): Service! {
     let args = ["wrangler", "dev", "--ip", "0.0.0.0", "--port", toString(port)]
 
@@ -176,15 +176,15 @@ type Wrangler {
     """
     Name of the Worker.
     """
-    name: String = null,
+    name: String,
     """
     A tag for this Worker version.
     """
-    tag: String = null,
+    tag: String,
     """
     A descriptive message for this Worker Version
     """
-    message: String = null,
+    message: String,
     """
     Skip internal build steps and directly upload Worker.
     """
@@ -192,19 +192,19 @@ type Wrangler {
     """
     Environment to use for operations, and for selecting .env and .dev.vars files.
     """
-    environment: String = null,
+    environment: String,
     """
     Account ID for the Cloudflare account.
     """
-    accountId: String = null,
+    accountId: String,
     """
     API token for your Cloudflare account.
     """
-    apiToken: Secret = null,
+    apiToken: Secret,
     """
     Log level to use for Wrangler operations.
     """
-    logLevel: LogLevel = null,
+    logLevel: LogLevel,
   ): Container! @cache(policy: neverCache) {
     let args = ["wrangler", "deploy"]
 

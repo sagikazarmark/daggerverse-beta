@@ -40,11 +40,11 @@
         "nixpkgs": "nixpkgs_2"
       },
       "locked": {
-        "lastModified": 1780641922,
-        "narHash": "sha256-6LNuVPeHhaKe3hPn3kAr1ZVJEp0PS1WTz8G4U/pCBv8=",
+        "lastModified": 1781299747,
+        "narHash": "sha256-lggJQ50xA4aNaxt5vxghYAUWjorQbmVF6zODkM9qw+o=",
         "owner": "sagikazarmark",
         "repo": "devenv-extras",
-        "rev": "415af1e278dc5b2bec02f26d4943f87e0bc29cff",
+        "rev": "dba14007f67f09f40329a5163e6d9a58321a88de",
         "type": "github"
       },
       "original": {

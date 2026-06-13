@@ -37,6 +37,54 @@ type Tests {
   }
 
   """
+  The localhost kubeconfig points at localhost on the configured port with the
+  cluster name as the TLS server name.
+  """
+  localKubeconfig: String! @check {
+    let output = Dagger
+      .k3S(name: "k3s-local-kubeconfig-test")
+      .kubeconfig(port: 7443)
+      .contents
+
+    assert { output.contains("server: https://localhost:7443") }
+    assert { output.contains("tls-server-name: k3s-local-kubeconfig-test") }
+    assert { output.contains("current-context: default") }
+
+    output
+  }
+
+  """
+  The local access bundle contains a kubeconfig and a certs subdirectory.
+  """
+  localAccess: [String!]! @check {
+    let bundle = Dagger.k3S(name: "k3s-local-access-test").localAccess
+
+    let entries = bundle.entries
+
+    assert { entries.contains("kubeconfig") }
+    assert { entries.contains("certs/") }
+    assert { bundle.file("kubeconfig").contents.contains("server: https://localhost:6443") }
+
+    entries
+  }
+
+  """
+  Injecting certificates generated for a different cluster name is rejected.
+  """
+  certsNameMismatch: Void @check {
+    # Generate certs as "owner", then try to use them under a different name.
+    let certs = Dagger.k3S(name: "owner").certificates
+
+    try {
+      Dagger.k3S(name: "intruder", certs: certs).kubeconfig.contents
+
+      raise "expected the cluster-name guard to reject mismatched certs"
+    } catch {
+      err => assert { err.message.contains(`generated for cluster "owner"`) }
+    }
+  }
+
+  """
   A Pod can be started and reached through a fixed NodePort on the K3s service hostname.
   """
   podNodePort: String! @check @cache(policy: FunctionCachePolicy.Never) {
@@ -101,21 +149,26 @@ metadata:
   A registry mirror backed by an olareg service serves image pulls for the cluster.
   """
   registry: String! @check @cache(policy: FunctionCachePolicy.Never) {
-    # olareg serves the image under a host that does not exist publicly, so a
-    # successful pull can only have gone through the configured mirror.
-    let registry = Dagger
+    # olareg serves the image under a rewritten path on a Dagger service endpoint,
+    # so a successful pull can only have gone through the configured mirror.
+    let olareg = Dagger
       .olareg
-      .withContainer("library/nginx", "test", Dagger.container.from("nginx:1.27-alpine"))
+      .withContainer("mirror/nginx", "test", Dagger.container.from("nginx:1.27-alpine"))
       .service
+
+    let rewrites = ["^library/(.*)=mirror/$1"]
+
+    let registry = olareg.endpoint(scheme: "http", port: 5050).trimPrefix("http://")
 
     let kubectl = Dagger
       .k3S(name: "k3s-registry-test")
-      .withRegistryService("registry.local", registry, port: 5050)
+      .withRegistryService(olareg, port: 5050, rewrites: rewrites)
       .kubectl
 
     let output = kubectl
       .container
       .withEnvVariable("DAGGER_CACHE_SEED", Random.string)
+      .withEnvVariable("REGISTRY", registry)
       .withExec(["sh", "-c", self.registryScript])
       .stdout
 
@@ -138,9 +191,10 @@ for i in $(seq 1 60); do
 done
 kubectl get serviceaccount default >/dev/null
 
-# The image host does not exist publicly, so a successful pull proves the
-# configured mirror (the olareg service) served it.
-kubectl run web --image=registry.local/library/nginx:test --port=80 --restart=Never
+# The image path only exists after the mirror rewrite, so a successful pull proves
+# the configured mirror (the olareg service) served it.
+: "${REGISTRY:?}"
+kubectl run web --image="$REGISTRY/library/nginx:test" --port=80 --restart=Never
 kubectl wait --for=condition=Ready pod/web --timeout=180s
 
 printf 'phase=%s\n' "$(kubectl get pod web -o=jsonpath='{.status.phase}')"

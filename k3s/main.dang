@@ -1,6 +1,5 @@
 type K3s {
   let baseContainer: Container!
-
   let clientContainer: Container!
 
   # Cluster name, also used as the TLS SAN and service hostname.
@@ -9,20 +8,26 @@ type K3s {
   # Generated cluster certificates, shared between the server and kubectl.
   let certs: Directory!
 
-  # Manifests to auto-deploy, accumulated by withManifestFile/withManifestDirectory.
-  let manifests: Directory!
-
-  # Registry mirrors keyed by registry host, each mapping to its mirror
-  # endpoint URLs. Rendered into /etc/rancher/k3s/registries.yaml.
-  let registries: Map[[String!]!] = [:]
+  # Registry mirrors keyed by registry host. Rendered into
+  # /etc/rancher/k3s/registries.yaml and used to bind backing services lazily.
+  let mirrors: Map[RegistryMirror!] = [:]
 
   new(
     """
     Name of the cluster (used as the TLS SAN and service name).
 
     Make sure to use a unique name for each cluster in the same session.
+    Avoid using generated names to maximize cache hits.
     """
     name: String! = "k3s",
+    """
+    Pre-generated cluster certificates to use instead of generating fresh ones.
+
+    Keep the same cluster identity across cache busts and restarts,
+    so a previously generated kubeconfig keeps working.
+    When null, a fresh set is generated (and cached for future use).
+    """
+    certs: Directory = null,
     """
     Node ports to expose on the k3s service.
     """
@@ -30,53 +35,48 @@ type K3s {
     """
     Version (image tag) to use from the official image repository as a base container.
     """
-    version: String! = "v1.34.1-k3s1@sha256:5e0707cfd1239b358ef73f3254bc3eadc027dd30cd5ec6ca41e29e47652a1b8c",
+    version: String! = "latest",
     """
     Custom container to use as a base container.
     """
     container: Container! = Dagger.container.from("rancher/k3s:" + version),
   ) {
     self.name = name
-    self.certs = gencerts(name)
+    self.certs = certs ?? gencerts(name)
     self.clientContainer = container
-    self.manifests = Dagger.directory
-
-    # Node ports only open once a NodePort service is created in the cluster,
-    # so they cannot participate in the service health check.
-    # The accumulator must not be named "container": that would shadow the
-    # constructor parameter and silently drop the mounts set up in the seed.
-    self.baseContainer = nodePorts.reduce(
-      container
-        .withDirectory("/var/lib/rancher/k3s/server/tls", self.certs)
-        .withMountedTemp("/etc/lib/cni")
-        .withMountedTemp("/var/lib/kubelet")
-        .withMountedTemp("/var/log")
-        .withExposedPort(6443),
-    ) { base, port =>
-      base.withExposedPort(port, experimentalSkipHealthcheck: true)
-    }
+    self.baseContainer = container
+      .withMountedTemp("/etc/lib/cni")
+      .withMountedTemp("/var/lib/kubelet")
+      .withMountedTemp("/var/log")
+      .withExposedPort(6443)
+      .{
+        nodePorts.reduce(_) { container, port =>
+          container.withExposedPort(port, experimentalSkipHealthcheck: true)
+        }
+      }
 
     self
   }
+
+  # Manifests to auto-deploy, accumulated by withManifestFile/withManifestDirectory.
+  let manifests: Directory! = Dagger.directory
 
   """
   Auto-deploy a single manifest file to the cluster.
 
   K3s applies manifests dropped into its server manifests directory at startup
   (and reconciles them while running), so the manifest is created without any
-  explicit kubectl apply.
+  explicit `kubectl apply`.
+
+  Documentation: https://docs.k3s.io/installation/packaged-components
   """
   withManifestFile(
     """
-    File name to give the manifest under the auto-deploying manifests directory.
-    """
-    name: String!,
-    """
-    Manifest file to auto-deploy.
+    Manifest file.
     """
     file: File!,
   ): K3s! {
-    self.manifests = self.manifests.withFile(name, file)
+    self.manifests = self.manifests.withFile("", file)
 
     self
   }
@@ -86,10 +86,12 @@ type K3s {
 
   The directory contents are merged into the server manifests directory, where
   K3s applies them at startup (and reconciles them while running).
+
+  Documentation: https://docs.k3s.io/installation/packaged-components
   """
   withManifestDirectory(
     """
-    Directory containing the manifests to auto-deploy.
+    Directory containing the manifests.
     """
     directory: Directory!,
   ): K3s! {
@@ -101,9 +103,10 @@ type K3s {
   """
   Configure a registry mirror.
 
-  The endpoint must be reachable from inside the cluster (e.g. an http:// URL of
-  a service bound to the k3s container). Use withRegistryService to bind a Dagger
-  registry service and configure the mirror in one step.
+  Endpoints must be reachable from inside the cluster. Use withRegistryService
+  to bind a Dagger registry service and configure the mirror in one step.
+
+  Calling this function again for the same registry replaces the existing mirror.
   """
   withRegistryMirror(
     """
@@ -111,17 +114,15 @@ type K3s {
     """
     registry: String!,
     """
-    Mirror endpoint URL (for example "http://registry.local:5000").
+    Mirror endpoint URLs (for example ["http://registry.local:5000"]).
     """
-    endpoint: String!,
+    endpoints: [String!]!,
+    """
+    Optional image path rewrite rules in REGEX=REPLACEMENT form.
+    """
+    rewrites: [String!]! = [],
   ): K3s! {
-    let endpoints = if (self.registries.keys.contains(registry)) {
-      self.registries.get(registry)!
-    } else {
-      []
-    }
-
-    self.registries = self.registries.with(registry, endpoints + [endpoint])
+    self.mirrors = self.mirrors.with(registry, RegistryMirror(endpoints, rewrites, null))
 
     self
   }
@@ -129,18 +130,11 @@ type K3s {
   """
   Bind a Dagger registry service and configure it as a mirror for the given registry host.
 
-  The service is bound to the k3s container under the registry host name, and a
-  matching http:// mirror endpoint is added to the registry configuration. Pulls
-  for images on that host are then served from the bound registry.
+  The service is bound to the k3s server container when that container is
+  assembled, and its HTTP endpoint is added to the registry configuration. Pulls
+  for images on the registry host are then served from the bound registry.
   """
   withRegistryService(
-    """
-    Registry host to mirror, as it appears in image references (for example "registry.local").
-
-    It must contain a dot or a port so that it is treated as a registry rather
-    than a Docker Hub namespace.
-    """
-    registry: String!,
     """
     Registry service to use as the mirror endpoint.
     """
@@ -149,10 +143,28 @@ type K3s {
     Port the registry service listens on.
     """
     port: Int! = 5000,
-  ): K3s! {
-    self.baseContainer = self.baseContainer.withServiceBinding(registry, service)
+    """
+    Registry host to mirror, as it appears in image references (for example "registry.local").
 
-    self.withRegistryMirror(registry, "http://" + registry + ":" + toString(port))
+    When omitted, this defaults to the service endpoint without the URL scheme.
+
+    It must contain a dot or a port so that it is treated as a registry rather
+    than a Docker Hub namespace.
+    """
+    registry: String! = service.endpoint(scheme: "http", port: port).trimPrefix("http://"),
+    """
+    Optional image path rewrite rules in REGEX=REPLACEMENT form.
+    """
+    rewrites: [String!]! = [],
+  ): K3s! {
+    let endpoint = service.endpoint(scheme: "http", port: port)
+
+    self.mirrors = self.mirrors.with(
+      registry,
+      RegistryMirror([endpoint], rewrites, service),
+    )
+
+    self
   }
 
   """
@@ -182,17 +194,118 @@ type K3s {
   kubectl: Kubectl! {
     # Binding the K3s service stays lazy: kubeconfig execs run unbound (and
     # cache), and the service only starts when a container actually runs.
-    Kubectl(self.clientContainer, self.service, self.certs)
+    Kubectl(self.clientContainer, self.service, self.tlsCerts)
+  }
+
+  """
+  The cluster certificates (CA material, service key and admin credentials).
+
+  Export this directory and feed it back via the `certs` constructor argument to
+  pin the cluster identity across cache busts and restarts. Because the server
+  and admin CAs stay the same, a kubeconfig generated against this cluster keeps
+  working without regenerating anything.
+  """
+  certificates: Directory! {
+    self.certs
+  }
+
+  """
+  A kubeconfig for reaching the cluster from the host over localhost.
+
+  This is a plain config file: it needs no running service to build and only
+  embeds the admin credentials and the cluster CA. Publish the API server to the
+  host (for example `service up --ports <port>:6443`) and point kubectl at this
+  config. The TLS server name is the cluster name, which the server advertises
+  as a SAN, so verification succeeds even though the connection is to localhost.
+  """
+  kubeconfig(
+    """
+    Local port the API server is published on.
+    """
+    port: Int! = 6443,
+  ): File! {
+    Dagger
+      .kubectl(self.clientContainer)
+      .withCluster(
+        "default",
+        `https://localhost:${toString(port)}`,
+        self.name,
+        ca: self.tlsCerts.file("server-ca.crt"),
+      )
+      .withCredentials(
+        "default",
+        self.tlsCerts.file("client-admin.crt"),
+        self.tlsCerts.file("client-admin.key"),
+      )
+      .withContext("default", cluster: "default", user: "default", use: true)
+      .config
+  }
+
+  """
+  Everything needed to reach the cluster from the host, in a single directory:
+  a `kubeconfig` file and a `certs` subdirectory.
+
+  Export it once (`local-access export --path ./mycluster`), then bring the
+  cluster up reusing the saved certs:
+
+      dagger call --certs ./mycluster/certs service up --ports 6443:6443
+
+  and point kubectl at `./mycluster/kubeconfig`. Re-running against the same
+  certs keeps the saved kubeconfig valid.
+  """
+  localAccess(
+    """
+    Local port the API server is published on.
+    """
+    port: Int! = 6443,
+  ): Directory! {
+    Dagger
+      .directory
+      .withDirectory("certs", self.certs)
+      .withFile("kubeconfig", self.kubeconfig(port))
+  }
+
+  # The cluster certs to actually use: validated against the cluster name and
+  # with the ownership marker stripped so it never reaches k3s's TLS directory.
+  #
+  # Computed lazily, so the name guard only runs when the cluster (or a
+  # kubeconfig) is built, never during construction.
+  let tlsCerts: Directory! {
+    let owner = self.certsOwner
+
+    if (owner != null and owner! != self.name) {
+      raise `these certificates were generated for cluster "${owner!}", but this cluster is named "${self.name}"; pass the matching --certs or change --name`
+    }
+
+    self.certs.withoutFile(".cluster-name")
+  }
+
+  # The cluster name recorded in the certs directory, or null when the certs
+  # carry no marker (for example an externally assembled set).
+  let certsOwner: String {
+    if (self.certs.entries.contains(".cluster-name")) {
+      self.certs.file(".cluster-name").contents
+    } else {
+      null
+    }
   }
 
   # The k3s server container with manifests and the registry config layered on.
   let serverContainer: Container! {
-    let container = self.baseContainer
+    # Mount the cluster certs here (not in baseContainer) so the cluster-name
+    # guard in tlsCerts runs lazily, only when the server is actually built.
+    let container = self.baseContainer.withDirectory(
+      "/var/lib/rancher/k3s/server/tls",
+      self.tlsCerts,
+    )
 
-    if (!self.manifests.entries.isEmpty) {
+    let manifests = self.manifests
+    let mirrors = self.mirrors
+
+    if (!manifests.entries.isEmpty) {
       container = container.withDirectory(
         "/var/lib/rancher/k3s/server/manifests",
-        self.manifests,
+        manifests,
       )
     }
 
@@ -200,12 +313,24 @@ type K3s {
     # Without registries it is a throwaway temp mount; with registries it is a
     # writable directory mount that also carries registries.yaml (a file nested
     # inside a temp mount is not delivered to the container).
-    if (self.registries.keys.isEmpty) {
+    container = mirrors.keys.reduce(container) { container, registry =>
+      let mirror = mirrors.get(registry)!
+
+      if (mirror.service != null) {
+        container = container.withServiceBinding(mirror.service!.hostname, mirror.service!)
+      }
+
+      container
+    }
+
+    if (mirrors.keys.isEmpty) {
       container = container.withMountedTemp("/etc/rancher/k3s")
     } else {
+      let registriesFile = self.registriesFile
+
       container = container.withMountedDirectory(
         "/etc/rancher/k3s",
-        Dagger.directory.withFile("registries.yaml", self.registriesFile),
+        Dagger.directory.withFile("registries.yaml", registriesFile),
       )
     }
 
@@ -213,16 +338,28 @@ type K3s {
   }
 
   # The rendered /etc/rancher/k3s/registries.yaml mirror configuration.
+  #
+  # JSON is valid YAML, so we render the structure as JSON rather than
+  # hand-formatting YAML.
   let registriesFile: File! {
-    let content = self.registries.keys.reduce("mirrors:\n") { config, registry =>
-      let endpoints = self.registries.get(registry)!.reduce("") { acc, endpoint =>
-        acc + "      - \"" + endpoint + "\"\n"
+    let config = {{
+      mirrors: mirrors.map { registry, mirror =>
+        {{
+          endpoint: mirror.endpoints
+          rewrite: mirror.rewrites.reduce([:]) { config, rewrite =>
+            let parts = rewrite.split("=")
+
+            if (parts.length < 2) {
+              raise "registry rewrite must be in REGEX=REPLACEMENT form: " + rewrite
+            }
+
+            config.with(parts[0]!, parts[1]!)
+          }
+        }}
       }
+    }}
 
-      config + "  \"" + registry + "\":\n    endpoint:\n" + endpoints
-    }
-
-    Dagger.directory.withNewFile("registries.yaml", content).file("registries.yaml")
+    Dagger.file("registries.yaml", toJSON(config))
   }
 
   let gencerts(seed: String!): Directory! {
@@ -308,5 +445,15 @@ type K3s {
       .withFile("etcd/server-ca.crt", etcdServer.certificate.fullChain)
       .withFile("client-admin.key", admin.key.file)
       .withFile("client-admin.crt", admin.certificate.fullChain)
+      # Record which cluster these certs belong to, so injecting them into a
+      # differently named cluster can be caught (see tlsCerts). Stripped before
+      # the directory is mounted into k3s.
+      .withNewFile(".cluster-name", seed)
   }
+}
+
+type RegistryMirror {
+  let endpoints: [String!]!
+  let rewrites: [String!]!
+  let service: Service
 }

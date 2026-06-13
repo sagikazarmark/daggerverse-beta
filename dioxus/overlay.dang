@@ -79,3 +79,14 @@ let withEsbuild(version: String): OverlaysOverlay! {
 
   Dagger.overlays.withFile("/usr/local/bin/esbuild", esbuildBinary(version))
 }
+
+let withTailwind(version: String): OverlaysOverlay! {
+  let binary = Dagger
+    .github
+    .release(version, "tailwindlabs/tailwindcss")
+    .{ _.asset(`tailwindcss-linux-${esbuildArch}`) }
+    .file!
+    .withName("tailwindcss")
+
+  Dagger.overlays.withFile("/usr/local/bin/", binary, permissions: 755)
+}

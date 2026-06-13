@@ -10,6 +10,7 @@ type Tests {
       .dioxus
       .init("test", template, "Bare-Bones")
       .withOption("default_platform", "web")
+      .withOption("is_tailwind", "true")
       .directory
   }
 

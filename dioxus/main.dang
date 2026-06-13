@@ -5,6 +5,7 @@ type Dioxus {
   let wasmPackVersion: String
   let binaryenVersion: String
   let esbuildVersion: String!
+  let tailwindVersion: String
 
   new(
     """
@@ -31,6 +32,10 @@ type Dioxus {
     Version of esbuild to use.
     """
     esbuildVersion: String! = "0.28.0",
+    """
+    Version of Tailwind CSS to use.
+    """
+    tailwindVersion: String = null,
   ) {
     # Prevent dioxus CLI from downloading tool dependencies
     container = container.withEnvVariable("NO_DOWNLOADS", "1")
@@ -45,6 +50,7 @@ type Dioxus {
     self.wasmPackVersion = wasmPackVersion
     self.binaryenVersion = binaryenVersion
     self.esbuildVersion = esbuildVersion
+    self.tailwindVersion = tailwindVersion
 
     self
   }
@@ -71,6 +77,7 @@ type Dioxus {
       withWasmPack(self.wasmPackVersion),
       withBinaryen(self.binaryenVersion),
       withEsbuild(self.esbuildVersion),
+      withTailwind(self.tailwindVersion),
     ]
   }
 

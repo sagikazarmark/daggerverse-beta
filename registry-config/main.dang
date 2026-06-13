@@ -1,0 +1,80 @@
+type RegistryConfig {
+  let registries: Map[Registry!] = [:]
+
+  """
+  Add credentials for a registry.
+  """
+  withRegistryAuth(
+    """
+    The registry address that needs authentication.
+    """
+    address: String!,
+    """
+    The username to authenticate with.
+    """
+    username: String!,
+    """
+    The API key, password or token to authenticate to this registry
+    """
+    secret: Secret!,
+  ): RegistryConfig! @cache(policy: FunctionCachePolicy.PerSession) {
+    self.registries = self
+      .registries
+      .with(address, Registry(address, username, secret))
+
+    self
+  }
+
+  """
+  Removes credentials for a registry.
+  """
+  withoutRegistryAuth(
+    """
+    The registry address to remove credentials for.
+    """
+    address: String!,
+  ): RegistryConfig! @cache(policy: FunctionCachePolicy.PerSession) {
+    self.registries = self.registries.without(address)
+
+    self
+  }
+
+  secret: Secret! @cache(policy: FunctionCachePolicy.PerSession) {
+    let config = {{
+      auths: registries.map { key, value =>
+        {{
+          auth: base64(`${value.username.trimSpace}:${value.secret.plaintext.trimSpace}`).trimSpace
+        }}
+      }
+    }}
+
+    Dagger.setSecret("", toJSON(config))
+  }
+
+  """
+  Mounts the registry secret into a container.
+  """
+  withMountedSecret(
+    container: Container!,
+    path: String!,
+    owner: String,
+    mode: Int,
+    expand: Boolean,
+  ): Container! {
+    container.withMountedSecret(path, self.secret, owner, mode, expand)
+  }
+}
+
+type Registry {
+  address: String!
+  username: String!
+  secret: Secret!
+}
+
+let base64(s: String!): String! {
+  Dagger
+    .container
+    .from("busybox:1.37.0@sha256:9532d8c39891ca2ecde4d30d7710e01fb739c87a8b9299685c63704296b16028")
+    .withExec(["base64"], stdin: s)
+    .stdout
+}

@@ -1,0 +1,7 @@
+name = "tests"
+engineVersion = "v0.21.7-20260612013754-dev-d87b131f0507"
+runtime.source = "dang"
+
+[[dependencies]]
+name = "registry-config"
+source = ".."

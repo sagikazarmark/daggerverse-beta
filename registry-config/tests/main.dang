@@ -1,0 +1,111 @@
+type Tests {
+  # The auth config the module produces for the ghcr.io + docker.io credentials
+  # used above. Keys are sorted, so the encoding is deterministic:
+  #   ghcr.io  -> base64("sagikazarmark:password")
+  #   docker.io -> base64("sagikazarmark:password2")
+  let expected: String! = """{"auths":{"docker.io":{"auth":"c2FnaWthemFybWFyazpwYXNzd29yZDI="},"ghcr.io":{"auth":"c2FnaWthemFybWFyazpwYXNzd29yZA=="}}}"""
+
+  """
+  Credentials for multiple registries are encoded into the auth config secret.
+  """
+  registryAuth: Void @check {
+    let actual = Dagger
+      .registryConfig
+      .withRegistryAuth("ghcr.io", "sagikazarmark", Dagger.setSecret(
+        "registryAuth-password",
+        "password",
+      ))
+      .withRegistryAuth("docker.io", "sagikazarmark", Dagger.setSecret(
+        "registryAuth-password2",
+        "password2",
+      ))
+      .secret
+      .plaintext
+
+    assert { actual == self.expected }
+  }
+
+  """
+  Re-adding a registry overwrites the previously configured credentials.
+  """
+  multipleCredentials: Void @check {
+    let actual = Dagger
+      .registryConfig
+      .withRegistryAuth(
+        "ghcr.io",
+        "sagikazarmark",
+        Dagger.setSecret("multipleCredentials-passwordold", "passwordold"),
+      )
+      .withRegistryAuth(
+        "docker.io",
+        "sagikazarmark",
+        Dagger.setSecret("multipleCredentials-password2", "password2"),
+      )
+      .withRegistryAuth(
+        "ghcr.io",
+        "sagikazarmark",
+        Dagger.setSecret("multipleCredentials-password", "password"),
+      )
+      .secret
+      .plaintext
+
+    assert { actual == self.expected }
+  }
+
+  """
+  Removing a registry drops its credentials from the auth config secret.
+  """
+  withoutRegistryAuth: Void @check {
+    let actual = Dagger
+      .registryConfig
+      .withRegistryAuth(
+        "ghcr.io",
+        "sagikazarmark",
+        Dagger.setSecret("withoutRegistryAuth-password", "password"),
+      )
+      .withRegistryAuth(
+        "docker.io",
+        "sagikazarmark",
+        Dagger.setSecret("withoutRegistryAuth-password2", "password2"),
+      )
+      .withRegistryAuth(
+        "gcr.io",
+        "sagikazarmark",
+        Dagger.setSecret("withoutRegistryAuth-password3", "password3"),
+      )
+      .withoutRegistryAuth("gcr.io")
+      .secret
+      .plaintext
+
+    assert { actual == self.expected }
+  }
+
+  """
+  The registry secret is mounted into a container as a file with the expected contents.
+  """
+  mountedSecret: Container! @check {
+    let registryConfig = Dagger
+      .registryConfig
+      .withRegistryAuth("ghcr.io", "sagikazarmark", Dagger.setSecret(
+        "mountedSecret-password",
+        "password",
+      ))
+      .withRegistryAuth("docker.io", "sagikazarmark", Dagger.setSecret(
+        "mountedSecret-password2",
+        "password2",
+      ))
+
+    # A mounted secret is only present during an exec, and its contents are
+    # scrubbed from any output, so the value can't be read back out. Compare it
+    # against the expected file inside the container instead: diff exits
+    # non-zero (failing the exec) on any mismatch.
+    registryConfig
+      .withMountedSecret(alpine, "/actual.json")
+      .withMountedFile("/expected.json", Dagger.file("expected.json", self.expected))
+      .withExec(["diff", "-u", "/expected.json", "/actual.json"])
+  }
+
+  let alpine = Dagger
+    .container
+    .from("alpine:3.24.0@sha256:a2d49ea686c2adfe3c992e47dc3b5e7fa6e6b5055609400dc2acaeb241c829f4")
+}

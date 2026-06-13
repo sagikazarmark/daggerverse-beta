@@ -30,7 +30,9 @@ type Kubectl {
   ) {
     self.inner = Dagger
       .kubectl(container)
-      .withClusterService("default", service, ca: certs.file("server-ca.crt"))
+      # Pin the API server port: the service may expose node ports too, and the
+      # default endpoint port selection is not guaranteed to pick 6443.
+      .withClusterService("default", service, servicePort: 6443, ca: certs.file("server-ca.crt"))
       .withCredentials("default", certs.file("client-admin.crt"), certs.file("client-admin.key"))
       .withContext("default", cluster: "default", user: "default", use: true)
 

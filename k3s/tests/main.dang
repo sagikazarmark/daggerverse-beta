@@ -52,6 +52,100 @@ type Tests {
     output
   }
 
+  """
+  Auto-deploying manifests (a single file and a directory) are applied on startup.
+  """
+  manifest: String! @check @cache(policy: FunctionCachePolicy.Never) {
+    let file = Dagger
+      .directory
+      .withNewFile("namespace.yaml", self.manifestFileYaml)
+      .file("namespace.yaml")
+
+    let directory = Dagger.directory.withNewFile("namespace.yaml", self.manifestDirYaml)
+
+    let kubectl = Dagger
+      .k3S(name: "k3s-manifest-test")
+      .withManifestFile("file-namespace.yaml", file)
+      .withManifestDirectory(directory)
+      .kubectl
+
+    # K3s applies server manifests asynchronously once the API server is up,
+    # so poll for the namespaces the manifests create.
+    let output = kubectl
+      .container
+      .withEnvVariable("DAGGER_CACHE_SEED", Random.string)
+      .withExec(["sh", "-c", "for i in $(seq 1 90); do kubectl get namespace k3s-manifest-file k3s-manifest-dir && exit 0; sleep 2; done; kubectl get namespace k3s-manifest-file k3s-manifest-dir"])
+      .stdout
+
+    assert { output.contains("k3s-manifest-file") }
+    assert { output.contains("k3s-manifest-dir") }
+
+    output
+  }
+
+  # NOTE: """ strings keep leading whitespace, so the manifest body stays at column 0
+  # (its own internal indentation is preserved).
+  let manifestFileYaml: String! = """apiVersion: v1
+kind: Namespace
+metadata:
+  name: k3s-manifest-file
+"""
+
+  let manifestDirYaml: String! = """apiVersion: v1
+kind: Namespace
+metadata:
+  name: k3s-manifest-dir
+"""
+
+  """
+  A registry mirror backed by an olareg service serves image pulls for the cluster.
+  """
+  registry: String! @check @cache(policy: FunctionCachePolicy.Never) {
+    # olareg serves the image under a host that does not exist publicly, so a
+    # successful pull can only have gone through the configured mirror.
+    let registry = Dagger
+      .olareg
+      .withContainer("library/nginx", "test", Dagger.container.from("nginx:1.27-alpine"))
+      .service
+
+    let kubectl = Dagger
+      .k3S(name: "k3s-registry-test")
+      .withRegistryService("registry.local", registry, port: 5050)
+      .kubectl
+
+    let output = kubectl
+      .container
+      .withEnvVariable("DAGGER_CACHE_SEED", Random.string)
+      .withExec(["sh", "-c", self.registryScript])
+      .stdout
+
+    assert { output.contains("phase=Running") }
+
+    output
+  }
+
+  let registryScript: String! = """set -eu
+
+for i in $(seq 1 60); do
+  kubectl cluster-info >/dev/null 2>&1 && break
+  sleep 1
+done
+kubectl cluster-info >/dev/null
+
+for i in $(seq 1 60); do
+  kubectl get serviceaccount default >/dev/null 2>&1 && break
+  sleep 1
+done
+kubectl get serviceaccount default >/dev/null
+
+# The image host does not exist publicly, so a successful pull proves the
+# configured mirror (the olareg service) served it.
+kubectl run web --image=registry.local/library/nginx:test --port=80 --restart=Never
+kubectl wait --for=condition=Ready pod/web --timeout=180s
+
+printf 'phase=%s\n' "$(kubectl get pod web -o=jsonpath='{.status.phase}')"
+"""
+
   # NOTE: """ strings keep leading whitespace, so the script must stay at column 0
   # (the heredoc terminator is only recognized unindented).
   let podNodePortScript: String! = """set -eu

@@ -5,3 +5,7 @@ runtime.source = "dang"
 [[dependencies]]
 name = "k3s"
 source = ".."
+
+[[dependencies]]
+name = "olareg"
+source = "../../olareg"

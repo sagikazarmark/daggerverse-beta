@@ -7,6 +7,8 @@ type Dioxus {
   let esbuildVersion: String!
   let tailwindVersion: String
 
+  let overlay: Overlay
+
   new(
     """
     Dioxus CLI version to use (default: auto-detect from Cargo.lock).
@@ -36,12 +38,21 @@ type Dioxus {
     Version of Tailwind CSS to use.
     """
     tailwindVersion: String = null,
+    """
+    Overlay to apply to the Rust base container.
+    """
+    rustOverlay: Overlay = null,
+    """
+    Overlay to apply to the base container.
+    """
+    overlay: Overlay = null,
   ) {
     # Prevent dioxus CLI from downloading tool dependencies
     container = container.withEnvVariable("NO_DOWNLOADS", "1")
 
     self.rust = Dagger.rust(
       container: container,
+      overlay: rustOverlay,
       targets: ["wasm32-unknown-unknown"],
       components: ["rust-std"],
     )
@@ -51,6 +62,7 @@ type Dioxus {
     self.binaryenVersion = binaryenVersion
     self.esbuildVersion = esbuildVersion
     self.tailwindVersion = tailwindVersion
+    self.overlay = overlay
 
     self
   }
@@ -78,6 +90,7 @@ type Dioxus {
       withBinaryen(self.binaryenVersion),
       withEsbuild(self.esbuildVersion),
       withTailwind(self.tailwindVersion),
+      self.overlay,
     ]
   }
 

@@ -1,3 +1,22 @@
 type Tests {
-  pub container: Container! @check { Dagger.wrangler.container }
+  container: Container! @check { Dagger.wrangler.container }
+
+  dev: Void @check @cache(policy: FunctionCachePolicy.Never) {
+    let worker = Dagger
+      .git("https://github.com/cloudflare/templates.git")
+      .tag("v9.0.0")
+      .tree
+      .directory("nodejs-http-server-template")
+
+    let service = Dagger.wrangler.dev(worker)
+
+    let response = Dagger.http(
+      service.endpoint(scheme: "http", port: 8787) + "/api/status",
+      experimentalServiceHost: service,
+    )
+
+    assert { response.contents.contains("ok") }
+
+    null
+  }
 }

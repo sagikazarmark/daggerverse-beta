@@ -1,15 +1,15 @@
 type Wrangler {
-  pub baseContainer: Container!
+  let base: Container!
 
   new(
     """
-    Wrangler version to install.
+    Wrangler version to install (default: latest).
     """
     version: String = null,
     """
     Environment to use for operations, and for selecting .env and .dev.vars files.
     """
-    env: String = null,
+    environment: String = null,
     """
     Account ID for the Cloudflare account.
     """
@@ -43,25 +43,18 @@ type Wrangler {
     """
     defaultHttpsCert: File = null,
     """
-    Node version (image tag) to use from the official image repository as a base container.
+    Node version (image tag) to use from the official Node image repository as a base container.
     """
-    nodeVersion: String! = "lts-slim",
-    """
-    Esbuild version to use for bundling.
-    """
-    esbuildVersion: String = null,
+    nodeVersion: String! = "lts",
     """
     Custom container to use as a Node base container.
     """
     container: Container! = Dagger.container.from("node:" + nodeVersion),
   ) {
-    container = Dagger
-      .distro
-      .packages(apt: ["ca-certificates"])
-      .install(container)
+    self.base = container
       .withEnvVariable("HOME", "/root")
       .withMountedCache("${HOME}/.npm", Dagger.cacheVolume("npm"), expand: true)
-      .withExec(["npm", "install", "-g", pkg("wrangler", version), pkg("esbuild", esbuildVersion)])
+      .withExec(["npm", "install", "-g", `wrangler@${version ?? "latest"}`])
       .withEnvVariable("WRANGLER_SEND_METRICS", "false")
       .withEnvVariable("WRANGLER_SEND_ERROR_REPORTS", "false")
       .withEnvVariable("WRANGLER_CACHE_DIR", "${HOME}/.cache/wrangler", expand: true)
@@ -72,42 +65,30 @@ type Wrangler {
         Dagger.cacheVolume("miniflare"),
         expand: true,
       )
-
-    container = prepContainer(container, env, accountId, apiToken, logLevel)
-
-    if (dockerSocket != null) {
-      container = container
-        .withUnixSocket("/var/run/docker.sock", dockerSocket)
-        .withEnvVariable("DOCKER_HOST", "unix:///var/run/docker.sock")
-    } else if (dockerHost != null) {
-      container = container.withEnvVariable("DOCKER_HOST", dockerHost)
-    }
-
-    if (defaultHttpsKey != null) {
-      container = container
-        .withEnvVariable("WRANGLER_HTTPS_KEY_PATH", "${HOME}/.config/wrangler/https/key.pem")
-        .withMountedFile("$WRANGLER_HTTPS_KEY_PATH", defaultHttpsKey, expand: true)
-    }
-
-    if (defaultHttpsCert != null) {
-      container = container
-        .withEnvVariable("WRANGLER_HTTPS_CERT_PATH", "${HOME}/.config/wrangler/https/cert.pem")
-        .withMountedFile("$WRANGLER_HTTPS_CERT_PATH", defaultHttpsCert, expand: true)
-    }
-
-    container = container.withExec(["wrangler", "--version"])
-
-    self.baseContainer = container
+      .{ prepContainer(_, environment, accountId, apiToken, logLevel) }
+      .{
+        if (dockerSocket != null) {
+          _
+            .withUnixSocket("/var/run/docker.sock", dockerSocket)
+            .withEnvVariable("DOCKER_HOST", "unix:///var/run/docker.sock")
+        } else if (dockerHost != null) {
+          _.withEnvVariable("DOCKER_HOST", dockerHost)
+        } else {
+          _
+        }
+      }
+      .{
+        if (defaultHttpsCert != null) {
+          _
+            .withEnvVariable("WRANGLER_HTTPS_CERT_PATH", "${HOME}/.config/wrangler/https/cert.pem")
+            .withMountedFile("$WRANGLER_HTTPS_CERT_PATH", defaultHttpsCert, expand: true)
+        } else {
+          _
+        }
+      }
+      .withExec(["wrangler", "--version"])
 
     self
-  }
-
-  let pkg(name: String!, version: String): String! {
-    if (version != null) {
-      return name + "@" + version
-    }
-
-    name
   }
 
   let prepContainer(
@@ -117,33 +98,21 @@ type Wrangler {
     apiToken: Secret = null,
     logLevel: LogLevel = null,
   ): Container! {
-    if (env != null) {
-      container = container.withEnvVariable("CLOUDFLARE_ENV", env)
-    }
-
-    if (accountId != null) {
-      container = container.withEnvVariable("CLOUDFLARE_ACCOUNT_ID", accountId)
-    }
-
-    if (apiToken != null) {
-      container = container.withSecretVariable("CLOUDFLARE_API_TOKEN", apiToken)
-    }
-
-    if (logLevel != null) {
-      container = container.withEnvVariable("WRANGLER_LOG", toString(logLevel).trim("\"").toLower)
-    }
-
     container
+      .{ withEnvVariable(_, "CLOUDFLARE_ENV", env) }
+      .{ withEnvVariable(_, "CLOUDFLARE_ACCOUNT_ID", accountId) }
+      .{ withSecretVariable(_, "CLOUDFLARE_API_TOKEN", apiToken) }
+      .{ withEnvVariable(_, "WRANGLER_LOG", toString(logLevel).trim("\"").toLower) }
   }
 
   """
   A container that provides Wrangler for Cloudflare Workers.
   """
-  pub container(
+  container(
     """
     Environment to use for operations, and for selecting .env and .dev.vars files.
     """
-    env: String = null,
+    environment: String = null,
     """
     Account ID for the Cloudflare account.
     """
@@ -157,32 +126,25 @@ type Wrangler {
     """
     logLevel: LogLevel = null,
   ): Container! {
-    self.prepContainer(self.baseContainer, env, accountId, apiToken, logLevel)
+    self.base.{ self.prepContainer(_, environment, accountId, apiToken, logLevel) }
   }
 
   """
   Runs the Wrangler dev server locally.
   """
-  pub dev(source: Directory!): Service! {
-    let args = ["wrangler", "dev", "--ip", "0.0.0.0", "--port", "8787", "--local"]
-
-    let container = self
-      .container
-      .withWorkdir("/work")
-      .withDirectory("/work", source)
-      .withExposedPort(8787)
-      .asService(args: args)
-  }
-
-  pub deploy(
+  dev(
     """
-    Worker source to deploy.
+    Worker source to run locally.
     """
     source: Directory!,
     """
+    Port to use for the dev server.
+    """
+    port: Int! = 8787,
+    """
     Environment to use for operations, and for selecting .env and .dev.vars files.
     """
-    env: String = null,
+    environment: String = null,
     """
     Account ID for the Cloudflare account.
     """
@@ -195,12 +157,78 @@ type Wrangler {
     Log level to use for Wrangler operations.
     """
     logLevel: LogLevel = null,
-  ): Container! @cache(policy: FunctionCachePolicy.Never) {
+  ): Service! {
+    let args = ["wrangler", "dev", "--ip", "0.0.0.0", "--port", toString(port)]
+
     self
-      .container(env, accountId, apiToken, logLevel)
+      .container(environment, accountId, apiToken, logLevel)
       .withWorkdir("/work")
-      .withDirectory("/work", source)
-      .withExec(["wrangler", "deploy"])
+      .withDirectory(".", source)
+      .withExposedPort(port)
+      .asService(args: args)
+  }
+
+  deploy(
+    """
+    Worker source to deploy.
+    """
+    source: Directory!,
+    """
+    Name of the Worker.
+    """
+    name: String = null,
+    """
+    A tag for this Worker version.
+    """
+    tag: String = null,
+    """
+    A descriptive message for this Worker Version
+    """
+    message: String = null,
+    """
+    Skip internal build steps and directly upload Worker.
+    """
+    noBundle: Boolean! = false,
+    """
+    Environment to use for operations, and for selecting .env and .dev.vars files.
+    """
+    environment: String = null,
+    """
+    Account ID for the Cloudflare account.
+    """
+    accountId: String = null,
+    """
+    API token for your Cloudflare account.
+    """
+    apiToken: Secret = null,
+    """
+    Log level to use for Wrangler operations.
+    """
+    logLevel: LogLevel = null,
+  ): Container! @cache(policy: neverCache) {
+    let args = ["wrangler", "deploy"]
+
+    if (name != null and name != "") {
+      args += ["--name", name]
+    }
+
+    if (tag != null and tag != "") {
+      args += ["--tag", tag]
+    }
+
+    if (message != null and message != "") {
+      args += ["--message", message]
+    }
+
+    if (noBundle) {
+      args += ["--no-bundle"]
+    }
+
+    self
+      .container(environment, accountId, apiToken, logLevel)
+      .withWorkdir("/work")
+      .withDirectory(".", source)
+      .withExec(args)
   }
 }
 

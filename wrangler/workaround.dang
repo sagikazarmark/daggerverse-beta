@@ -1,0 +1,5 @@
+# @cache directive args only see the core prelude in the first-processed file
+# of a multi-file module, so the policy needs a top-level alias here.
+#
+# See https://github.com/dagger/dagger/issues/13440
+let neverCache: FunctionCachePolicy! = FunctionCachePolicy.Never

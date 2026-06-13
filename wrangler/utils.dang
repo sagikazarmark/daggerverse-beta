@@ -1,0 +1,36 @@
+let with(
+  container: Container!,
+  cond: Boolean!,
+  &fn(container: Container!): Container!,
+): Container! {
+  if (!cond) {
+    return container
+  }
+
+  fn(container)
+}
+
+let withEnvVariable(
+  container: Container!,
+  name: String!,
+  value: String,
+  expand: Boolean,
+): Container! {
+  if (value == null) {
+    return container
+  }
+
+  container.withEnvVariable(name, value, expand)
+}
+
+let withSecretVariable(
+  container: Container!,
+  name: String!,
+  value: Secret,
+): Container! {
+  if (value == null) {
+    return container
+  }
+
+  container.withSecretVariable(name, value)
+}

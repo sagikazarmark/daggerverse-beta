@@ -27,11 +27,11 @@ type Tests {
     let root = x509.create.rsa(2048).rootCa("test-root-ca")
     let intermediate = x509.create.rsa(2048).intermediateCa(
       "test-intermediate-ca",
-      root.asCa,
+      root,
     )
     let leaf = x509.create.rsa(2048).certificate(
       "test.local",
-      intermediate.asCa,
+      intermediate,
       sans: ["test.local"],
     )
 
@@ -52,13 +52,26 @@ type Tests {
   }
 
   """
+  Certificate templates can be used with CA-signed certificates.
+  """
+  pub templatedCertificate: File! @check {
+    let root = x509.create.rsa(2048).rootCa("template-root-ca")
+
+    x509
+      .create(template: Dagger.file("template.json", self.clientTemplate))
+      .rsa(2048)
+      .certificate("templated-client", root)
+      .certificate
+  }
+
+  """
   Passwords are mounted as secret files for generated keys and CA signing keys.
   """
   pub passwordProtectedCa: File! @check {
     let password = Dagger.setSecret("x509-test-password", "correct horse battery staple")
     let root = x509.create.rsa(2048, password: password).rootCa("password-root-ca")
 
-    x509.create.rsa(2048).intermediateCa("password-intermediate-ca", root.asCa).certificate
+    x509.create.rsa(2048).intermediateCa("password-intermediate-ca", root).certificate
   }
 
   """
@@ -74,7 +87,7 @@ type Tests {
       bundle: root.bundle,
     )
 
-    x509.create.rsa(2048).intermediateCa("imported-intermediate-ca", imported.asCa).certificate
+    x509.create.rsa(2048).intermediateCa("imported-intermediate-ca", imported).certificate
   }
 
   """
@@ -92,4 +105,13 @@ type Tests {
   pub csr: File! @check {
     x509.create.ec(X509EcCurve.P_256).csr("test.local", sans: ["test.local"]).csr
   }
+
+  let clientTemplate: String! = """{
+    "subject": {
+      "commonName": {{ toJson .Subject.CommonName }}
+    },
+    "keyUsage": ["digitalSignature"],
+    "extKeyUsage": ["clientAuth"]
+  }
+  """
 }

@@ -84,8 +84,8 @@ type X509 {
     Certificate bundle for this CA, including its issuing chain if any.
     """
     bundle: File = null,
-  ): ImportedCA! {
-    ImportedCA(certificate, key, password, bundle ?? certificate)
+  ): CertificateAuthority! {
+    CertificateAuthority(certificate, key, password ?? emptyPassword, bundle ?? certificate)
   }
 }
 
@@ -94,53 +94,9 @@ type CertificateAuthority {
   pub key: File!
   pub password: Secret!
   pub bundle: File!
-}
 
-type RootCA {
-  pub certificate: File!
-  pub key: File!
-  pub password: Secret
-  pub bundle: File!
-
-  pub asCa: CertificateAuthority! {
-    CertificateAuthority(
-      certificate: self.certificate,
-      key: self.key,
-      password: self.password ?? emptyPassword,
-      bundle: self.bundle,
-    )
-  }
-}
-
-type IntermediateCA {
-  pub certificate: File!
-  pub key: File!
-  pub password: Secret
-  pub bundle: File!
-
-  pub asCa: CertificateAuthority! {
-    CertificateAuthority(
-      certificate: self.certificate,
-      key: self.key,
-      password: self.password ?? emptyPassword,
-      bundle: self.bundle,
-    )
-  }
-}
-
-type ImportedCA {
-  pub certificate: File!
-  pub key: File!
-  pub password: Secret
-  pub bundle: File!
-
-  pub asCa: CertificateAuthority! {
-    CertificateAuthority(
-      certificate: self.certificate,
-      key: self.key,
-      password: self.password ?? emptyPassword,
-      bundle: self.bundle,
-    )
+  pub files: [File!]! {
+    [self.certificate, self.key, self.bundle]
   }
 }
 
@@ -149,12 +105,20 @@ type Certificate {
   pub key: File!
   pub password: Secret
   pub bundle: File!
+
+  pub files: [File!]! {
+    [self.certificate, self.key, self.bundle]
+  }
 }
 
 type CertificateRequest {
   pub csr: File!
   pub key: File!
   pub password: Secret
+
+  pub files: [File!]! {
+    [self.csr, self.key]
+  }
 }
 
 enum KeyType {

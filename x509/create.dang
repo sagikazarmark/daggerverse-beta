@@ -155,9 +155,10 @@ type Creator {
     Certificate validity start time or duration.
     """
     notBefore: String = self.notBefore,
-  ): RootCA! {
+  ): CertificateAuthority! {
     let certFile = name + ".crt"
     let keyFile = name + ".key"
+    let bundleFile = name + "-bundle.crt"
 
     let args = self.certArgs(
       subject,
@@ -173,11 +174,11 @@ type Creator {
       .withTemplate(self.container, template)
       .withExec(args)
 
-    RootCA(
+    CertificateAuthority(
       certificate: container.file(certFile),
       key: self.key ?? container.file(keyFile),
-      password: self.password,
-      bundle: container.file(certFile),
+      password: self.password ?? emptyPassword,
+      bundle: container.file(certFile).withName(bundleFile),
     )
   }
 
@@ -209,7 +210,7 @@ type Creator {
     Certificate validity start time or duration.
     """
     notBefore: String = self.notBefore,
-  ): IntermediateCA! {
+  ): CertificateAuthority! {
     let certFile = name + ".crt"
     let keyFile = name + ".key"
     let bundleFile = name + "-bundle.crt"
@@ -229,10 +230,10 @@ type Creator {
       .withTemplate(self.withCertificateAuthority(self.container, ca), template)
       .withExec(args)
 
-    IntermediateCA(
+    CertificateAuthority(
       certificate: container.file(certFile),
       key: self.key ?? container.file(keyFile),
-      password: self.password,
+      password: self.password ?? emptyPassword,
       bundle: container
         .withExec(["step", "certificate", "bundle", certFile, caBundleFile, bundleFile])
         .file(bundleFile),
@@ -426,7 +427,10 @@ type Creator {
     notBefore: String,
   ): [String!]! {
     let args = self.args(subject, certFile, keyFile, template)
-    args += ["--profile", profile]
+
+    if (template == null) {
+      args += ["--profile", profile]
+    }
 
     args += self.validityArgs(notAfter, notBefore)
 

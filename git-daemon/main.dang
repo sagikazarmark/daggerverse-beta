@@ -1,0 +1,42 @@
+type GitDaemon {
+  let container: Container!
+
+  pub serviceContainer: Container!
+
+  new {
+    self.container = Dagger
+      .container
+      .from("alpine:3.23.4@sha256:5b10f432ef3da1b8d4c7eb6c487f2f5a8f096bc91145e68878dd4a5019afde11")
+      .withExec(["apk", "add", "--no-cache", "git", "git-daemon"])
+    self.serviceContainer = self.container
+
+    self
+  }
+
+  pub withRepository(name: String!, repository: GitRef!): GitDaemon! {
+    let bareRepo = self
+      .container
+      .withWorkdir("/git")
+      .withMountedDirectory("/git/worktree", repository.tree(false, 0, true))
+      .withExec(["git", "clone", "--bare", "./worktree", "./bare"])
+      .directory("bare")
+
+    self.serviceContainer = self
+      .serviceContainer
+      .withMountedDirectory("/srv/git/" + name.replace("/", "_") + ".git", bareRepo)
+
+    self
+  }
+
+  pub service: Service! {
+    self
+      .serviceContainer
+      .withExposedPort(9418)
+      .asService(args: [
+        "git", "daemon",
+        "--verbose",
+        "--reuseaddr", "--export-all", "--enable=receive-pack",
+        "--base-path=/srv/git", "/srv/git",
+      ])
+  }
+}

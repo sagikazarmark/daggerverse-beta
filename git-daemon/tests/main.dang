@@ -1,0 +1,19 @@
+type Tests {
+  pub test: String! {
+    let daemon = Dagger
+      .gitDaemon
+      .withRepository("test", Dagger.git("https://github.com/sagikazarmark/cargo-artifacts.git").head)
+
+    let service = daemon.service
+
+    let repo = Dagger.git(service.endpoint(scheme: "git") + "/test.git", experimentalServiceHost: service)
+
+    repo.url ?? ""
+
+    # repo
+    #   .head
+    #   .tree
+    #   .file("README.md")
+    #   .contents
+  }
+}

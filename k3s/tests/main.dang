@@ -2,12 +2,23 @@ type Tests {
   """
   kubectl can reach the generated K3s cluster.
   """
-  pub clusterInfo: String! @check @cache(policy: FunctionCachePolicy.Never) {
-    let output = Dagger
-      .k3S(name: "k3s-test")
-      .kubectl
+  clusterInfo: String! @check @cache(policy: FunctionCachePolicy.Never) {
+    let kubectl = Dagger.k3S(name: "k3s-test").kubectl
+
+    # Wait for the API server to come up. Unused lets are never evaluated,
+    # so the assert below forces this exec before the one under test.
+    # The cache seed makes sure the exec runs (and starts the service) even
+    # when an identical exec is already cached.
+    let ready = kubectl
+      .container
+      .withEnvVariable("DAGGER_CACHE_SEED", Random.string)
       .withExec(["sh", "-c", "for i in $(seq 1 60); do kubectl cluster-info && exit 0; sleep 1; done; kubectl cluster-info"])
       .stdout
+
+    assert { ready.contains("Kubernetes control plane is running") }
+
+    # The service is still warm here, so a single try is enough.
+    let output = kubectl.withExec(["cluster-info"]).stdout
 
     assert { output.contains("Kubernetes control plane is running") }
 
@@ -15,12 +26,24 @@ type Tests {
   }
 
   """
+  The kubeconfig of the K3s kubectl client points at the default context.
+  """
+  kubeconfig: String! @check {
+    let output = Dagger.k3S(name: "k3s-kubeconfig-test").kubectl.config.contents
+
+    assert { output.contains("current-context: default") }
+
+    output
+  }
+
+  """
   A Pod can be started and reached through a fixed NodePort on the K3s service hostname.
   """
-  pub podNodePort: String! @check @cache(policy: FunctionCachePolicy.Never) {
+  podNodePort: String! @check @cache(policy: FunctionCachePolicy.Never) {
     let output = Dagger
       .k3S(name: "k3s-pod-test", nodePorts: [30080])
       .kubectl
+      .container
       .withExec(["sh", "-c", self.podNodePortScript])
       .stdout
 

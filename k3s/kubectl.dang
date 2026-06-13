@@ -1,0 +1,143 @@
+# @cache directive args only see the core prelude in the first-processed file
+# of a multi-file module, so the policy needs a top-level alias here.
+let neverCache: FunctionCachePolicy! = FunctionCachePolicy.Never
+
+"""
+A kubectl client preconfigured to access the K3s cluster.
+
+Wraps the kubectl module: the cluster, credentials and a "default" context
+are already set up, so only the day-to-day operations are exposed.
+"""
+type Kubectl {
+  # The configured instance from the kubectl dependency module. Dependency
+  # types cannot appear in the public API (not even in this constructor's
+  # signature), hence this wrapper builds the instance itself.
+  let inner: Dagger.Kubectl!
+
+  new(
+    """
+    Container with a kubectl binary to use as a base.
+    """
+    container: Container!,
+    """
+    The K3s server service.
+    """
+    service: Service!,
+    """
+    Directory with the generated cluster certificates.
+    """
+    certs: Directory!,
+  ) {
+    self.inner = Dagger
+      .kubectl(container)
+      .withClusterService("default", service, ca: certs.file("server-ca.crt"))
+      .withCredentials("default", certs.file("client-admin.crt"), certs.file("client-admin.key"))
+      .withContext("default", cluster: "default", user: "default", use: true)
+
+    self
+  }
+
+  """
+  Container with the kubeconfig configured and the K3s service bound.
+  """
+  container: Container! {
+    self.inner.container
+  }
+
+  """
+  The merged and flattened kubeconfig file.
+  """
+  config: File! {
+    self.inner.config
+  }
+
+  """
+  Set the namespace (for the current or a specific context).
+  """
+  withNamespace(
+    """
+    Namespace for a context entry in kubeconfig.
+    """
+    namespace: String!,
+    """
+    Name of the context entry in kubeconfig.
+    """
+    context: String = null,
+  ): Kubectl! {
+    self.inner = self.inner.withNamespace(namespace, context: context)
+
+    self
+  }
+
+  """
+  Run a kubectl command.
+
+  The result is never cached: kubectl commands usually act on live cluster state,
+  so each evaluation runs the command again.
+  """
+  withExec(
+    """
+    Command arguments ("kubectl" is prepended when it is not the first argument).
+    """
+    args: [String!]!,
+    """
+    Name of the context entry in kubeconfig to use.
+    """
+    context: String = null,
+    """
+    Content to write to the command's standard input.
+    """
+    stdin: String = null,
+  ): Container! @cache(policy: neverCache) {
+    self.inner.withExec(args, context: context, stdin: stdin)
+  }
+
+  """
+  Apply a manifest file to the cluster.
+  """
+  applyFile(
+    """
+    Manifest file to apply.
+    """
+    file: File!,
+    """
+    Name of the context entry in kubeconfig to use.
+    """
+    context: String = null,
+    """
+    Namespace to apply the manifest in.
+    """
+    namespace: String = null,
+  ): Container! @cache(policy: neverCache) {
+    self.inner.applyFile(file, context: context, namespace: namespace)
+  }
+
+  """
+  Apply manifests from a directory to the cluster.
+  """
+  applyDirectory(
+    """
+    Directory containing the manifests to apply.
+    """
+    directory: Directory!,
+    """
+    Name of the context entry in kubeconfig to use.
+    """
+    context: String = null,
+    """
+    Namespace to apply the manifests in.
+    """
+    namespace: String = null,
+    """
+    Process the directory recursively.
+    """
+    recursive: Boolean! = false,
+  ): Container! @cache(policy: neverCache) {
+    self.inner.applyDirectory(
+      directory,
+      context: context,
+      namespace: namespace,
+      recursive: recursive,
+    )
+  }
+}

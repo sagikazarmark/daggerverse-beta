@@ -1,6 +1,8 @@
 type Tests {
   combine: CombineTests! { CombineTests }
 
+  exec: ExecTests! { ExecTests }
+
   filesystem: FilesystemTests! { FilesystemTests }
 }
 
@@ -76,6 +78,30 @@ type CombineTests {
 
     assert { result.file("/marker").contents == "m" }
     assert { result.directory("/").entries == ["marker"] }
+
+    null
+  }
+}
+
+type ExecTests {
+  """
+  withExec executes a command in the container.
+  """
+  default: Void @check {
+    let result = Dagger.overlays.withExec(["sh", "-c", "printf ran > /marker"]).apply(alpine)
+
+    assert { result.file("/marker").contents == "ran" }
+
+    null
+  }
+
+  """
+  withExec forwards stdin and redirectStdout.
+  """
+  redirects: Void @check {
+    let result = Dagger.overlays.withExec(["cat"], stdin: "hello", redirectStdout: "/out").apply(alpine)
+
+    assert { result.file("/out").contents == "hello" }
 
     null
   }

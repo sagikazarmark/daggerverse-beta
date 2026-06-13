@@ -7,6 +7,37 @@ type Overlays {
   }
 
   """
+  Execute a command in the container.
+  """
+  withExec(
+    args: [String!]!,
+    useEntrypoint: Boolean,
+    stdin: String,
+    redirectStdin: String,
+    redirectStdout: String,
+    redirectStderr: String,
+    expect: ReturnType,
+    experimentalPrivilegedNesting: Boolean,
+    insecureRootCapabilities: Boolean,
+    expand: Boolean,
+    noInit: Boolean,
+  ): WithExec! {
+    WithExec(
+      args,
+      useEntrypoint,
+      stdin,
+      redirectStdin,
+      redirectStdout,
+      redirectStderr,
+      expect,
+      experimentalPrivilegedNesting,
+      insecureRootCapabilities,
+      expand,
+      noInit,
+    )
+  }
+
+  """
   Add a file to the container at the specified path.
   """
   withFile(
@@ -88,6 +119,36 @@ type List implements Overlay {
 
   apply(container: Container!): Container! {
     self.overlays.reduce(container) { container, overlay => overlay.apply(container) }
+  }
+}
+
+type WithExec implements Overlay {
+  args: [String!]!
+  useEntrypoint: Boolean
+  stdin: String
+  redirectStdin: String
+  redirectStdout: String
+  redirectStderr: String
+  expect: ReturnType
+  experimentalPrivilegedNesting: Boolean
+  insecureRootCapabilities: Boolean
+  expand: Boolean
+  noInit: Boolean
+
+  apply(container: Container!): Container! {
+    container.withExec(
+      self.args,
+      self.useEntrypoint,
+      self.stdin,
+      self.redirectStdin,
+      self.redirectStdout,
+      self.redirectStderr,
+      self.expect,
+      self.experimentalPrivilegedNesting,
+      self.insecureRootCapabilities,
+      self.expand,
+      self.noInit,
+    )
   }
 }
 

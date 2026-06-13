@@ -103,7 +103,7 @@ type Olareg {
   }
 
   """
-  Container with the add image repositories.
+  Container with the added image repositories.
   """
   container: Container! {
     self

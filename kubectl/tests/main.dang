@@ -6,7 +6,29 @@ type Tests {
       .kubectl
       .withClusterService("default", self.kubeApiServer.service, ca: self.kubeApiServer.ca)
       .withCredentials("default", self.kubeApiServer.clientCertificate, self.kubeApiServer.clientKey)
-      .withContext("default", "default", "default", setCurrent: true)
+      .withContext("default", "default", "default", use: true)
+  }
+
+  let multiContextKubectl: Kubectl! {
+    Dagger
+      .kubectl
+      .withCluster("cluster-a", "https://cluster-a.example")
+      .withCluster("cluster-b", "https://cluster-b.example")
+      .withCredentials("user-a", self.kubeApiServer.clientCertificate, self.kubeApiServer.clientKey)
+      .withCredentials("user-b", self.kubeApiServer.clientCertificate, self.kubeApiServer.clientKey)
+      .withContext(
+        "context-a",
+        cluster: "cluster-a",
+        user: "user-a",
+        namespace: "namespace-a",
+        use: true,
+      )
+      .withContext(
+        "context-b",
+        cluster: "cluster-b",
+        user: "user-b",
+        namespace: "namespace-b",
+      )
   }
 
   """
@@ -14,6 +36,125 @@ type Tests {
   """
   default: Container! @check {
     self.kubectl.container
+  }
+
+  """
+  Cluster entries can be listed without the kubectl header and removed.
+  """
+  clusters: [String!]! @check {
+    let clusters = Dagger
+      .kubectl
+      .withCluster("kept", "https://kept.example")
+      .withCluster("removed", "https://removed.example")
+      .clusters
+
+    assert { clusters.contains("kept") }
+    assert { clusters.contains("removed") }
+    assert { !clusters.contains("NAME") }
+
+    let remaining = Dagger
+      .kubectl
+      .withCluster("kept", "https://kept.example")
+      .withCluster("removed", "https://removed.example")
+      .withoutCluster("removed")
+      .clusters
+
+    assert { remaining.contains("kept") }
+    assert { !remaining.contains("removed") }
+
+    remaining
+  }
+
+  """
+  User entries can be listed without the kubectl header and removed.
+  """
+  users: [String!]! @check {
+    let users = Dagger
+      .kubectl
+      .withCredentials("kept", self.kubeApiServer.clientCertificate, self.kubeApiServer.clientKey)
+      .withCredentials("removed", self.kubeApiServer.clientCertificate, self.kubeApiServer.clientKey)
+      .users
+
+    assert { users.contains("kept") }
+    assert { users.contains("removed") }
+    assert { !users.contains("NAME") }
+
+    let remaining = Dagger
+      .kubectl
+      .withCredentials("kept", self.kubeApiServer.clientCertificate, self.kubeApiServer.clientKey)
+      .withCredentials("removed", self.kubeApiServer.clientCertificate, self.kubeApiServer.clientKey)
+      .withoutUser("removed")
+      .users
+
+    assert { remaining.contains("kept") }
+    assert { !remaining.contains("removed") }
+
+    remaining
+  }
+
+  """
+  Context entries can be listed by name only and removed.
+  """
+  contexts: [String!]! @check {
+    let contexts = self.multiContextKubectl.contexts
+
+    assert { contexts.contains("context-a") }
+    assert { contexts.contains("context-b") }
+    assert { !contexts.contains("cluster-a") }
+    assert { !contexts.contains("user-a") }
+
+    let remaining = self.multiContextKubectl.withoutContext("context-b").contexts
+
+    assert { remaining.contains("context-a") }
+    assert { !remaining.contains("context-b") }
+
+    remaining
+  }
+
+  """
+  currentContext returns the selected context name.
+  """
+  currentContext: String! @check {
+    let current = self.multiContextKubectl.currentContext
+
+    assert { current == "context-a" }
+
+    current
+  }
+
+  """
+  renameContext renames a context entry and preserves it as current.
+  """
+  renameContext: [String!]! @check {
+    let kubectl = self.multiContextKubectl.renameContext("context-a", "renamed-context")
+    let contexts = kubectl.contexts
+
+    assert { contexts.contains("renamed-context") }
+    assert { !contexts.contains("context-a") }
+    assert { kubectl.currentContext == "renamed-context" }
+
+    contexts
+  }
+
+  """
+  Multiple cluster, user and context writes compose into one kubeconfig.
+  """
+  composedConfig: Void @check {
+    let kubectl = self.multiContextKubectl
+
+    assert { kubectl.clusters.contains("cluster-a") }
+    assert { kubectl.clusters.contains("cluster-b") }
+    assert { kubectl.users.contains("user-a") }
+    assert { kubectl.users.contains("user-b") }
+    assert { kubectl.contexts.contains("context-a") }
+    assert { kubectl.contexts.contains("context-b") }
+    assert { kubectl.currentContext == "context-a" }
+
+    let config = kubectl.config.contents
+
+    assert { config.contains("current-context: context-a") }
+    assert { config.contains("namespace: namespace-a") }
+    assert { config.contains("namespace: namespace-b") }
   }
 
   """

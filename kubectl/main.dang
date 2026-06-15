@@ -57,8 +57,6 @@ type Kubectl {
     """
     tlsServerName: String,
   ): Kubectl! {
-    let caPath = `/kube/certs/servers/${name}/ca.crt`
-
     let args = [
       "kubectl",
       "config", "set-cluster", name,
@@ -69,6 +67,8 @@ type Kubectl {
       args += ["--tls-server-name", tlsServerName]
     }
 
+    let caPath = `/kube/certs/servers/${name}/ca.crt`
+
     args += if (ca != null) {
       ["--certificate-authority", caPath]
     } else {
@@ -76,10 +76,33 @@ type Kubectl {
     }
 
     self.with {
-      _
-        .{ if (ca != null) { _.withMountedFile(caPath, ca) } else { _ } }
-        .withExec(args)
+      if (ca != null) { _ = _.withMountedFile(caPath, ca) }
+
+      _.withExec(args)
     }
+  }
+
+  """
+  Remove a cluster entry from kubeconfig.
+  """
+  withoutCluster(
+    """
+    Name of the cluster entry in kubeconfig.
+    """
+    name: String!,
+  ): Kubectl! {
+    self.with { _.withExec(["kubectl", "config", "delete-cluster", name]) }
+  }
+
+  """
+  List cluster entries in kubeconfig.
+  """
+  clusters: [String!]! {
+    self
+      .container
+      .withExec(["kubectl", "config", "get-clusters"])
+      .stdout
+      .{ configNames(_) }
   }
 
   """
@@ -154,6 +177,29 @@ type Kubectl {
   }
 
   """
+  Remove a user entry from kubeconfig.
+  """
+  withoutUser(
+    """
+    Name of the user entry in kubeconfig.
+    """
+    name: String!,
+  ): Kubectl! {
+    self.with { _.withExec(["kubectl", "config", "delete-user", name]) }
+  }
+
+  """
+  List user entries in kubeconfig.
+  """
+  users: [String!]! {
+    self
+      .container
+      .withExec(["kubectl", "config", "get-users"])
+      .stdout
+      .{ configNames(_) }
+  }
+
+  """
   Set a context entry in kubeconfig.
   """
   withContext(
@@ -176,7 +222,7 @@ type Kubectl {
     """
     Set the context as the current context.
     """
-    setCurrent: Boolean! = false,
+    use: Boolean! = false,
   ): Kubectl! {
     let args = [
       "kubectl",
@@ -192,11 +238,61 @@ type Kubectl {
       _
         .withExec(args)
         .{
-          if (setCurrent) {
+          if (use) {
             _.withExec(["kubectl", "config", "use-context", name])
           } else { _ }
         }
     }
+  }
+
+  """
+  Remove a context entry from kubeconfig.
+  """
+  withoutContext(
+    """
+    Name of the context entry in kubeconfig.
+    """
+    name: String!,
+  ): Kubectl! {
+    self.with { _.withExec(["kubectl", "config", "delete-context", name]) }
+  }
+
+  """
+  List context entries in kubeconfig.
+  """
+  contexts: [String!]! {
+    self
+      .container
+      .withExec(["kubectl", "config", "get-contexts", "--output", "name"])
+      .stdout
+      .{ configNames(_) }
+  }
+
+  """
+  Name of the current context.
+  """
+  currentContext: String! {
+    self
+      .container
+      .withExec(["kubectl", "config", "current-context"])
+      .stdout
+      .trimSpace
+  }
+
+  """
+  Rename a context entry in kubeconfig.
+  """
+  renameContext(
+    """
+    Existing name of the context entry in kubeconfig.
+    """
+    name: String!,
+    """
+    New name for the context entry in kubeconfig.
+    """
+    newName: String!,
+  ): Kubectl! {
+    self.with { _.withExec(["kubectl", "config", "rename-context", name, newName]) }
   }
 
   """
@@ -315,7 +411,7 @@ type Kubectl {
 
     self
       .with { _.withMountedDirectory(path, directory) }
-      .withExec(applyArgs(path, namespace), context: context)
+      .withExec(args, context: context)
   }
 }
 
@@ -327,4 +423,8 @@ let applyArgs(path: String!, namespace: String): [String!]! {
   }
 
   args
+}
+
+let configNames(output: String!): [String!]! {
+  output.trimSpace.split("\n").reject { name => name == "" or name == "NAME" }
 }

@@ -9,21 +9,14 @@ type RepoResolutionTests {
   Default repository resolves correctly.
   """
   default: Void @check {
-    assert { Dagger.github("kubernetes/kubernetes").releases.get.url.contains("kubernetes/kubernetes") }
+    assert { Dagger.github("kubernetes/kubernetes").releases.latest.url.contains("kubernetes/kubernetes") }
   }
 
   """
   Level override resolves correctly.
   """
   levelOverride: Void @check {
-    assert { Dagger.github("kubernetes/kubernetes").releases("dagger/dagger").get.url.contains("dagger/dagger") }
-  }
-
-  """
-  Call override resolves correctly.
-  """
-  callOverride: Void @check {
-    assert { Dagger.github("kubernetes/kubernetes").releases("dagger/dagger").get(repository: "rust-lang/rust").url.contains("rust-lang/rust") }
+    assert { Dagger.github("kubernetes/kubernetes").releases("dagger/dagger").latest.url.contains("dagger/dagger") }
   }
 }
 
@@ -33,13 +26,6 @@ type ReleasesTests {
   """
   getDefaults: String! @check {
     Dagger.github.releases("kubernetes/kubernetes").get("v1.36.1").name
-  }
-
-  """
-  Get with default parameters returns the latest release.
-  """
-  getDefaults: String! @check {
-    Dagger.github.releases("kubernetes/kubernetes").get.name
   }
 
   """

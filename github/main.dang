@@ -1,6 +1,7 @@
 type Github {
   let repository: String
-  let authHeader: Secret = null
+
+  let client: Client!
 
   new(
     """
@@ -16,10 +17,10 @@ type Github {
     """
     token: Secret = null,
   ) {
-    self.repository = resolveRepository(repository)
-    if (token != null) {
-      self.authHeader = Dagger.setSecret(token.name, `Authorization: Bearer ${token.plaintext}`)
+    if (repository != null) {
+      self.repository = normalizeRepository(repository)
     }
+    self.client = Client(token)
 
     self
   }
@@ -27,15 +28,23 @@ type Github {
   """
   Interact with GitHub releases for the given repository.
   """
-  releases(repository: String = self.repository): Releases! {
-    Releases(repository: repository, authHeader: self.authHeader)
+  releases(repository: String! = self.repository!): Releases! {
+    Releases(self.client, repository)
   }
 
   """
   Get a GitHub release by version. Use null or an empty string for the latest release.
   """
-  release(version: String = null, repository: String = self.repository): Release! {
-    self.releases(repository).get(version)
+  release(version: String = null, repository: String! = self.repository!): Release! {
+    self
+      .releases(repository)
+      .{
+        if (version == null or version == "") {
+          _.latest
+        } else {
+          _.get(version)
+        }
+      }
   }
 }
 
@@ -43,12 +52,12 @@ type Github {
 A GitHub release.
 """
 type Releases {
-  let repository: String = null
-  let authHeader: Secret = null
+  let client: Client!
 
-  new(repository: String = null, authHeader: Secret = null) {
-    self.repository = resolveRepository(repository)
-    self.authHeader = authHeader
+  new(client: Client!, repository: String!) {
+    repository = normalizeRepository(repository)
+
+    self.client = client.appendPath(`/repos/${repository}/releases`)
 
     self
   }
@@ -56,8 +65,8 @@ type Releases {
   """
   Get the latest, non-draft, non-prerelease release.
   """
-  latest(repository: String = self.repository): Release! {
-    self.get(repository: repository)
+  latest: Release! {
+    fromJSON(self.client.get("/latest"))
   }
 
   """
@@ -67,26 +76,9 @@ type Releases {
     """
     Release tag, or null (or empty) for latest, non-draft, non-prerelease release.
     """
-    version: String = null,
-    """
-    GitHub repository in owner/name form.
-    """
-    repository: String = self.repository,
+    version: String!,
   ): Release! {
-    fromJSON(Dagger.http(
-      getUrl(resolveRepository(repository)!, version),
-      authHeader: authHeader,
-    ).contents) :: Release!
-  }
-
-  let getUrl(repository: String!, version: String): String! {
-    let version = if (version == null or version == "") {
-      "latest"
-    } else {
-      "tags/" + version
-    }
-
-    `https://api.github.com/repos/${repository}/releases/${version}`
+    fromJSON(self.client.get(`/tags/${version}`))
   }
 }
 

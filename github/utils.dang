@@ -1,5 +1,12 @@
-let resolveRepository(repository: String): String {
+let normalizeRepository(repository: String!): String! {
   repository
     .match(`^(?:https://github\.com/|git@github\.com:)?(?P<repo>[^/\s]+/[^/\s]+?)(?:\.git)?(?:/.*)?$`)
     .named["repo"]
+    .{
+      if (_ == null) {
+        raise "invalid repository name: " + toString(repository)
+      }
+
+      _
+    }
 }

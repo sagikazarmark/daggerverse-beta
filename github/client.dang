@@ -1,0 +1,31 @@
+type Client {
+  baseUrl: String! = "https://api.github.com"
+
+  let authHeader: Secret
+
+  new(token: Secret) {
+    if (token != null) {
+      self.authHeader = Dagger.setSecret(token.name + "-header", `Authorization: Bearer ${token.plaintext}`)
+    }
+
+    self
+  }
+
+  appendPath(path: String!): Client! {
+    self.baseUrl = self.baseUrl + "/" + path.trimPrefix("/")
+
+    self
+  }
+
+  http(url: String!): File! {
+    if (!url.hasPrefix("https://")) {
+      url = self.baseUrl + "/" + url.trimPrefix("/")
+    }
+
+    Dagger.http(url, authHeader: self.authHeader)
+  }
+
+  get(url: String!): String! {
+    self.http(url).contents
+  }
+}

@@ -8,6 +8,12 @@ type K3s {
   # Generated cluster certificates, shared between the server and kubectl.
   let certs: Directory!
 
+  # Manifests to auto-deploy, accumulated by withManifestFile/withManifestDirectory.
+  let manifests: Directory! = Dagger.directory
+
+  # Node ports to expose on the k3s service.
+  let nodePorts: [Int!]! = []
+
   # Registry mirrors keyed by registry host. Rendered into
   # /etc/rancher/k3s/registries.yaml and used to bind backing services lazily.
   let mirrors: Map[RegistryMirror!] = [:]
@@ -43,23 +49,29 @@ type K3s {
   ) {
     self.name = name
     self.certs = certs ?? gencerts(name)
+    self.nodePorts = nodePorts
     self.clientContainer = container
     self.baseContainer = container
       .withMountedTemp("/etc/lib/cni")
       .withMountedTemp("/var/lib/kubelet")
       .withMountedTemp("/var/log")
-      .withExposedPort(6443)
-      .{
-        nodePorts.reduce(_) { container, port =>
-          container.withExposedPort(port, experimentalSkipHealthcheck: true)
-        }
-      }
 
     self
   }
 
-  # Manifests to auto-deploy, accumulated by withManifestFile/withManifestDirectory.
-  let manifests: Directory! = Dagger.directory
+  """
+  Expose an additional NodePort on the K3s service.
+  """
+  withNodePort(
+    """
+    NodePort to expose.
+    """
+    port: Int!,
+  ): K3s! {
+    self.nodePorts += [port]
+
+    self
+  }
 
   """
   Auto-deploy a single manifest file to the cluster.
@@ -72,11 +84,15 @@ type K3s {
   """
   withManifestFile(
     """
+    Path to write the manifest to in the server manifests directory.
+    """
+    path: String!,
+    """
     Manifest file.
     """
     file: File!,
   ): K3s! {
-    self.manifests = self.manifests.withFile("", file)
+    self.manifests = self.manifests.withFile(path, file)
 
     self
   }
@@ -89,12 +105,7 @@ type K3s {
 
   Documentation: https://docs.k3s.io/installation/packaged-components
   """
-  withManifestDirectory(
-    """
-    Directory containing the manifests.
-    """
-    directory: Directory!,
-  ): K3s! {
+  withManifestDirectory(directory: Directory!): K3s! {
     self.manifests = self.manifests.withDirectory(".", directory)
 
     self
@@ -122,7 +133,9 @@ type K3s {
     """
     rewrites: [String!]! = [],
   ): K3s! {
-    self.mirrors = self.mirrors.with(registry, RegistryMirror(endpoints, rewrites, null))
+    self.mirrors = self
+      .mirrors
+      .with(registry, RegistryMirror(endpoints, rewrites, null))
 
     self
   }
@@ -140,9 +153,9 @@ type K3s {
     """
     service: Service!,
     """
-    Port the registry service listens on.
+    Port the registry service listens on (in case it exposes multiple ports).
     """
-    port: Int! = 5000,
+    port: Int,
     """
     Registry host to mirror, as it appears in image references (for example "registry.local").
 
@@ -229,8 +242,8 @@ type K3s {
       .withCluster(
         "default",
         `https://localhost:${toString(port)}`,
-        self.name,
         ca: self.tlsCerts.file("server-ca.crt"),
+        tlsServerName: self.name,
       )
       .withCredentials(
         "default",
@@ -299,6 +312,14 @@ type K3s {
       self.tlsCerts,
     )
 
+    container = ([6443] + self.nodePorts).uniq.reduce(container) { container, port =>
+      if (port == 6443) {
+        container.withExposedPort(port)
+      } else {
+        container.withExposedPort(port, experimentalSkipHealthcheck: true)
+      }
+    }
+
     let manifests = self.manifests
     let mirrors = self.mirrors
 
@@ -345,7 +366,7 @@ type K3s {
     let config = {{
       mirrors: mirrors.map { registry, mirror =>
         {{
-          endpoint: mirror.endpoints
+          endpoint: mirror.endpoints,
           rewrite: mirror.rewrites.reduce([:]) { config, rewrite =>
             let parts = rewrite.split("=")
 

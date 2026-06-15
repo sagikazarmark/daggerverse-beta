@@ -90,8 +90,32 @@ type Kubectl {
     Content to write to the command's standard input.
     """
     stdin: String = null,
+    """
+    Redirect the command's standard input from this path.
+    """
+    redirectStdin: String = null,
+    """
+    Redirect the command's standard output to this path.
+    """
+    redirectStdout: String = null,
+    """
+    Redirect the command's standard error to this path.
+    """
+    redirectStderr: String = null,
+    """
+    Exit codes this command is allowed to exit with without error (default: SUCCESS).
+    """
+    expect: ReturnType = null,
   ): Container! @cache(policy: neverCache) {
-    self.inner.withExec(args, context: context, stdin: stdin)
+    self.inner.withExec(
+      args,
+      context: context,
+      stdin: stdin,
+      redirectStdin: redirectStdin,
+      redirectStdout: redirectStdout,
+      redirectStderr: redirectStderr,
+      expect: expect,
+    )
   }
 
   """

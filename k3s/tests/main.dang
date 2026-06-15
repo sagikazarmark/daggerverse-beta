@@ -89,7 +89,9 @@ type Tests {
   """
   podNodePort: String! @check @cache(policy: FunctionCachePolicy.Never) {
     let output = Dagger
-      .k3S(name: "k3s-pod-test", nodePorts: [30080])
+      .k3S(name: "k3s-pod-test")
+      .withNodePort(30080)
+      .withNodePort(30080)
       .kubectl
       .container
       .withExec(["sh", "-c", self.podNodePortScript])
@@ -98,6 +100,20 @@ type Tests {
     assert { output.contains("Welcome to nginx") }
 
     output
+  }
+
+  """
+  The K3s kubectl wrapper forwards expected-failure exec options.
+  """
+  kubectlExpect: Int! @check @cache(policy: FunctionCachePolicy.Never) {
+    let result = Dagger
+      .k3S(name: "k3s-kubectl-expect-test")
+      .kubectl
+      .withExec(["get", "pods"], context: "missing", expect: ReturnType.FAILURE)
+
+    assert { result.exitCode > 0 }
+
+    result.exitCode
   }
 
   """

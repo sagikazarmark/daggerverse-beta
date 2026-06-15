@@ -6,8 +6,10 @@ type Tests {
       .tree
   }
 
+  let rustVersion: String! = "1.96.0-slim-trixie@sha256:082a5849a6870672b5f7a5bf4eddc71723fce38756fd834a0d734a5306a310ab"
+
   let rust: Rust! {
-    Dagger.rust(version: "1.96.0-slim-trixie@sha256:082a5849a6870672b5f7a5bf4eddc71723fce38756fd834a0d734a5306a310ab")
+    Dagger.rust(version: rustVersion)
   }
 
   container: Container! @check {
@@ -20,6 +22,44 @@ type Tests {
       .withWorkdir("/work/src")
       .withMountedDirectory(".", source)
       .withExec(["cargo", "build"])
+  }
+
+  envFile(workspace: Workspace!): Void @check {
+    let output = Dagger
+      .rust(version: rustVersion, envFile: "/rust/tests/.env.build")
+      .withWorkspace(workspace)
+      .container
+      .withExec(["sh", "-c", "printf '%s|%s|%s|%s' \"$BUILD_ONLY\" \"$EXPORTED\" \"$QUOTED\" \"$EQUALS\""])
+      .stdout
+
+    assert { output == "ok|yes|hello world|a=b" }
+  }
+
+  envFileRelativeToCwd: Void @check {
+    let source = Dagger.directory.withNewFile("app/.env.build", "LOCAL=relative\n")
+
+    let output = Dagger
+      .rust(version: rustVersion, envFile: ".env.build")
+      .withSource(source, cwd: "/app")
+      .container
+      .envVariable("LOCAL")
+
+    assert { output == "relative" }
+  }
+
+  missingEnvFile(workspace: Workspace!): Void @check {
+    try {
+      Dagger
+        .rust(version: rustVersion, envFile: "/rust/tests/.env.missing")
+        .withWorkspace(workspace)
+        .container
+        .withExec(["true"])
+        .stdout
+
+      raise "expected missing env file to fail"
+    } catch {
+      err => assert { err.message.contains(".env.missing") }
+    }
   }
 
   # pub build: Directory! @check {

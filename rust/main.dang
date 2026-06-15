@@ -8,6 +8,7 @@ type Rust {
   let targets: [String!]!
   let components: [String!]!
   let sourceDateEpoch: String
+  let envFile: String
   let cargoTargetCache: CacheVolume
 
   new(
@@ -45,6 +46,12 @@ type Rust {
     If not set, the epoch is determined from the git log (if available).
     """
     sourceDateEpoch: String = null,
+    """
+    Env file to load into workspace containers.
+
+    Relative paths are resolved from the workspace cwd; absolute paths are resolved from the workspace root.
+    """
+    envFile: String = null,
     """
     Whether to disable automatically mounted cache volumes.
     Useful if you want to mount cache volumes manually or use a different cache volume strategy.
@@ -107,6 +114,7 @@ type Rust {
     self.targets = targets
     self.components = components
     self.sourceDateEpoch = sourceDateEpoch
+    self.envFile = envFile
     self.cargoTargetCache = cargoTargetCache
 
     self
@@ -152,7 +160,19 @@ type Rust {
     # TODO: better path validation
     cwd = "/" + cwd.trimPrefix("/")
 
-    self.prepare(source, cwd) { container => overlay.apply(container) ?? container }
+    let envFile: EnvFile = self
+      .envFile
+      .{
+        if (_ != null) {
+          if (_.hasPrefix("/")) {
+            source.file(_).asEnvFile
+          } else {
+            source.file(cwd + "/" + _).asEnvFile
+          }
+        }
+      }
+
+    self.prepare(source, cwd, envFile) { container => overlay.apply(container) ?? container }
   }
 
   let prepareWorkspace(ws: Workspace!, &fn(container: Container!): Container!): WorkspaceContext! {
@@ -164,16 +184,22 @@ type Rust {
     )
     let cwd = ws.cwd
 
-    self.prepare(source, cwd) { container => fn(container) }
+    let envFile: EnvFile = self.envFile.{ if (_ != null) { ws.file(_).asEnvFile } }
+
+    self.prepare(source, cwd, envFile) { container => fn(container) }
   }
 
   let prepare(
     source: Directory!,
     cwd: String!,
+    envFile: EnvFile,
     &fn(container: Container!): Container!,
   ): WorkspaceContext! {
-    let container = fn(self.baseContainer)
+    let container = self
+      .baseContainer
+      .{ fn(_) }
       .{ withToolchain(_, source, cwd) }
+      .{ if (envFile != null) { _.withEnvFileVariables(envFile) } else { _ } }
       .withEnvVariable("CARGO_TARGET_DIR", "/work/target")
       .{ mountCache(_, "${CARGO_TARGET_DIR}", self.cargoTargetCache) }
       .{ withEnvVariable(_, "SOURCE_DATE_EPOCH", self.sourceDateEpoch ?? commitDate(source)) }

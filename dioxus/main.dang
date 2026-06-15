@@ -46,6 +46,12 @@ type Dioxus {
     Overlay to apply to the base container.
     """
     overlay: Overlay = null,
+    """
+    Env file to load into workspace containers.
+
+    Relative paths are resolved from the workspace cwd; absolute paths are resolved from the workspace root.
+    """
+    envFile: String = null,
   ) {
     # Prevent dioxus CLI from downloading tool dependencies
     container = container.withEnvVariable("NO_DOWNLOADS", "1")
@@ -55,6 +61,7 @@ type Dioxus {
       overlay: rustOverlay,
       targets: ["wasm32-unknown-unknown"],
       components: ["rust-std"],
+      envFile: envFile,
     )
 
     self.version = version

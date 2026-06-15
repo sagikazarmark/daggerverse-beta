@@ -1,16 +1,12 @@
 type Tests {
-  let kubeApiServer: KubeApiServer! { Dagger.kubeApiServer }
+  let kubeApiServer: KubeApiServer! { KubeApiServer }
 
   let kubectl: Kubectl! {
     Dagger
       .kubectl
-      .withClusterService(
-        "default",
-        self.kubeApiServer.service,
-        ca: self.kubeApiServer.ca,
-      )
+      .withClusterService("default", self.kubeApiServer.service, ca: self.kubeApiServer.ca)
       .withCredentials("default", self.kubeApiServer.clientCertificate, self.kubeApiServer.clientKey)
-      .withContext("default", "default", "default", use: true)
+      .withContext("default", "default", "default", setCurrent: true)
   }
 
   """
@@ -23,40 +19,34 @@ type Tests {
   """
   "kubectl" is prepended to the command when it is not the first argument.
   """
-  exec: Void @check @cache(policy: FunctionCachePolicy.Never) {
+  exec: Void @check @cache(policy: neverCache) {
     let output = Dagger.kubectl.withExec(["version", "--client"]).stdout
 
     assert { output.contains("Client Version") }
-
-    null
   }
 
   """
   The command is left untouched when it already starts with "kubectl".
   """
-  execPrefixed: Void @check @cache(policy: FunctionCachePolicy.Never) {
+  execPrefixed: Void @check @cache(policy: neverCache) {
     let output = Dagger.kubectl.withExec(["kubectl", "version", "--client"]).stdout
 
     assert { output.contains("Client Version") }
-
-    null
   }
 
   """
   Commands can target a specific context.
   """
-  execContext: Void @check @cache(policy: FunctionCachePolicy.Never) {
+  execContext: Void @check @cache(policy: neverCache) {
     let output = self.kubectl.withExec(["version"], context: "default").stdout
 
     assert { output.contains("Server Version") }
-
-    null
   }
 
   """
   Standard input is passed to the command.
   """
-  execStdin: Void @check @cache(policy: FunctionCachePolicy.Never) {
+  execStdin: Void @check @cache(policy: neverCache) {
     let output = self
       .kubectl
       .withExec(["apply", "--filename", "-"], stdin: namespaceManifest("kubectl-test-stdin"))
@@ -64,82 +54,31 @@ type Tests {
       .stdout
 
     assert { output == "Active" }
-
-    null
   }
 
   """
   Running a command with an unknown context fails.
   """
   execUnknownContext: Void @check {
-    try {
-      Dagger.kubectl.withExec(["get", "pods"], context: "missing").stdout
+    let result = Dagger.kubectl.withExec(["get", "pods"], context: "missing", expect: ReturnType.FAILURE)
 
-      raise "expected withExec to fail"
-    } catch {
-      err => assert { err.message.contains(`context "missing" not found`) }
-    }
+    assert { result.exitCode > 0 }
+    assert { result.stderr.contains("context was not found for specified context: missing") }
   }
 
   """
-  Adding a context with an unknown cluster fails.
-  """
-  contextUnknownCluster: Void @check {
-    try {
-      Dagger.kubectl.withContext("default", "missing", "missing").config.contents
-
-      raise "expected withContext to fail"
-    } catch {
-      err => assert { err.message.contains(`cluster "missing" not found`) }
-    }
-  }
-
-  """
-  Adding a context with unknown credentials fails.
-  """
-  contextUnknownCredentials: Void @check {
-    try {
-      Dagger
-        .kubectl
-        .withCluster("default", "https://example.com:6443", "example.com")
-        .withContext("default", "default", "missing")
-        .config
-        .contents
-
-      raise "expected withContext to fail"
-    } catch {
-      err => assert { err.message.contains(`credentials "missing" not found`) }
-    }
-  }
-
-  """
-  The namespace of a tracked context can be changed.
+  The namespace of a context can be changed.
   """
   namespace: Void @check {
     let config = self.kubectl.withNamespace("kube-system", context: "default").config.contents
 
     assert { config.contains("namespace: kube-system") }
-
-    null
-  }
-
-  """
-  Setting the namespace of an unknown context fails.
-  """
-  namespaceUnknownContext: Void @check {
-    try {
-      Dagger.kubectl.withNamespace("default", context: "missing").config.contents
-
-      raise "expected withNamespace to fail"
-    } catch {
-      err => assert { err.message.contains(`context "missing" not found`) }
-    }
   }
 
   """
   applyFile applies a manifest file to the cluster.
   """
-  applyFile: Void @check @cache(policy: FunctionCachePolicy.Never) {
+  applyFile: Void @check @cache(policy: neverCache) {
     let output = self
       .kubectl
       .applyFile(fixture("manifest.yaml"), context: "default")
@@ -147,14 +86,12 @@ type Tests {
       .stdout
 
     assert { output == "bar" }
-
-    null
   }
 
   """
   applyFile can apply a manifest in a specific namespace.
   """
-  applyFileNamespace: Void @check @cache(policy: FunctionCachePolicy.Never) {
+  applyFileNamespace: Void @check @cache(policy: neverCache) {
     let output = self
       .kubectl
       .applyFile(fixture("namespaced-manifest.yaml"), namespace: "kubectl-test-ns")
@@ -162,41 +99,39 @@ type Tests {
       .stdout
 
     assert { output == "bar" }
-
-    null
   }
 
   """
   applyDirectory applies all manifests from a directory to the cluster.
   """
-  applyDirectory: Void @check @cache(policy: FunctionCachePolicy.Never) {
+  applyDirectory: Void @check @cache(policy: neverCache) {
     let output = self
       .kubectl
-      .applyDirectory(Dagger.currentModule.source.directory("testdata/manifests"))
+      .applyDirectory(
+        Dagger.currentModule.source.directory("testdata/manifests"),
+      )
       .withExec(["kubectl", "get", "namespace", "kubectl-test-dir-1", "kubectl-test-dir-2", "--output", "name"])
       .stdout
 
     assert { output.contains("namespace/kubectl-test-dir-1") }
     assert { output.contains("namespace/kubectl-test-dir-2") }
-
-    null
   }
 
   """
   applyDirectory can process a directory recursively.
   """
-  applyDirectoryRecursive: Void @check @cache(policy: FunctionCachePolicy.Never) {
+  applyDirectoryRecursive: Void @check @cache(policy: neverCache) {
     let output = self
       .kubectl
-      .applyDirectory(Dagger.currentModule.source.directory("testdata/nested-manifests"), recursive: true)
+      .applyDirectory(
+        Dagger.currentModule.source.directory("testdata/nested-manifests"),
+        recursive: true,
+      )
       .withExec(["kubectl", "get", "namespace", "kubectl-test-dir-nested", "--output", "name"])
       .stdout
 
     assert { output.contains("namespace/kubectl-test-dir-nested") }
-
-    null
   }
-
 }
 
 let namespaceManifest(name: String!): String! {

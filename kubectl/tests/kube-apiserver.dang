@@ -22,11 +22,10 @@ type KubeApiServer {
   new(
     name: String! = "kube-api-server",
     hostname: String! = name,
-    registry: String! = "registry.k8s.io",
     kubeVersion: String! = "v1.36.0",
-    apiServerContainer: Container! = Dagger.container.from(`${registry}/kube-apiserver:${kubeVersion}`),
+    apiServerContainer: Container! = Dagger.container.from(`registry.k8s.io/kube-apiserver:${kubeVersion}`),
     etcdVersion: String! = "3.5.21-0",
-    etcdContainer: Container! = Dagger.container.from(`${registry}/etcd:${etcdVersion}`),
+    etcdContainer: Container! = Dagger.container.from(`registry.k8s.io/etcd:${etcdVersion}`),
   ) {
     let etcd = etcdContainer
       .withExposedPort(2379)

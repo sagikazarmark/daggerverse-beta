@@ -1,28 +1,26 @@
 type Kubectl {
-  let baseContainer: Container!
+  """
+  Container with kubectl configured.
+  """
+  container: Container!
 
-  let services: Map[Service!] = [:]
-
-  # Names of known kubeconfig entries, used to validate references.
-  let clusters: [String!]! = []
-  let credentials: [String!]! = []
-  let contexts: [String!]! = []
-
-  new(container: Container! = Dagger.container.from("alpine/kubectl:latest")) {
-    self.baseContainer = container
+  new(
+    """
+    Container with `kubectl` installed.
+    """
+    container: Container! = Dagger.container.from("alpine/kubectl:latest"),
+  ) {
+    self.container = container
       .withDirectory("/kube", Dagger.directory)
       .withEnvVariable("KUBECONFIG", "/kube/config")
 
     self
   }
 
-  """
-  Container with the kubeconfig configured and tracked services bound.
-  """
-  container: Container! {
-    self.services.keys.reduce(self.baseContainer) { container, name =>
-      container.withServiceBinding(name, self.services.get(name)!)
-    }
+  let with(&fn(container: Container!): Container!): Kubectl! {
+    self.container = fn(self.container)
+
+    self
   }
 
   """
@@ -30,7 +28,7 @@ type Kubectl {
   """
   config: File! {
     self
-      .baseContainer
+      .container
       .withExec(
         ["kubectl", "config", "view", "--flatten", "--merge", "--output", "yaml"],
         redirectStdout: "/kubeconfig",
@@ -51,44 +49,37 @@ type Kubectl {
     """
     server: String!,
     """
-    TLS server name for the cluster entry in kubeconfig.
-    """
-    tlsServerName: String!,
-    """
     CA certificate for the cluster entry in kubeconfig.
     """
-    ca: File = null,
+    ca: File,
+    """
+    TLS server name for the cluster entry in kubeconfig.
+    """
+    tlsServerName: String,
   ): Kubectl! {
     let caPath = `/kube/certs/servers/${name}/ca.crt`
 
     let args = [
       "kubectl",
       "config", "set-cluster", name,
-      "--server", server, "--tls-server-name", tlsServerName,
-    ] + (
-      if (ca != null) {
-        ["--certificate-authority", caPath]
-      } else {
-        ["--insecure-skip-tls-verify"]
-      }
-    )
+      "--server", server,
+    ]
 
-    self.baseContainer = self
-      .baseContainer
-      .{ container =>
-        if (ca != null) {
-          container = container.withMountedFile(caPath, ca)
-        }
-
-        container
-      }
-      .withExec(args)
-
-    if (!self.clusters.contains(name)) {
-      self.clusters += [name]
+    if (tlsServerName != null) {
+      args += ["--tls-server-name", tlsServerName]
     }
 
-    self
+    args += if (ca != null) {
+      ["--certificate-authority", caPath]
+    } else {
+      ["--insecure-skip-tls-verify"]
+    }
+
+    self.with {
+      _
+        .{ if (ca != null) { _.withMountedFile(caPath, ca) } else { _ } }
+        .withExec(args)
+    }
   }
 
   """
@@ -100,36 +91,30 @@ type Kubectl {
     """
     name: String!,
     """
-    Server for the cluster entry in kubeconfig.
+    Service for the cluster entry in kubeconfig.
     """
     service: Service!,
     """
     Port of the service to use (in case the service has multiple ports exposed).
     """
-    servicePort: Int = null,
-    """
-    TLS server name for the cluster entry in kubeconfig.
-    """
-    serverName: String! = service.hostname,
+    servicePort: Int,
     """
     CA certificate for the cluster entry in kubeconfig.
     """
-    ca: File = null,
+    ca: File,
+    """
+    TLS server name for the cluster entry in kubeconfig.
+    """
+    serverName: String,
   ): Kubectl! {
     self
       .withCluster(
         name,
         service.endpoint(scheme: "https", port: servicePort),
-        serverName,
         ca,
+        serverName,
       )
-      .withService(name, service)
-  }
-
-  let withService(name: String!, service: Service!): Kubectl! {
-    self.services = self.services.with(name, service)
-
-    self
+      .with { _.withServiceBinding(service.hostname, service) }
   }
 
   """
@@ -160,17 +145,12 @@ type Kubectl {
       "--embed-certs",
     ]
 
-    self.baseContainer = self
-      .baseContainer
-      .withMountedFile(certPath, certificate)
-      .withMountedFile(keyPath, key)
-      .withExec(args)
-
-    if (!self.credentials.contains(name)) {
-      self.credentials += [name]
+    self.with {
+      _
+        .withMountedFile(certPath, certificate)
+        .withMountedFile(keyPath, key)
+        .withExec(args)
     }
-
-    self
   }
 
   """
@@ -190,22 +170,14 @@ type Kubectl {
     """
     user: String!,
     """
-    Set the context as the current context.
-    """
-    use: Boolean! = false,
-    """
     Namespace for the context entry in kubeconfig.
     """
-    namespace: String = null,
+    namespace: String,
+    """
+    Set the context as the current context.
+    """
+    setCurrent: Boolean! = false,
   ): Kubectl! {
-    if (!self.clusters.contains(cluster)) {
-      raise `cluster "${cluster}" not found in kubeconfig`
-    }
-
-    if (!self.credentials.contains(user)) {
-      raise `credentials "${user}" not found in kubeconfig`
-    }
-
     let args = [
       "kubectl",
       "config", "set-context", name,
@@ -216,22 +188,15 @@ type Kubectl {
       args += ["--namespace", namespace]
     }
 
-    self.baseContainer = self
-      .baseContainer
-      .withExec(args)
-      .{ container =>
-        if (use) {
-          container = container.withExec(["kubectl", "config", "use-context", name])
+    self.with {
+      _
+        .withExec(args)
+        .{
+          if (setCurrent) {
+            _.withExec(["kubectl", "config", "use-context", name])
+          } else { _ }
         }
-
-        container
-      }
-
-    if (!self.contexts.contains(name)) {
-      self.contexts += [name]
     }
-
-    self
   }
 
   """
@@ -243,14 +208,10 @@ type Kubectl {
     """
     namespace: String!,
     """
-    Name of the context entry in kubeconfig.
+    Name of the context entry in kubeconfig (default: current context).
     """
-    context: String = null,
+    context: String,
   ): Kubectl! {
-    if (context != null and !self.contexts.contains(context!)) {
-      raise `context "${context}" not found in kubeconfig`
-    }
-
     let args = [
       "kubectl",
       "config", "set-context",
@@ -258,9 +219,7 @@ type Kubectl {
       "--namespace", namespace,
     ]
 
-    self.baseContainer = self.baseContainer.withExec(args)
-
-    self
+    self.with { _.withExec(args) }
   }
 
   """
@@ -277,16 +236,16 @@ type Kubectl {
     """
     Name of the context entry in kubeconfig to use.
     """
-    context: String = null,
+    context: String,
     """
     Content to write to the command's standard input.
     """
-    stdin: String = null,
+    stdin: String,
+    """
+    Exit codes this command is allowed to exit with without error (default: SUCCESS).
+    """
+    expect: ReturnType,
   ): Container! @cache(policy: FunctionCachePolicy.Never) {
-    if (context != null and !self.contexts.contains(context!)) {
-      raise `context "${context}" not found in kubeconfig`
-    }
-
     let _args = (
       if ((args[0] ?? "") == "kubectl") { args } else { ["kubectl"] + args }
     )
@@ -298,7 +257,7 @@ type Kubectl {
     self
       .container
       .withEnvVariable("DAGGER_CACHE_SEED", Random.string)
-      .withExec(_args, stdin: stdin)
+      .withExec(_args, stdin: stdin, expect: expect)
   }
 
   """
@@ -312,17 +271,17 @@ type Kubectl {
     """
     Name of the context entry in kubeconfig to use.
     """
-    context: String = null,
+    context: String,
     """
     Namespace to apply the manifest in.
     """
-    namespace: String = null,
+    namespace: String,
   ): Container! @cache(policy: FunctionCachePolicy.Never) {
     let path = "/work/manifest.yaml"
 
-    self.baseContainer = self.baseContainer.withMountedFile(path, file)
-
-    self.withExec(applyArgs(path, namespace), context: context)
+    self
+      .with { _.withMountedFile(path, file) }
+      .withExec(applyArgs(path, namespace), context: context)
   }
 
   """
@@ -336,11 +295,11 @@ type Kubectl {
     """
     Name of the context entry in kubeconfig to use.
     """
-    context: String = null,
+    context: String,
     """
     Namespace to apply the manifests in.
     """
-    namespace: String = null,
+    namespace: String,
     """
     Process the directory recursively.
     """
@@ -348,15 +307,15 @@ type Kubectl {
   ): Container! @cache(policy: FunctionCachePolicy.Never) {
     let path = "/work/manifests"
 
-    self.baseContainer = self.baseContainer.withMountedDirectory(path, directory)
-
     let args = applyArgs(path, namespace)
 
     if (recursive) {
       args += ["--recursive"]
     }
 
-    self.withExec(args, context: context)
+    self
+      .with { _.withMountedDirectory(path, directory) }
+      .withExec(applyArgs(path, namespace), context: context)
   }
 }
 

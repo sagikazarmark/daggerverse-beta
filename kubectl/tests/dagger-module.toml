@@ -9,7 +9,3 @@ source = ".."
 [[dependencies]]
 name = "crypto"
 source = "../../crypto"
-
-[[dependencies]]
-name = "kube-api-server"
-source = "../../kube-api-server"

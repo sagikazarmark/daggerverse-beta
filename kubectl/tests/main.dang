@@ -39,6 +39,48 @@ type Tests {
   }
 
   """
+  Cluster service bindings are deferred while assembling and reading kubeconfig.
+  """
+  configDoesNotStartClusterService: Void @check {
+    let service = Dagger
+      .container
+      .from("busybox:1.37.0@sha256:9532d8c39891ca2ecde4d30d7710e01fb739c87a8b9299685c63704296b16028")
+      .withExposedPort(6443)
+      .asService(args: ["sh", "-c", "exit 1"])
+      .withHostname("do-not-start")
+
+    let config = Dagger
+      .kubectl
+      .withClusterService("lazy", service, servicePort: 6443)
+      .config
+      .contents
+
+    assert { config.contains("name: lazy") }
+    assert { config.contains("server: https://do-not-start:6443") }
+  }
+
+  """
+  withoutCluster removes the matching deferred cluster service binding.
+  """
+  withoutClusterRemovesClusterService: Void @check {
+    let service = Dagger
+      .container
+      .from("busybox:1.37.0@sha256:9532d8c39891ca2ecde4d30d7710e01fb739c87a8b9299685c63704296b16028")
+      .withExposedPort(6443)
+      .asService(args: ["sh", "-c", "exit 1"])
+      .withHostname("do-not-start")
+
+    let output = Dagger
+      .kubectl
+      .withClusterService("removed", service, servicePort: 6443)
+      .withoutCluster("removed")
+      .withExec(["version", "--client"])
+      .stdout
+
+    assert { output.contains("Client Version") }
+  }
+
+  """
   Cluster entries can be listed without the kubectl header and removed.
   """
   clusters: [String!]! @check {
@@ -173,6 +215,60 @@ type Tests {
     let output = Dagger.kubectl.withExec(["kubectl", "version", "--client"]).stdout
 
     assert { output.contains("Client Version") }
+  }
+
+  """
+  Standard output and error can be redirected to files.
+  """
+  execRedirects: Void @check @cache(policy: neverCache) {
+    let stdout = Dagger
+      .kubectl
+      .withExec(["version", "--client"], redirectStdout: "/stdout")
+      .file("/stdout")
+      .contents
+
+    let stderr = Dagger
+      .kubectl
+      .withExec(
+        ["get", "pods"],
+        context: "missing",
+        redirectStderr: "/stderr",
+        expect: ReturnType.FAILURE,
+      )
+      .file("/stderr")
+      .contents
+
+    assert { stdout.contains("Client Version") }
+    assert { stderr.contains("context was not found for specified context: missing") }
+  }
+
+  """
+  Standard input can be redirected from a file.
+  """
+  execRedirectStdin: Void @check @cache(policy: neverCache) {
+    let output = Dagger
+      .kubectl(
+        Dagger
+          .container
+          .from("alpine/kubectl:latest")
+          .withMountedFile(
+            "/stdin.txt",
+            Dagger.file("stdin.txt", "hello from file"),
+          ),
+      )
+      .withExec(
+        [
+          "create", "configmap", "kubectl-test-redirect-stdin",
+          "--from-file", "data=/dev/stdin",
+          "--dry-run=client",
+          "--output", "jsonpath={.data.data}",
+        ],
+        redirectStdin: "/stdin.txt",
+      )
+      .stdout
+      .trimSpace
+
+    assert { output == "hello from file" }
   }
 
   """

@@ -1,8 +1,6 @@
 type Kubectl {
-  """
-  Container with kubectl configured.
-  """
-  container: Container!
+  let baseContainer: Container!
+  let services: Map[Service!] = [:]
 
   new(
     """
@@ -10,15 +8,38 @@ type Kubectl {
     """
     container: Container! = Dagger.container.from("alpine/kubectl:latest"),
   ) {
-    self.container = container
+    self.baseContainer = container
       .withDirectory("/kube", Dagger.directory)
       .withEnvVariable("KUBECONFIG", "/kube/config")
 
     self
   }
 
+  """
+  Container with kubectl configured.
+  """
+  container: Container! {
+    self.services.keys.reduce(self.baseContainer) { container, name =>
+      let service = self.services.get(name)!
+
+      container.withServiceBinding(service.hostname, service)
+    }
+  }
+
   let with(&fn(container: Container!): Container!): Kubectl! {
-    self.container = fn(self.container)
+    self.baseContainer = fn(self.baseContainer)
+
+    self
+  }
+
+  let withService(name: String!, service: Service!): Kubectl! {
+    self.services = self.services.with(name, service)
+
+    self
+  }
+
+  let withoutService(name: String!): Kubectl! {
+    self.services = self.services.without(name)
 
     self
   }
@@ -28,7 +49,7 @@ type Kubectl {
   """
   config: File! {
     self
-      .container
+      .baseContainer
       .withExec(
         ["kubectl", "config", "view", "--flatten", "--merge", "--output", "yaml"],
         redirectStdout: "/kubeconfig",
@@ -75,11 +96,13 @@ type Kubectl {
       ["--insecure-skip-tls-verify"]
     }
 
-    self.with {
-      if (ca != null) { _ = _.withMountedFile(caPath, ca) }
+    self
+      .withoutService(name)
+      .with {
+        if (ca != null) { _ = _.withMountedFile(caPath, ca) }
 
-      _.withExec(args)
-    }
+        _.withExec(args)
+      }
   }
 
   """
@@ -91,7 +114,9 @@ type Kubectl {
     """
     name: String!,
   ): Kubectl! {
-    self.with { _.withExec(["kubectl", "config", "delete-cluster", name]) }
+    self
+      .withoutService(name)
+      .with { _.withExec(["kubectl", "config", "delete-cluster", name]) }
   }
 
   """
@@ -99,7 +124,7 @@ type Kubectl {
   """
   clusters: [String!]! {
     self
-      .container
+      .baseContainer
       .withExec(["kubectl", "config", "get-clusters"])
       .stdout
       .{ configNames(_) }
@@ -137,7 +162,7 @@ type Kubectl {
         ca,
         serverName,
       )
-      .with { _.withServiceBinding(service.hostname, service) }
+      .withService(name, service)
   }
 
   """
@@ -193,7 +218,7 @@ type Kubectl {
   """
   users: [String!]! {
     self
-      .container
+      .baseContainer
       .withExec(["kubectl", "config", "get-users"])
       .stdout
       .{ configNames(_) }
@@ -262,7 +287,7 @@ type Kubectl {
   """
   contexts: [String!]! {
     self
-      .container
+      .baseContainer
       .withExec(["kubectl", "config", "get-contexts", "--output", "name"])
       .stdout
       .{ configNames(_) }
@@ -273,7 +298,7 @@ type Kubectl {
   """
   currentContext: String! {
     self
-      .container
+      .baseContainer
       .withExec(["kubectl", "config", "current-context"])
       .stdout
       .trimSpace
@@ -338,22 +363,43 @@ type Kubectl {
     """
     stdin: String,
     """
+    Redirect the command's standard input from a file in the container.
+    """
+    redirectStdin: String,
+    """
+    Redirect the command's standard output to a file in the container.
+    """
+    redirectStdout: String,
+    """
+    Redirect the command's standard error to a file in the container.
+    """
+    redirectStderr: String,
+    """
     Exit codes this command is allowed to exit with without error (default: SUCCESS).
     """
     expect: ReturnType,
   ): Container! @cache(policy: FunctionCachePolicy.Never) {
-    let _args = (
-      if ((args[0] ?? "") == "kubectl") { args } else { ["kubectl"] + args }
-    )
+    let command = ["kubectl"]
 
     if (context != null) {
-      _args += ["--context", context]
+      command += ["--context", context]
+    }
+
+    if (args[0] == "kubectl") {
+      args = args.dropFirst
     }
 
     self
       .container
-      .withEnvVariable("DAGGER_CACHE_SEED", Random.string)
-      .withExec(_args, stdin: stdin, expect: expect)
+      .withEnvVariable("DAGGER_CACHE_KEY", Random.string)
+      .withExec(
+        command + args,
+        stdin: stdin,
+        redirectStdin: redirectStdin,
+        redirectStdout: redirectStdout,
+        redirectStderr: redirectStderr,
+        expect: expect,
+      )
   }
 
   """

@@ -153,6 +153,7 @@ type Dpm {
   let package(name: String!): DpmPackage! {
     case (name) {
       "base64" => DpmPackage("base64", "Base64", "packages/base64.dang")
+      "lists" => DpmPackage("lists", "Lists", "packages/lists.dang")
       "maps" => DpmPackage("maps", "Maps", "packages/maps.dang")
       "path" => DpmPackage("path", "Path", "packages/path.dang")
       "strings" => DpmPackage("strings", "Strings", "packages/strings.dang")
@@ -163,6 +164,7 @@ type Dpm {
   let manifest: [DpmPackage!]! {
     [
       DpmPackage("base64", "Base64", "packages/base64.dang"),
+      DpmPackage("lists", "Lists", "packages/lists.dang"),
       DpmPackage("maps", "Maps", "packages/maps.dang"),
       DpmPackage("path", "Path", "packages/path.dang"),
       DpmPackage("strings", "Strings", "packages/strings.dang"),

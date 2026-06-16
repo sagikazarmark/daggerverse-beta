@@ -5,7 +5,7 @@ type Strings {
     s.trimSpace.toLower.replace(" ", "-")
   }
 
-  truncate(s: String!, maxLength: Int!, omission: String! = "..."): String! {
+  truncate(s: String!, maxLength: Int!): String! {
     if (maxLength <= 0) {
       return ""
     }
@@ -15,11 +15,12 @@ type Strings {
       return s
     }
 
-    let omissionChars = omission.split("")
-    if (omissionChars.length >= maxLength) {
-      return omissionChars.takeFirst(maxLength).join("")
+    let ellipsis = "..."
+    let ellipsisChars = ellipsis.split("")
+    if (ellipsisChars.length >= maxLength) {
+      return ellipsisChars.takeFirst(maxLength).join("")
     }
 
-    chars.takeFirst(maxLength - omissionChars.length).join("") + omission
+    chars.takeFirst(maxLength - ellipsisChars.length).join("") + ellipsis
   }
 }

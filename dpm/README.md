@@ -15,7 +15,7 @@ dagger install github.com/sagikazarmark/daggerverse-beta/dpm
 Create `dpm.json` in the Dang module directory that should receive generated package code:
 
 ```json
-{"packages":["base64","maps","path","strings"]}
+{"packages":["base64","lists","maps","path","strings"]}
 ```
 
 Run Dagger code generation:
@@ -29,7 +29,7 @@ dagger generate
 The `dpm.json` file contains the bundled packages to generate:
 
 ```json
-{"packages":["base64","maps","path","strings"]}
+{"packages":["base64","lists","maps","path","strings"]}
 ```
 
 The `packages` list is required. Package names must be unique, and unknown packages fail generation.
@@ -66,6 +66,11 @@ Generated packages are zero-argument namespace types. Call their functions direc
 let encoded = Base64.encode("hello")
 let decoded = Base64.decode(encoded)
 
+let sorted = Lists.sort([3, 1, 2])
+let sortedStrings = Lists.sortWith(["bbb", "a", "cc"]) { left, right =>
+  if (left < right) { -1 } else if (left > right) { 1 } else { 0 }
+}
+
 let sum = Maps.reduce(["a": 1, "b": 2], 0) { acc, key, value => acc + value }
 
 let cleanPath = Path.clean("/src/../src/main.dang")
@@ -80,9 +85,10 @@ Available packages:
 | Package | Type | API |
 | --- | --- | --- |
 | `base64` | `Base64` | `encode(s)`, `decode(s)` |
+| `lists` | `Lists` | `sort(list)`, `sortWith(list) { left, right => ... }` |
 | `maps` | `Maps` | `reduce(map, initial) { acc, key, value => ... }` |
 | `path` | `Path` | `separator`, `clean(path)`, `join(parts)`, `isRelativeTo(path, base)` |
-| `strings` | `Strings` | `slug(s)`, `truncate(s, maxLength, omission: "...")` |
+| `strings` | `Strings` | `slug(s)`, `truncate(s, maxLength)` |
 
 `Base64` uses a pinned BusyBox container for encoding and decoding. `encode` emits unwrapped base64 output.
 

@@ -4,17 +4,23 @@ source = "github.com/dagger/dang-sdk@572b0c5dbbe8b6a28beef7535161217ebef5086c"
 # Until dang-sdk supports dagger-module.toml
 check.skip = ["generate-all"]
 
-[modules.x509-tests]
-source = "x509/tests"
+[modules.dpm]
+source = "dpm"
 
 [modules.crypto-tests]
 source = "crypto/tests"
 
-[modules.crates-tests]
-source = "crates/tests"
+# [modules.crates-tests]
+# source = "crates/tests"
 
-[modules.distro-tests]
-source = "distro/tests"
+# [modules.distro-tests]
+# source = "distro/tests"
+
+[modules.dpm-tests]
+source = "dpm/tests"
+
+[modules.dpm-package-tests]
+source = "dpm/package-tests"
 
 [modules.github-tests]
 source = "github/tests"
@@ -22,8 +28,8 @@ source = "github/tests"
 [modules.kubectl-tests]
 source = "kubectl/tests"
 
-[modules.minisign-tests]
-source = "minisign/tests"
+# [modules.minisign-tests]
+# source = "minisign/tests"
 
 [modules.olareg-tests]
 source = "olareg/tests"

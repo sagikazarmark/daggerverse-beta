@@ -1,6 +1,8 @@
 type Tests {
   base64: Base64Tests! { Base64Tests }
 
+  maps: MapsTests! { MapsTests }
+
   path: PathTests! { PathTests }
 
   strings: StringsTests! { StringsTests }

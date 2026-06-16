@@ -18,6 +18,12 @@ type Base64 {
   }
 }
 
+type Maps {
+  let reduce(map: Map[a]!, initial: b, &fn(acc: b, key: String!, value: a): b): b {
+    map.keys.reduce(initial) { acc, key => fn(acc, key, map.get(key)) }
+  }
+}
+
 type Path {
   separator: String! { "/" }
 

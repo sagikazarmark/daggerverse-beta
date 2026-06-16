@@ -51,7 +51,7 @@ func validate(filename, pkgName, typeName string) error {
 		return fmt.Errorf("package %s must define type %s", pkgName, typeName)
 	}
 
-	if err := validateNamespaceShape(pkgName, pkgType); err != nil {
+	if err := validatePackageShape(pkgName, pkgType); err != nil {
 		return err
 	}
 
@@ -67,35 +67,12 @@ func validate(filename, pkgName, typeName string) error {
 	return nil
 }
 
-func validateNamespaceShape(pkgName string, pkgType *dang.ObjectDecl) error {
+func validatePackageShape(pkgName string, pkgType *dang.ObjectDecl) error {
 	if pkgType.Value == nil {
 		return fmt.Errorf("package %s type body is missing", pkgName)
 	}
 
-	for _, form := range pkgType.Value.Forms {
-		switch decl := form.(type) {
-		case *dang.FieldDecl:
-			if decl.Value == nil {
-				return fmt.Errorf("package %s field %s must have a value; required fields break namespace usage", pkgName, symbolName(decl.Name))
-			}
-		case *dang.NewConstructorDecl:
-			for _, arg := range decl.Args {
-				if arg.Value == nil {
-					return fmt.Errorf("package %s constructor argument %s must have a default; required constructor arguments break namespace usage", pkgName, symbolName(arg.Name))
-				}
-			}
-		}
-	}
-
 	return nil
-}
-
-func symbolName(sym *dang.Symbol) string {
-	if sym == nil {
-		return "<unknown>"
-	}
-
-	return sym.Name
 }
 
 func daggerStubSchema() *introspection.Schema {

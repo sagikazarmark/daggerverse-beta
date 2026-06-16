@@ -15,7 +15,7 @@ dagger install github.com/sagikazarmark/daggerverse-beta/dpm
 Create `dpm.json` in the Dang module directory that should receive generated package code:
 
 ```json
-{"packages":["base64","path","strings"]}
+{"packages":["base64","maps","path","strings"]}
 ```
 
 Run Dagger code generation:
@@ -29,7 +29,7 @@ dagger generate
 The `dpm.json` file contains the bundled packages to generate:
 
 ```json
-{"packages":["base64","path","strings"]}
+{"packages":["base64","maps","path","strings"]}
 ```
 
 The `packages` list is required. Package names must be unique, and unknown packages fail generation.
@@ -66,6 +66,8 @@ Generated packages are zero-argument namespace types. Call their functions direc
 let encoded = Base64.encode("hello")
 let decoded = Base64.decode(encoded)
 
+let sum = Maps.reduce(["a": 1, "b": 2], 0) { acc, key, value => acc + value }
+
 let cleanPath = Path.clean("/src/../src/main.dang")
 let joinedPath = Path.join(["src", "main.dang"])
 
@@ -78,6 +80,7 @@ Available packages:
 | Package | Type | API |
 | --- | --- | --- |
 | `base64` | `Base64` | `encode(s)`, `decode(s)` |
+| `maps` | `Maps` | `reduce(map, initial) { acc, key, value => ... }` |
 | `path` | `Path` | `separator`, `clean(path)`, `join(parts)`, `isRelativeTo(path, base)` |
 | `strings` | `Strings` | `slug(s)`, `truncate(s, maxLength, omission: "...")` |
 

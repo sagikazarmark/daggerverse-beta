@@ -9,8 +9,8 @@ type StringsTests {
   truncate: Void @check {
     assert { Strings.truncate("hello", 10) == "hello" }
     assert { Strings.truncate("hello", 5) == "hello" }
-    assert { Strings.truncate("hello world", 8) == "hello..." }
-    assert { Strings.truncate("hello world", 2) == ".." }
+    assert { Strings.truncate("hello world", 8) == "hello wo" }
+    assert { Strings.truncate("hello world", 2) == "he" }
     assert { Strings.truncate("hello world", 0) == "" }
 
     null

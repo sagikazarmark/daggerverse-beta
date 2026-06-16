@@ -149,12 +149,6 @@ type Strings {
       return s
     }
 
-    let ellipsis = "..."
-    let ellipsisChars = ellipsis.split("")
-    if (ellipsisChars.length >= maxLength) {
-      return ellipsisChars.takeFirst(maxLength).join("")
-    }
-
-    chars.takeFirst(maxLength - ellipsisChars.length).join("") + ellipsis
+    chars.takeFirst(maxLength).join("")
   }
 }

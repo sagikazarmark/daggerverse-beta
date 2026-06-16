@@ -4,9 +4,6 @@ source = "github.com/dagger/dang-sdk@572b0c5dbbe8b6a28beef7535161217ebef5086c"
 # Until dang-sdk supports dagger-module.toml
 check.skip = ["generate-all"]
 
-[modules.dpm]
-source = "dpm"
-
 [modules.crypto-tests]
 source = "crypto/tests"
 
@@ -15,12 +12,6 @@ source = "crypto/tests"
 
 # [modules.distro-tests]
 # source = "distro/tests"
-
-[modules.dpm-tests]
-source = "dpm/tests"
-
-[modules.dpm-package-tests]
-source = "dpm/package-tests"
 
 [modules.github-tests]
 source = "github/tests"
@@ -42,3 +33,8 @@ source = "rust/tests"
 
 [modules.wrangler-tests]
 source = "wrangler/tests"
+
+[modules.go-sdk]
+source = "github.com/dagger/go-sdk"
+# Marker filename that skips generate when found at or above a Go SDK module root.
+# settings.skipGenerateFilename = ""

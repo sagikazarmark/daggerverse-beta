@@ -23,17 +23,17 @@ type Overlays {
     noInit: Boolean,
   ): WithExec! {
     WithExec(
-      args,
-      useEntrypoint,
-      stdin,
-      redirectStdin,
-      redirectStdout,
-      redirectStderr,
-      expect,
-      experimentalPrivilegedNesting,
-      insecureRootCapabilities,
-      expand,
-      noInit,
+      args: args,
+      useEntrypoint: useEntrypoint,
+      stdin: stdin,
+      redirectStdin: redirectStdin,
+      redirectStdout: redirectStdout,
+      redirectStderr: redirectStderr,
+      expect: expect,
+      experimentalPrivilegedNesting: experimentalPrivilegedNesting,
+      insecureRootCapabilities: insecureRootCapabilities,
+      expand: expand,
+      noInit: noInit,
     )
   }
 
@@ -45,9 +45,17 @@ type Overlays {
     source: File!,
     permissions: Int,
     owner: String,
+    inheritOwner: Boolean,
     expand: Boolean,
   ): WithFile! {
-    WithFile(path, source, permissions, owner, expand)
+    WithFile(
+      path: path,
+      source: source,
+      permissions: permissions,
+      owner: owner,
+      inheritOwner: inheritOwner,
+      expand: expand,
+    )
   }
 
   """
@@ -58,9 +66,17 @@ type Overlays {
     sources: [File!]!,
     permissions: Int,
     owner: String,
+    inheritOwner: Boolean,
     expand: Boolean,
   ): WithFiles! {
-    WithFiles(path, sources, permissions, owner, expand)
+    WithFiles(
+      path: path,
+      sources: sources,
+      permissions: permissions,
+      owner: owner,
+      inheritOwner: inheritOwner,
+      expand: expand,
+    )
   }
 
   """
@@ -70,9 +86,16 @@ type Overlays {
     path: String!,
     source: File!,
     owner: String,
+    inheritOwner: Boolean,
     expand: Boolean,
   ): WithMountedFile! {
-    WithMountedFile(path, source, owner, expand)
+    WithMountedFile(
+      path: path,
+      source: source,
+      owner: owner,
+      inheritOwner: inheritOwner,
+      expand: expand,
+    )
   }
 
   """
@@ -85,10 +108,21 @@ type Overlays {
     include: [String!]! = [],
     gitignore: Boolean,
     owner: String,
+    inheritOwner: Boolean,
     expand: Boolean,
     permissions: Int,
   ): WithDirectory! {
-    WithDirectory(path, source, exclude, include, gitignore, owner, expand, permissions)
+    WithDirectory(
+      path: path,
+      source: source,
+      exclude: exclude,
+      include: include,
+      gitignore: gitignore,
+      owner: owner,
+      inheritOwner: inheritOwner,
+      expand: expand,
+      permissions: permissions,
+    )
   }
 
   """
@@ -98,10 +132,18 @@ type Overlays {
     path: String!,
     source: Directory!,
     owner: String,
+    inheritOwner: Boolean,
     readOnly: Boolean,
     expand: Boolean,
   ): WithMountedDirectory! {
-    WithMountedDirectory(path, source, owner, readOnly, expand)
+    WithMountedDirectory(
+      path: path,
+      source: source,
+      owner: owner,
+      inheritOwner: inheritOwner,
+      readOnly: readOnly,
+      expand: expand,
+    )
   }
 }
 
@@ -137,17 +179,17 @@ type WithExec implements Overlay {
 
   apply(container: Container!): Container! {
     container.withExec(
-      self.args,
-      self.useEntrypoint,
-      self.stdin,
-      self.redirectStdin,
-      self.redirectStdout,
-      self.redirectStderr,
-      self.expect,
-      self.experimentalPrivilegedNesting,
-      self.insecureRootCapabilities,
-      self.expand,
-      self.noInit,
+      args: self.args,
+      useEntrypoint: self.useEntrypoint,
+      stdin: self.stdin,
+      redirectStdin: self.redirectStdin,
+      redirectStdout: self.redirectStdout,
+      redirectStderr: self.redirectStderr,
+      expect: self.expect,
+      experimentalPrivilegedNesting: self.experimentalPrivilegedNesting,
+      insecureRootCapabilities: self.insecureRootCapabilities,
+      expand: self.expand,
+      noInit: self.noInit,
     )
   }
 }
@@ -157,10 +199,18 @@ type WithFile implements Overlay {
   source: File!
   permissions: Int
   owner: String
+  inheritOwner: Boolean
   expand: Boolean
 
   apply(container: Container!): Container! {
-    container.withFile(self.path, self.source, self.permissions, self.owner, self.expand)
+    container.withFile(
+      path: self.path,
+      source: self.source,
+      permissions: self.permissions,
+      owner: self.owner,
+      inheritOwner: self.inheritOwner,
+      expand: self.expand,
+    )
   }
 }
 
@@ -169,10 +219,18 @@ type WithFiles implements Overlay {
   sources: [File!]!
   permissions: Int
   owner: String
+  inheritOwner: Boolean
   expand: Boolean
 
   apply(container: Container!): Container! {
-    container.withFiles(self.path, self.sources, self.permissions, self.owner, self.expand)
+    container.withFiles(
+      path: self.path,
+      sources: self.sources,
+      permissions: self.permissions,
+      owner: self.owner,
+      inheritOwner: self.inheritOwner,
+      expand: self.expand,
+    )
   }
 }
 
@@ -180,14 +238,16 @@ type WithMountedFile implements Overlay {
   path: String!
   source: File!
   owner: String
+  inheritOwner: Boolean
   expand: Boolean
 
   apply(container: Container!): Container! {
     container.withMountedFile(
-      self.path,
-      self.source,
-      self.owner,
-      self.expand,
+      path: self.path,
+      source: self.source,
+      owner: self.owner,
+      inheritOwner: self.inheritOwner,
+      expand: self.expand,
     )
   }
 }
@@ -199,19 +259,21 @@ type WithDirectory implements Overlay {
   include: [String!]!
   gitignore: Boolean
   owner: String
+  inheritOwner: Boolean
   expand: Boolean
   permissions: Int
 
   apply(container: Container!): Container! {
     container.withDirectory(
-      self.path,
-      self.source,
-      self.exclude,
-      self.include,
-      self.gitignore,
-      self.owner,
-      self.expand,
-      self.permissions,
+      path: self.path,
+      source: self.source,
+      exclude: self.exclude,
+      include: self.include,
+      gitignore: self.gitignore,
+      owner: self.owner,
+      inheritOwner: self.inheritOwner,
+      expand: self.expand,
+      permissions: self.permissions,
     )
   }
 }
@@ -220,16 +282,18 @@ type WithMountedDirectory implements Overlay {
   path: String!
   source: Directory!
   owner: String
+  inheritOwner: Boolean
   readOnly: Boolean
   expand: Boolean
 
   apply(container: Container!): Container! {
     container.withMountedDirectory(
-      self.path,
-      self.source,
-      self.owner,
-      self.readOnly,
-      self.expand,
+      path: self.path,
+      source: self.source,
+      owner: self.owner,
+      inheritOwner: self.inheritOwner,
+      readOnly: self.readOnly,
+      expand: self.expand,
     )
   }
 }

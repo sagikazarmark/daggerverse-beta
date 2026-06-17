@@ -1,0 +1,3 @@
+[[dependencies]]
+source = "github.com/sagikazarmark/danglib"
+packages = ["archive"]

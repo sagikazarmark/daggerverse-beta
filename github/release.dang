@@ -115,6 +115,6 @@ type ReleaseAsset {
     """
     stripComponents: Int = if (stripParent) { 1 } else { null },
   ): Directory! {
-    extractArchive(self.file, stripComponents)
+    Archive.extract(self.file, stripComponents)
   }
 }

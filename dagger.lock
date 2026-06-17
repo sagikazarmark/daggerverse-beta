@@ -1,4 +1,5 @@
 [["version","1"]]
 ["","git.head",["https://github.com/dagger/go-sdk"],"7df7aacc386448de6a9367e6179a08e318cfe607","float"]
 ["","git.head",["https://github.com/dagger/sdk-sdk"],"d1532df4f7d322a7bdab02487accde9d21bbb464","float"]
+["","git.head",["https://github.com/sagikazarmark/dangpkg"],"059c1724c4dd9e5ddca2ed8861534fdf1a47c7ad","float"]
 ["","modules.resolve",["github.com/dagger/dang-sdk@572b0c5dbbe8b6a28beef7535161217ebef5086c"],"572b0c5dbbe8b6a28beef7535161217ebef5086c","float"]

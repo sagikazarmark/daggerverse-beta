@@ -1,12 +1,3 @@
-# TODO: move to danglib
-let when(condition: Boolean!, _: a, &fn(_: a): a): a {
-  if (condition) {
-    fn(_)
-  } else {
-    _
-  }
-}
-
 let REPO_REGEX: Regexp! = `^(?:https://github\.com/|git@github\.com:)?(?P<repo>[^/\s]+/[^/\s]+?)(?:\.git)?(?:/.*)?$`
 
 let normalizeRepository(repository: String!): String! {

@@ -6,33 +6,38 @@ type Tests {
   """
   Latest version of Minisign is installed and can be executed.
   """
-  pub latest: Container! @check {
-    minisign.container.withExec(["minisign", "-v"])
+  latest: Container! @check {
+    Dagger.minisign.container.withExec(["minisign", "-v"])
   }
 
   """
   Specific version of Minisign is installed and can be executed.
   """
-  pub version: Container! @check {
-    minisign(VERSION).container.withExec(["minisign", "-v"])
+  version: Container! @check {
+    Dagger
+      .minisign(VERSION)
+      .container
+      .withExec(["minisign", "-v"])
   }
 
   """
   Verify that a public key string can be used to verify a signature.
   """
-  pub publicKeyString: File! @check {
-    minisign(VERSION).verify(
-      file: Dagger.http(testUrl),
-      signature: Dagger.http(testUrl + ".minisig"),
-      key: "RWSGOq2NVecA2UPNdBUZykf1CCb147pkmdtYxgb3Ti+JO/wCYvhbAb/U",
-    )
+  publicKeyString: File! @check {
+    Dagger
+      .minisign(VERSION)
+      .verify(
+        file: Dagger.http(testUrl),
+        signature: Dagger.http(testUrl + ".minisig"),
+        key: "RWSGOq2NVecA2UPNdBUZykf1CCb147pkmdtYxgb3Ti+JO/wCYvhbAb/U",
+      )
   }
 
   """
   Verify that a public key file can be used to verify a signature.
   """
-  pub publicKeyFile: File! @check {
-    minisign(VERSION).verify(
+  publicKeyFile: File! @check {
+    Dagger.minisign(VERSION).verify(
       file: Dagger.http(testUrl),
       signature: Dagger.http(testUrl + ".minisig"),
       keyFile: Dagger.currentModule.source.file("minisign.pub"),

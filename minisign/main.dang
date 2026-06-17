@@ -4,7 +4,7 @@ type Minisign {
   """
   Minisign version
   """
-  pub version: String! {
+  version: String! {
     self.release.tagName
   }
 
@@ -12,7 +12,7 @@ type Minisign {
     """
     Minisign version
     """
-    version: String = null,
+    version: String,
   ) {
     self.release = Dagger
       .github
@@ -24,7 +24,7 @@ type Minisign {
   """
   Download the minisign binary for the given platform.
   """
-  pub download(platform: Platform! = Dagger.defaultPlatform): File! {
+  download(platform: Platform! = Dagger.defaultPlatform): File! {
     let segments = toString(platform).trim("\"").split("/")
 
     let os = case (segments[0]) {
@@ -39,35 +39,37 @@ type Minisign {
       else => raise "unsupported arch: " + (segments[1] ?? "")
     }
 
-    let fileName = "minisign-" + self.version + "-" + os + ".tar.gz"
+    let fileName = `minisign-${self.version}-${os}.tar.gz`
 
-    let asset = self.release.asset(fileName)
-
-    if (asset == null) {
-      raise "failed to download minisign binary"
-    }
-
-    asset.extracted(true).file(arch + "/minisign")
+    self
+      .release
+      .asset(fileName)
+      .extracted(true)
+      .file(arch + "/minisign")!
   }
 
   """
   Install the minisign binary into the given container.
   """
-  pub install(container: Container!): Container! {
+  install(container: Container!): Container! {
     container.withFile("/usr/local/bin/minisign", self.download(container.platform))
   }
 
   """
   Return a container with the minisign binary installed.
   """
-  pub container: Container! {
-    self.install(Dagger.container.from("alpine:latest"))
+  container: Container! {
+    self.install(
+      Dagger
+        .container
+        .from("alpine:3.24.1@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b"),
+    )
   }
 
   """
   Verify that a signature is valid for a given file.
   """
-  pub verify(
+  verify(
     """
     File to verify.
     """
@@ -89,33 +91,19 @@ type Minisign {
     """
     keyFile: File,
   ): File! {
-    let args = ["minisign", "-V"]
-
-    let filename = file.name
-    args += ["-m", filename]
-
-    let container = self
-      .container
-      .withWorkdir("/work")
-      .withMountedFile(filename, file)
-      .withMountedFile(filename + ".minisig", signature)
-
-    if (key == null and keyFile == null) {
-      raise "either key or keyFile must be provided"
-    }
-
-    if (key != null and keyFile != null) {
-      raise "only one of key or keyFile must be provided"
-    }
+    let args = ["minisign", "-V", "-m", file.name]
 
     if (key != null) {
       args += ["-P", key]
     }
 
-    if (keyFile != null) {
-      container = container.withMountedFile("minisign.pub", keyFile)
-    }
-
-    container.withExec(args).file(file.name)
+    self
+      .container
+      .withWorkdir("/work")
+      .withMountedFile(file.name, file)
+      .withMountedFile(file.name + ".minisig", signature)
+      .{ if (keyFile != null) _.withMountedFile("minisign.pub", keyFile!) else _ }
+      .withExec(args)
+      .file(file.name)
   }
 }

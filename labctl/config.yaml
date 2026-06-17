@@ -1,0 +1,4 @@
+base_url: https://labs.iximiuz.com
+api_base_url: https://labs.iximiuz.com/api
+plays_dir: /root/.iximiuz/labctl/plays
+ssh_identity_file: /root/.ssh/iximiuz_labs_user

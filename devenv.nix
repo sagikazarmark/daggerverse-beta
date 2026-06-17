@@ -4,5 +4,5 @@
   dotenv.enable = true;
 
   dagger.enable = true;
-  env.DAGGER_X_RELEASE = "d87b131f050764cac6205aa68b51b189aeaf000b";
+  env.DAGGER_X_RELEASE = "382ccec3a5bdbf94c9c298e3e373e310eaee7a64";
 }

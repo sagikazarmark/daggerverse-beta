@@ -1,0 +1,32 @@
+enum ContentKind {
+  TUTORIAL
+  CHALLENGE
+  COURSE
+  TRAINING
+  VENDOR
+}
+
+type Content {
+  let container: Container!
+  let kind: ContentKind!
+  let name: String!
+
+  """
+  Push content to the content repository.
+  """
+  push(
+    """
+    Directory with content files.
+    """
+    source: Directory!,
+  ): Container! {
+    self
+      .container
+      .withMountedDirectory(".", source)
+      .withExec([
+        "labctl",
+        "content", "push", toString(self.kind).toLower.trim("\""), self.name,
+        "--force", "--dir", ".",
+      ])
+  }
+}

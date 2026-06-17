@@ -1,0 +1,184 @@
+enum Backend {
+  FIRECRACKER
+  CLOUD_HYPERVISOR
+}
+
+"""
+Manage playground manifests and running playground sessions.
+"""
+type Playground {
+  let container: Container!
+
+  """
+  Start a new playground session.
+  """
+  start(
+    """
+    Name of the playground to start.
+    """
+    name: String!,
+    """
+    Run this playground as a free tier user (handy for testing that the playground works on all tiers).
+    """
+    asFreeTierUser: Boolean! = false,
+    """
+    Use the specified backend for all playground VMs (default: backend specified in the manifest).
+    """
+    backend: Backend,
+    """
+    A manifest file with playground configuration (machines, tabs, custom init tasks, etc.).
+    """
+    manifest: File,
+    """
+    Set init conditions as key-value pairs.
+    """
+    initConditions: [String!]! = [],
+    """
+    Skip waiting for the playground initialization (useful for debugging).
+    """
+    skipWaitInit: Boolean! = false,
+    """
+    Automatically forward ports specified in the playground's config.
+    """
+    withPortForwards: Boolean! = false,
+  ): String! @cache(policy: neverCache) {
+    let args = [
+      "labctl",
+      "playground", "start",
+      "--safety-disclaimer-consent", # There is no interactive mode anyway
+      "--quiet", # Output the play ID
+      name,
+    ]
+
+    if (asFreeTierUser) { args += ["--as-free-tier-user"] }
+    if (backend != null) { args += ["--backend", toString(backend).trim("\"").toLower] }
+    if (manifest != null) { args += ["--file", "manifest.yaml"] }
+    if (skipWaitInit) { args += ["--skip-wait-init"] }
+    if (withPortForwards) { args += ["--with-port-forwards"] }
+    args += initConditions.reduce([]) { args, cond => args + ["--init-condition", toString(cond)] }
+
+    self
+      .container
+      .withEnvVariable("__DAGGER_CACHE_BUST", Random.string)
+      .{ withManifest(_, manifest) }
+      .withExec(args)
+      .stdout
+  }
+
+  """
+  Stop a running playground session, preserving its state for future use.
+  """
+  stop(
+    """
+    Play ID to stop.
+    """
+    playId: String!,
+    """
+    Automatically forward ports specified in the playground's config.
+    """
+    withPortForwards: Boolean! = false,
+  ): Void @cache(policy: neverCache) {
+    let args = [
+      "labctl",
+      "playground", "stop",
+      playId,
+    ]
+
+    if (withPortForwards) { args += ["--with-port-forwards"] }
+
+    self
+      .container
+      .withEnvVariable("__DAGGER_CACHE_BUST", Random.string)
+      .withExec(args)
+      .stdout
+
+    null
+  }
+
+  """
+  Restart a stopped playground session, resuming its state.
+  """
+  restart(
+    """
+    Play ID to stop.
+    """
+    playId: String!,
+  ): Void @cache(policy: neverCache) {
+    self
+      .container
+      .withEnvVariable("__DAGGER_CACHE_BUST", Random.string)
+      .withExec(["labctl", "playground", "destroy", playId])
+      .stdout
+
+    null
+  }
+
+  """
+  Destroy an active or stopped playground session, completely deleting its data.
+  """
+  destroy(
+    """
+    Play ID to stop.
+    """
+    playId: String!,
+  ): Void @cache(policy: neverCache) {
+    self
+      .container
+      .withEnvVariable("__DAGGER_CACHE_BUST", Random.string)
+      .withExec(["labctl", "playground", "destroy", playId])
+      .stdout
+
+    null
+  }
+
+  # """
+  # Create a new playground.
+  # """
+  # create(
+  #   """
+  #   Base playground to use for the new playground.
+  #   """
+  #   base: String!,
+  #   """
+  #   Playground manifest file.
+  #   """
+  #   manifest: File!,
+  # ): String! @cache(policy: FunctionCachePolicy.Never) {
+  #   self
+  #     .container
+  #     .withMountedFile("manifest.yaml", manifest)
+  #     .withEnvVariable("__DAGGER_CACHE_BUST", Random.string)
+  #     .withExec([
+  #       "labctl",
+  #       "playground", "create", self.name,
+  #       "--base", base,
+  #       "--manifest", "manifest.yaml",
+  #       "--quiet",
+  #     ])
+  #     .stdout
+  # }
+
+  # """
+  # Update an existing playground.
+  # """
+  # update(
+  #   """
+  #   Directory with the manifest file (and possibly other content files).
+  #   """
+  #   source: Directory!,
+  # ): Container! @cache(policy: FunctionCachePolicy.Never) {
+  #   if (!source.exists("manifest.yaml", expectedType: ExistsType.REGULAR_TYPE)) {
+  #     raise "manifest.yaml not found in source directory"
+  #   }
+
+  #   self
+  #     .container
+  #     .withMountedDirectory(".", source)
+  #     .withEnvVariable("__DAGGER_CACHE_BUST", Random.string)
+  #     .withExec([
+  #       "labctl",
+  #       "playground", "update", self.name,
+  #       "--force", "--dir", ".",
+  #     ])
+  # }
+}

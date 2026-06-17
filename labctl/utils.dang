@@ -1,0 +1,21 @@
+# @cache directive args only see the core prelude in the first-processed file
+# of a multi-file module, so the policy needs a top-level alias here.
+#
+# See https://github.com/dagger/dagger/issues/13440
+let neverCache: FunctionCachePolicy! = FunctionCachePolicy.Never
+
+let withManifest(container: Container!, manifest: File): Container! {
+  if (manifest == null) {
+    return container
+  }
+
+  container.withMountedFile("manifest.yaml", manifest)
+}
+
+let only(condition: Boolean!, value: a, &fn(value: a): a): a {
+  if (condition) {
+    fn(value)
+  } else {
+    value
+  }
+}

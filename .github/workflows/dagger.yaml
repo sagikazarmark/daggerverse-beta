@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 env:
-  DAGGER_VERSION: d87b131f050764cac6205aa68b51b189aeaf000b
+  DAGGER_VERSION: 382ccec3a5bdbf94c9c298e3e373e310eaee7a64
 
 jobs:
   check:

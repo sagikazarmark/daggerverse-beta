@@ -1,0 +1,126 @@
+enum LogLevel {
+  DEBUG
+  INFO
+  WARN
+  ERROR
+  FATAL
+}
+
+type Labctl {
+  container: Container!
+
+  sessionId: Secret!
+  accessToken: Secret!
+
+  new(
+    """
+    The session ID for the labctl.
+    """
+    sessionId: Secret!,
+    """
+    The access token for the labctl.
+    """
+    accessToken: Secret!,
+    """
+    Version of labctl to download from GitHub. Defaults to "latest".
+    """
+    version: String,
+    """
+    The container to use as the base for the labctl installation. Defaults to "alpine:latest".
+    """
+    container: Container! = Dagger.container.from("alpine:latest"),
+  ) {
+    # """
+    # Log level for the labctl. Defaults to "INFO".
+    # """
+    # logLevel: LogLevel,
+
+    # Until PR lands: https://github.com/vito/dang/pull/138
+    let version = version
+    if (version == Dagger.version) {
+      version = null
+    }
+
+    let binary = Dagger
+      .github
+      .release(version, "iximiuz/labctl")
+      .asset(`labctl_${toString(Dagger.defaultPlatform).trim("\"").replace("/", "_")}.tar.gz`)
+      .extracted
+      .file("labctl")!
+
+    let entrypoint = ["labctl"]
+
+    # if (logLevel != null) {
+    #   entrypoint + ["--log-level", toString(logLevel).trim("\"").toLower]
+    # }
+
+    self.container = container
+      .withFile("/usr/local/bin/labctl", binary, permissions: 755)
+      .withFile("/root/.iximiuz/labctl/config.yaml", Dagger.currentModule.source.file("config.yaml"))
+      .withEntrypoint(entrypoint)
+      .withSecretVariable("IXIMIUZ_SESSION_ID", sessionId)
+      .withSecretVariable("IXIMIUZ_ACCESS_TOKEN", accessToken)
+      .withWorkdir("/work")
+
+    self.sessionId = sessionId
+    self.accessToken = accessToken
+
+    self
+  }
+
+  """
+  Manage playground manifests and running playground sessions.
+  """
+  playground: Playground! {
+    Playground(self.container)
+  }
+
+  # """
+  # Manage running playground sessions (plays).
+  # """
+  # play(playId: String!): Play! {
+  #   Play(self.container, playId)
+  # }
+
+  # """
+  # Manage tutorials.
+  # """
+  # tutorial(name: String!): Content! {
+  #   Content(self.container, ContentKind.TUTORIAL, name)
+  # }
+
+  # """
+  # Manage challenges.
+  # """
+  # challenge(name: String!): Content! {
+  #   Content(self.container, ContentKind.CHALLENGE, name)
+  # }
+
+  # """
+  # Manage courses.
+  # """
+  # course(name: String!): Content! {
+  #   Content(self.container, ContentKind.COURSE, name)
+  # }
+
+  # """
+  # Manage training content.
+  # """
+  # training(name: String!): Content! {
+  #   Content(self.container, ContentKind.TRAINING, name)
+  # }
+
+  # """
+  # Manage vendor content.
+  # """
+  # vendor(name: String!): Content! {
+  #   Content(self.container, ContentKind.VENDOR, name)
+  # }
+
+  # """
+  # Manage any content.
+  # """
+  # let content(kind: ContentKind!, name: String!): Content! {
+  #   Content(self.container, kind, name)
+  # }
+}

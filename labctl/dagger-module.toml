@@ -1,0 +1,8 @@
+name = "labctl"
+engineVersion = "v1.0.0"
+runtime.source = "dang"
+include = ["!tests"]
+
+[[dependencies]]
+name = "github"
+source = "../github"

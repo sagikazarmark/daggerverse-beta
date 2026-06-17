@@ -29,9 +29,72 @@ type ReleasesTests {
   }
 
   """
+  Missing repositories return a repository-not-found error.
+  """
+  repositoryNotFound: Void @check {
+    let repository = "sagikazarmark/daggerverse-beta-missing-repository-for-tests"
+
+    try {
+      Dagger.github.releases(repository).latest.name
+
+      raise "expected missing repository to fail"
+    } catch {
+      err => assert { err.message.contains(`repository "${repository}" is not found`) }
+    }
+  }
+
+  """
+  Missing releases return a release-not-found error.
+  """
+  releaseNotFound: Void @check {
+    let repository = "kubernetes/kubernetes"
+    let version = "v0.0.0-release-that-does-not-exist"
+
+    try {
+      Dagger.github.releases(repository).get(version).name
+
+      raise "expected missing release to fail"
+    } catch {
+      err => assert { err.message.contains(`release "${version}" is not found in repository "${repository}"`) }
+    }
+  }
+
+  """
   Latest release can be fetched.
   """
   latest: String! @check {
     Dagger.github.releases("kubernetes/kubernetes").latest.name
+  }
+
+  """
+  Repositories without a latest stable release return a no-latest-release error.
+  """
+  noLatestRelease: Void @check {
+    let repository = "octocat/Hello-World"
+
+    try {
+      Dagger.github.releases(repository).latest.name
+
+      raise "expected repository without stable releases to fail"
+    } catch {
+      err => assert { err.message.contains(`repository "${repository}" has no stable releases yet`) }
+    }
+  }
+
+  """
+  Missing release assets return an asset-not-found error.
+  """
+  assetNotFound: Void @check {
+    let repository = "kubernetes/kubernetes"
+    let version = "v1.36.1"
+    let asset = "asset-that-does-not-exist-for-github-module-tests"
+
+    try {
+      Dagger.github.releases(repository).get(version).asset(asset).downloadUrl
+
+      raise "expected missing asset to fail"
+    } catch {
+      err => assert { err.message.contains(`asset "${asset}" is not found in release "${version}" of repository "${repository}"`) }
+    }
   }
 }

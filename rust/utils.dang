@@ -19,6 +19,14 @@ let commitDate(source: Directory!): String {
   result.stdout
 }
 
+let withCache(container: Container!, path: String!, cache: CacheVolume): Container! {
+  if (cache == null) {
+    return container
+  }
+
+  container.withMountedCache(path, cache, expand: true)
+}
+
 let withEnvVariable(
   container: Container!,
   name: String!,

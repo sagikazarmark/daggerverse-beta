@@ -35,7 +35,7 @@ type Github {
   """
   Get a GitHub release by version. Use null or an empty string for the latest release.
   """
-  release(version: String = null, repository: String! = self.repository!): Release! {
+  release(version: String, repository: String! = self.repository!): Release! {
     self
       .releases(repository)
       .{

@@ -4,11 +4,14 @@ A GitHub release.
 type Releases {
   let repository: String!
 
+  let api: Client!
+
   let client: Client!
 
   new(client: Client!, repository: String!) {
     self.repository = normalizeRepository(repository)
-    self.client = client.appendPath(`/repos/${repository}/releases`)
+    self.api = client
+    self.client = client.appendPath(`/repos/${self.repository}/releases`)
 
     self
   }
@@ -21,6 +24,8 @@ type Releases {
       JSON.decode(self.client.get("/latest"))
     } catch {
       err => if (err.message.contains("404 Not Found")) {
+        self.ensureRepositoryExists
+
         raise `repository "${self.repository}" has no stable releases yet`
       } else {
         raise err
@@ -41,7 +46,22 @@ type Releases {
       JSON.decode(self.client.get(`/tags/${version}`))
     } catch {
       err => if (err.message.contains("404 Not Found")) {
+        self.ensureRepositoryExists
+
         raise ReleaseNotFound(self.repository, version)
+      } else {
+        raise err
+      }
+    }
+  }
+
+  let ensureRepositoryExists: Void {
+    try {
+      self.api.get(`/repos/${self.repository}`)
+      null
+    } catch {
+      err => if (err.message.contains("404 Not Found")) {
+        raise RepositoryNotFound(self.repository)
       } else {
         raise err
       }
@@ -49,11 +69,17 @@ type Releases {
   }
 }
 
+type RepositoryNotFound implements Error {
+  repository: String!
+
+  message: String! = `repository "${repository}" is not found`
+}
+
 type ReleaseNotFound implements Error {
   repository: String!
   version: String!
 
-  message: String! = `version "${self.version}" is not found in repository "${self.repository}"`
+  message: String! = `release "${version}" is not found in repository "${repository}"`
 }
 
 """
@@ -73,11 +99,29 @@ type Release {
   assets: [ReleaseAsset!]!
 
   """
-  Returns the asset with the given name, or null if no such asset exists.
+  The asset with the given name, or an error if no such asset exists.
   """
-  asset(name: String!): ReleaseAsset {
-    self.assets.find { _.name == name }
+  asset(name: String!): ReleaseAsset! {
+    let asset = self.assets.find { _.name == name }
+
+    if (asset == null) {
+      raise ReleaseAssetNotFound(name, self)
+    }
+
+    asset
   }
+}
+
+type ReleaseAssetNotFound implements Error {
+  name: String!
+  release: Release!
+
+  # TODO: this isn't very nice
+  let repository: String! {
+    release.htmlUrl.trimPrefix("https://github.com/").split("/").takeFirst(2).join("/")
+  }
+
+  message: String! = `asset "${name}" is not found in release "${release.tagName}" of repository "${repository}"`
 }
 
 """

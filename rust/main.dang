@@ -23,15 +23,15 @@ type Rust {
     """
     Include only artifacts that match the given pattern (e.g., ["app/", "package.*"]).
     """
-    include: [String!] = null,
+    include: [String!],
     """
     Exclude artifacts that match the given pattern (e.g., ["node_modules/", ".git*"]).
     """
-    exclude: [String!] = null,
+    exclude: [String!],
     """
     Overlay to apply to the base container.
     """
-    overlay: Overlay = null,
+    overlay: Overlay,
     """
     Targets to install for cross-compilation.
     """
@@ -45,13 +45,13 @@ type Rust {
 
     If not set, the epoch is determined from the git log (if available).
     """
-    sourceDateEpoch: String = null,
+    sourceDateEpoch: String,
     """
     Env file to load into workspace containers.
 
     Relative paths are resolved from the workspace cwd; absolute paths are resolved from the workspace root.
     """
-    envFile: String = null,
+    envFile: String,
     """
     Whether to disable automatically mounted cache volumes.
     Useful if you want to mount cache volumes manually or use a different cache volume strategy.
@@ -93,20 +93,18 @@ type Rust {
     self.baseContainer = container
       .withExec(["rustup", "set", "auto-self-update", "disable"])
       .withExec(["rustup", "set", "auto-install", "disable"])
-      .{ mountCache(_, "${CARGO_HOME}/registry/index", cargoRegistryIndexCache) }
-      .{ mountCache(_, "${CARGO_HOME}/registry/cache", cargoRegistryArchiveCache) }
-      .{ mountCache(_, "${CARGO_HOME}/git/db", cargoGitDbCache) }
-      .{
-        _.withFile(
-          "/usr/local/bin/",
-          Dagger
-            .github
-            .release("v0.2.0", "sagikazarmark/cargo-artifacts")
-            .asset(`cargo-artifacts-${arch}-unknown-linux-gnu.tar.xz`)
-            .extracted(true)
-            .file("cargo-artifacts")!,
-        )
-      }
+      .{ withCache(_, "${CARGO_HOME}/registry/index", cargoRegistryIndexCache) }
+      .{ withCache(_, "${CARGO_HOME}/registry/cache", cargoRegistryArchiveCache) }
+      .{ withCache(_, "${CARGO_HOME}/git/db", cargoGitDbCache) }
+      .withFile(
+        "/usr/local/bin/",
+        Dagger
+          .github
+          .release("v0.2.0", "sagikazarmark/cargo-artifacts")
+          .asset(`cargo-artifacts-${arch}-unknown-linux-gnu.tar.xz`)
+          .extracted(true)
+          .file("cargo-artifacts"),
+      )
       .{ overlay.apply(_) ?? _ }
 
     self.include = include
@@ -137,7 +135,7 @@ type Rust {
     """
     overlay: Overlay,
   ): WorkspaceContext! {
-    self.prepareWorkspace(ws) { container => overlay.apply(container) ?? container }
+    self.prepareWorkspace(ws) { overlay.apply(_) ?? _ }
   }
 
   """
@@ -157,22 +155,19 @@ type Rust {
     """
     overlay: Overlay,
   ): WorkspaceContext! {
-    # TODO: better path validation
-    cwd = "/" + cwd.trimPrefix("/")
+    let envFile: EnvFile
+    if (self.envFile != null) {
+      let path = self.envFile!
 
-    let envFile: EnvFile = self
-      .envFile
-      .{
-        if (_ != null) {
-          if (_.hasPrefix("/")) {
-            source.file(_).asEnvFile
-          } else {
-            source.file(cwd + "/" + _).asEnvFile
-          }
-        }
+      # relative path
+      if (!path.hasPrefix("/")) {
+        path = Path.join([cwd, path])
       }
 
-    self.prepare(source, cwd, envFile) { container => overlay.apply(container) ?? container }
+      envFile = source.file(path).asEnvFile
+    }
+
+    self.prepare(source, cwd, envFile) { overlay.apply(_) ?? _ }
   }
 
   let prepareWorkspace(ws: Workspace!, &fn(container: Container!): Container!): WorkspaceContext! {
@@ -184,9 +179,12 @@ type Rust {
     )
     let cwd = ws.cwd
 
-    let envFile: EnvFile = self.envFile.{ if (_ != null) { ws.file(_).asEnvFile } }
+    let envFile: EnvFile
+    if (self.envFile != null) {
+      envFile = ws.file(self.envFile!).asEnvFile
+    }
 
-    self.prepare(source, cwd, envFile) { container => fn(container) }
+    self.prepare(source, cwd, envFile) { fn(_) }
   }
 
   let prepare(
@@ -199,12 +197,12 @@ type Rust {
       .baseContainer
       .{ fn(_) }
       .{ withToolchain(_, source, cwd) }
-      .{ if (envFile != null) { _.withEnvFileVariables(envFile) } else { _ } }
+      .{ if (envFile != null) _.withEnvFileVariables(envFile) else _ }
       .withEnvVariable("CARGO_TARGET_DIR", "/work/target")
-      .{ mountCache(_, "${CARGO_TARGET_DIR}", self.cargoTargetCache) }
+      .{ withCache(_, "${CARGO_TARGET_DIR}", self.cargoTargetCache) }
       .{ withEnvVariable(_, "SOURCE_DATE_EPOCH", self.sourceDateEpoch ?? commitDate(source)) }
       .withMountedDirectory("/work/src", source)
-      .withWorkdir("/work/src" + cwd)
+      .withWorkdir(Path.join(["/work/src", cwd]))
 
     WorkspaceContext(container, source, cwd)
   }
@@ -223,8 +221,8 @@ type Rust {
     }
 
     container
-      .withWorkdir("/work/src" + cwd)
-      .withMountedFile("/work/src" + toolchain, source.file(toolchain))
+      .withWorkdir(Path.join(["/work/src", cwd]))
+      .withMountedFile(Path.join(["/work/src", toolchain]), source.file(toolchain))
       .withExec(["rustup", "toolchain", "install", "--no-self-update"])
   }
 
@@ -282,9 +280,7 @@ type Rust {
     }
 
     self
-      .prepareWorkspace(ws) { container =>
-        withCargoAudit(container).withMountedDirectory(DB_PATH, db)
-      }
+      .prepareWorkspace(ws) { withCargoAudit(_).withMountedDirectory(DB_PATH, db) }
       .container
       .withExec(args)
       .stdout
@@ -548,13 +544,13 @@ type Rust {
   Format the codebase using rustfmt.
   """
   fmt(ws: Workspace!): Changeset! @generate {
-    let workspaceContext = self.withWorkspace(ws)
+    let ctx = self.withWorkspace(ws)
 
-    workspaceContext
+    ctx
       .container
       .withExec(["cargo", "fmt", "--", "--check"])
       .directory("")
-      .changes(workspaceContext.source)
+      .changes(ctx.source)
   }
 
   """
@@ -678,9 +674,7 @@ type Rust {
     )
 
     self
-      .prepareWorkspace(ws) { container =>
-        container.withEnvVariable("RUSTDOCFLAGS", "-D warnings")
-      }
+      .prepareWorkspace(ws) { _.withEnvVariable("RUSTDOCFLAGS", "-D warnings") }
       .container
       .withExec(args)
       .stdout

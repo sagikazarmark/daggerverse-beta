@@ -1,11 +1,3 @@
 interface Overlay {
   apply(container: Container!): Container!
 }
-
-let mountCache(container: Container!, path: String!, cache: CacheVolume): Container! {
-  if (cache == null) {
-    return container
-  }
-
-  container.withMountedCache(path, cache, expand: true)
-}

@@ -17,11 +17,7 @@ type Tests {
   }
 
   build: Container! @check {
-    rust
-      .container
-      .withWorkdir("/work/src")
-      .withMountedDirectory(".", source)
-      .withExec(["cargo", "build"])
+    rust.withSource(source).container.withExec(["cargo", "build"])
   }
 
   envFile(workspace: Workspace!): Void @check {
@@ -62,15 +58,15 @@ type Tests {
     }
   }
 
-  # pub build: Directory! @check {
+  # build: Directory! @check {
   #   rust.build
   # }
 
-  # pub test: String! @check {
+  # test: String! @check {
   #   rust.test
   # }
 
-  # pub clippy: String! @check {
+  # clippy: String! @check {
   #   rust.clippy
   # }
 }

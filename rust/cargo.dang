@@ -24,7 +24,7 @@ type CargoCommand {
     self
   }
 
-  pub generic(command: String!): [String!]! {
+  generic(command: String!): [String!]! {
     let args = ["cargo", command]
 
     args += self.globalArgs
@@ -35,7 +35,7 @@ type CargoCommand {
   """
   Compile a local package and all of its dependencies.
   """
-  pub build(
+  build(
     """
     Package to build.
     """
@@ -149,7 +149,7 @@ type CargoCommand {
   """
   Execute all unit and integration tests and build examples of a local package.
   """
-  pub test(
+  test(
     """
     If specified, only run tests containing this string in their names.
     """
@@ -282,7 +282,7 @@ type CargoCommand {
   """
   Build a package's documentation.
   """
-  pub doc(
+  doc(
     """
     Don't build documentation for dependencies.
     """

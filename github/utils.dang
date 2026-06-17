@@ -1,12 +1,20 @@
-let normalizeRepository(repository: String!): String! {
-  repository
-    .match(`^(?:https://github\.com/|git@github\.com:)?(?P<repo>[^/\s]+/[^/\s]+?)(?:\.git)?(?:/.*)?$`)
-    .named["repo"]
-    .{
-      if (_ == null) {
-        raise "invalid repository name: " + toString(repository)
-      }
+# TODO: move to danglib
+let when(condition: Boolean!, _: a, &fn(_: a): a): a {
+  if (condition) {
+    fn(_)
+  } else {
+    _
+  }
+}
 
-      _
-    }
+let REPO_REGEX: Regexp! = `^(?:https://github\.com/|git@github\.com:)?(?P<repo>[^/\s]+/[^/\s]+?)(?:\.git)?(?:/.*)?$`
+
+let normalizeRepository(repository: String!): String! {
+  let normalized = repository.match(REPO_REGEX).named["repo"]
+
+  if (normalized == null) {
+    raise "invalid repository name: " + repository
+  }
+
+  normalized
 }

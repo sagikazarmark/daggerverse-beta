@@ -2,14 +2,13 @@
 A GitHub release.
 """
 type Releases {
-  let client: Client!
   let repository: String!
 
-  new(client: Client!, repository: String!) {
-    repository = normalizeRepository(repository)
+  let client: Client!
 
+  new(client: Client!, repository: String!) {
+    self.repository = normalizeRepository(repository)
     self.client = client.appendPath(`/repos/${repository}/releases`)
-    self.repository = repository
 
     self
   }
@@ -19,7 +18,7 @@ type Releases {
   """
   latest: Release! {
     try {
-      fromJSON(self.client.get("/latest"))
+      JSON.decode(self.client.get("/latest"))
     } catch {
       err => if (err.message.contains("404 Not Found")) {
         raise `repository "${self.repository}" has no stable releases yet`
@@ -39,7 +38,7 @@ type Releases {
     version: String!,
   ): Release! {
     try {
-      fromJSON(self.client.get(`/tags/${version}`))
+      JSON.decode(self.client.get(`/tags/${version}`))
     } catch {
       err => if (err.message.contains("404 Not Found")) {
         raise ReleaseNotFound(self.repository, version)
@@ -62,23 +61,10 @@ A GitHub release.
 """
 type Release {
   url: String!
-
-  let html_url: String!
-
-  htmlUrl: String! { self.html_url }
-
-  let tarball_url: String!
-
-  tarballUrl: String! { self.tarball_url }
-
-  let zipball_url: String!
-
-  zipballUrl: String! { self.zipball_url }
-
-  let tag_name: String!
-
-  tagName: String! { self.tag_name }
-
+  htmlUrl: String! @JSON.field(name: "html_url", omitEmpty: true)
+  tarballUrl: String! @JSON.field(name: "tarball_url", omitEmpty: true)
+  zipballUrl: String! @JSON.field(name: "zipball_url", omitEmpty: true)
+  tagName: String! @JSON.field(name: "tag_name")
   name: String!
   body: String!
   draft: Boolean!
@@ -90,7 +76,7 @@ type Release {
   Returns the asset with the given name, or null if no such asset exists.
   """
   asset(name: String!): ReleaseAsset {
-    self.assets.filter { asset => asset.name == name }[0]
+    self.assets.find { _.name == name }
   }
 }
 
@@ -100,20 +86,10 @@ A resolved GitHub release asset.
 type ReleaseAsset {
   name: String!
   label: String
-
-  let content_type: String!
-
-  contentType: String! { self.content_type }
-
+  contentType: String! @JSON.field(name: "content_type")
   size: Int!
-
   digest: String
-
-  let browser_download_url: String!
-
-  downloadUrl: String! {
-    self.browser_download_url
-  }
+  downloadUrl: String! @JSON.field(name: "browser_download_url")
 
   """
   Downloaded asset file with GitHub's asset digest enforced by Dagger.

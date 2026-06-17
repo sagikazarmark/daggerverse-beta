@@ -11,11 +11,11 @@ type Github {
     - `https://github.com/owner/repo[.git|...]`
     - `git@github.com:owner/repo.git`
     """
-    repository: String = null,
+    repository: String,
     """
     GitHub token
     """
-    token: Secret = null,
+    token: Secret,
   ) {
     if (repository != null) {
       self.repository = normalizeRepository(repository)

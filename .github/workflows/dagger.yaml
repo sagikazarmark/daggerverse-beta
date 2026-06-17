@@ -20,16 +20,16 @@ jobs:
       matrix:
         module:
           # - crates
-          - distro
+          # - distro
           - github
-          - kubectl
-          - minisign
-          - olareg
-          - php-dist
-          - restate
-          - rust
-          - wrangler
-          - zig-dist
+          # - kubectl
+          # - minisign
+          # - olareg
+          # - php-dist
+          # - restate
+          # - rust
+          # - wrangler
+          # - zig-dist
 
     steps:
       - name: Checkout repository

@@ -17,7 +17,7 @@ type Archive {
       .withExec(["apk", "add", "libarchive-tools"])
       .withWorkdir("/work/src")
       .withExec(["mkdir", "-p", "/work/out"])
-      .withMountedFile("", file)
+      .withMountedFile(file.name, file)
       .withExec(args)
       .directory("/work/out")
   }

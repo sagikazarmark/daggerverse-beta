@@ -1,68 +1,180 @@
 type MacosSdk {
-  """
-  MacOS SDK version
-  """
-  pub version: String!
+  let versions: [String!]!
+  let defaultVersion: String!
+  let installRoot: String!
 
   new(
     """
-    MacOS SDK version
+    List of MacOS SDK versions to install.
     """
-    version: String!,
+    versions: [String!]!,
+    """
+    Version to use as the default SDK.
+    """
+    defaultVersion: String = null,
+    """
+    Path to install MacOS SDKs into.
+    """
+    installRoot: String! = "/opt/MacOSX-SDK",
   ) {
-    self.version = version
+    if (versions.isEmpty) {
+      raise "at least one version must be specified"
+    }
+
+    if (!installRoot.hasPrefix("/")) {
+      raise "install root must be an absolute path"
+    }
+
+    if (defaultVersion != null and !versions.contains(defaultVersion)) {
+      raise "default version must be one of the specified versions"
+    }
+
+    self.versions = versions
+    self.defaultVersion = defaultVersion
+    self.installRoot = installRoot
 
     self
   }
 
   """
-  Download the MacOS SDK.
+  Download and extract the selected MacOS SDK versions into a directory.
   """
-  pub download: Directory! {
-    let asset = Dagger
-      .github
-      .release(self.version, "joseluisq/macosx-sdks")
-      .asset("MacOSX" + self.version + ".sdk.tar.xz")
+  directory: Directory! {
+    self.versions.reduce(Dagger.directory) { dir, version =>
+      dir.withDirectory(version.sdkName, version.directory)
+    }
+  }
 
-    if (asset == null) {
-      raise "asset is null"
+  """
+  Get a specific MacOS SDK version.
+  """
+  version(
+    """
+    MacOS SDK version
+    """
+    version: String!,
+  ): Version! {
+    Version(version, self.installRoot)
+  }
+
+  """
+  Download and install multiple MacOS SDK versions.
+  """
+  versions(
+    """
+    List of MacOS SDK versions to install.
+    """
+    versions: [String!]!,
+    """
+    Default version to use as the primary SDK.
+    """
+    defaultVersion: String,
+  ): Versions! {
+    let default: Version = null
+    if (defaultVersion != null) {
+      versions = (versions + [defaultVersion]).uniq
+      default = Version(defaultVersion, self.installRoot)
     }
 
-    asset.extracted(true)
+    Versions(
+      versions.map { Version(_, self.installRoot) },
+      default,
+      self.installRoot,
+    )
+  }
+}
+
+type Version {
+  let version: String!
+  let installRoot: String!
+
+  let sdkName: String! {
+    "MacOSX" + self.version + ".sdk"
   }
 
   """
-  Returns the default installation path for the MacOS SDK.
+  Download and extract the MacOS SDK into a directory.
   """
-  pub defaultPath: String! {
-    "/opt/MacOSX-SDK/MacOSX" + self.version + ".sdk"
+  directory: Directory! {
+    Dagger
+      .github("joseluisq/macosx-sdks")
+      .release(self.version)
+      .asset(self.sdkName + ".tar.xz")
+      .extracted(true)!
   }
 
   """
-  Installs the MacOS SDK into the provided container.
+  An overlay that installs the MacOS SDK into a container.
   """
-  pub install(
+  overlay(
     """
-    Container to install the MacOS SDK into.
+    Path to install the MacOS SDK into.
     """
-    container: Container! = Dagger.container.from("alpine:latest"),
+    installRoot: String! = self.installRoot,
+    """
+    Whether to set the SDKROOT environment variable to SDK path.
+    """
+    default: Boolean! = true,
+  ): Overlay! {
+    let installPath = installRoot.trimSuffix("/") + "/" + self.sdkName
+    let defaultPath = if (default) { installPath } else { null }
+
+    Overlay(installPath, self.directory, defaultPath)
+  }
+}
+
+type Versions {
+  let versions: List[Version!]!
+  let defaultVersion: Version
+  let installRoot: String!
+
+  """
+  Download and extract the selected MacOS SDK versions into a directory.
+  """
+  directory: Directory! {
+    self.versions.reduce(Dagger.directory) { dir, version =>
+      dir.withDirectory(version.sdkName, version.directory)
+    }
+  }
+
+  """
+  An overlay that installs the MacOS SDK into the container.
+  """
+  overlay(
+    """
+    Path to install the MacOS SDK into.
+    """
+    installRoot: String! = self.installRoot,
     """
     Whether to set the SDKROOT environment variable to the installed path.
     """
     default: Boolean! = true,
-    """
-    Path to install the MacOS SDK into.
-    """
-    path: String! = defaultPath,
-  ): Container! {
-    let container = container
-      .withExec(["rm", "-rf", path])
-      .withDirectory(path, download)
+  ): Overlay! {
+    let defaultPath = if (default) { installRoot } else { null }
 
-    if (default) {
-      container = container.withEnvVariable("SDKROOT", path)
+    Overlay(installRoot, self.directory, defaultPath)
+  }
+}
+
+type Overlay {
+  let path: String!
+  let directory: Directory!
+
+  let sdkroot: String
+
+  apply(container: Container!): Container! {
+    container
+      .withExec(["rm", "-rf", self.path])
+      .withDirectory(self.path, self.directory)
+      .{ self.withSdkroot(_) }
+  }
+
+  let withSdkroot(container: Container!): Container! {
+    let sdkroot = self.sdkroot
+    if (sdkroot == null) {
+      return container
     }
 
-    container
+    container.withEnvVariable("SDKROOT", sdkroot)
   }
 }

@@ -99,8 +99,8 @@ type Tests {
     # scrubbed from any output, so the value can't be read back out. Compare it
     # against the expected file inside the container instead: diff exits
     # non-zero (failing the exec) on any mismatch.
-    registryConfig
-      .withMountedSecret(alpine, "/actual.json")
+    alpine
+      .withMountedSecret("/actual.json", registryConfig.secret)
       .withMountedFile("/expected.json", Dagger.file("expected.json", self.expected))
       .withExec(["diff", "-u", "/expected.json", "/actual.json"])
   }

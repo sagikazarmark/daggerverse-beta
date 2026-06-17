@@ -14,23 +14,23 @@ type Tests {
   """
   Restate service is running.
   """
-  pub service: Service! @check @cache(policy: FunctionCachePolicy.Never) {
+  service: Service! @check @cache(policy: FunctionCachePolicy.Never) {
     self.restate.service
   }
 
-  pub client: ClientTests { ClientTests(self) }
+  client: ClientTests { ClientTests(self) }
 
   """
   Restate client container.
   """
-  pub container: Container! @cache(policy: FunctionCachePolicy.Never) {
+  container: Container! @cache(policy: FunctionCachePolicy.Never) {
     self.restate.client.container
   }
 
   """
   Worker is accessible and working.
   """
-  pub worker: String @check @cache(policy: FunctionCachePolicy.Never) {
+  worker: String @check @cache(policy: FunctionCachePolicy.Never) {
     Dagger
       .container
       .from("alpine/curl")
@@ -38,32 +38,29 @@ type Tests {
       .withExec(["curl", "--fail-with-body", "http://restate:8080/Greeter/greet", "--json", "\"Sarah\""])
       .stdout
   }
-
 }
 
 type ClientTests {
   let parent: Tests!
 
-  pub sql: Void @check @cache(policy: FunctionCachePolicy.Never) {
+  sql: Void @check @cache(policy: FunctionCachePolicy.Never) {
     let expectedEndpoint = parent.exampleWorker.endpoint(scheme: "http")
 
-    let deployments = fromJSON(parent.restate.client.sql(
+    let deployments = JSON.decode(parent.restate.client.sql(
       "SELECT * FROM sys_deployment",
       format: RestateSqlResultFormat.JSON,
     ).output) :: [SqlDeployment!]!
 
     assert { !deployments.isEmpty }
     assert { deployments[0].endpoint.trimSuffix("/") == expectedEndpoint }
-
-    null
   }
 
-  pub whoami: Container @check @cache(policy: FunctionCachePolicy.Never) {
+  whoami: Container @check @cache(policy: FunctionCachePolicy.Never) {
     parent.restate.client.whoami
   }
 }
 
 type SqlDeployment {
-  pub endpoint: String!
-  pub services: [String!]!
+  endpoint: String!
+  services: [String!]!
 }

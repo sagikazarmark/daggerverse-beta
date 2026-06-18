@@ -1,3 +1,0 @@
-interface Overlay {
-  apply(container: Container!): Container!
-}

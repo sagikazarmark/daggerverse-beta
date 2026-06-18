@@ -1,0 +1,41 @@
+type EnvFileTests {
+  absolute: Void @check {
+    let source = Dagger.directory.withFile(
+      "/rust/tests/.env.build",
+      Dagger.currentModule.source.file(".env.build"),
+    )
+
+    let output = Dagger
+      .rust(version: rustVersion, source: source, cwd: "/rust", envFile: "/rust/tests/.env.build")
+      .container
+      .withExec(["sh", "-c", "printf '%s|%s|%s|%s' \"$BUILD_ONLY\" \"$EXPORTED\" \"$QUOTED\" \"$EQUALS\""])
+      .stdout
+
+    assert { output == "ok|yes|hello world|a=b" }
+  }
+
+  relative: Void @check {
+    let source = Dagger.directory.withNewFile("app/.env.build", "LOCAL=relative\n")
+
+    let output = Dagger
+      .rust(version: rustVersion, source: source, cwd: "/app", envFile: ".env.build")
+      .container
+      .envVariable("LOCAL")
+
+    assert { output == "relative" }
+  }
+
+  missing(workspace: Workspace!): Void @check {
+    try {
+      Dagger
+        .rust(version: rustVersion, envFile: "/rust/tests/.env.missing")
+        .container
+        .withExec(["true"])
+        .stdout
+
+      raise "expected missing env file to fail"
+    } catch {
+      err => assert { err.message.contains(".env.missing") }
+    }
+  }
+}

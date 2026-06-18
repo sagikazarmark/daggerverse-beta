@@ -19,14 +19,6 @@ let commitDate(source: Directory!): String {
   result.stdout
 }
 
-let withCache(container: Container!, path: String!, cache: CacheVolume): Container! {
-  if (cache == null) {
-    return container
-  }
-
-  container.withMountedCache(path, cache, expand: true)
-}
-
 let withEnvVariable(
   container: Container!,
   name: String!,
@@ -40,10 +32,10 @@ let withEnvVariable(
   container.withEnvVariable(name, value, expand)
 }
 
-let arch: String! {
-  case (Dagger.defaultPlatform) {
+let arch(platform: Platform! = Dagger.defaultPlatform): String! {
+  case (platform) {
     "linux/amd64" => "x86_64"
     "linux/arm64" => "aarch64"
-    else => raise "unsupported platform: " + toString(Dagger.defaultPlatform).trim("\"")
+    else => raise "unsupported platform: " + toString(platform).trim("\"")
   }
 }

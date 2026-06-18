@@ -1,17 +1,16 @@
 type Rust {
-  let baseContainer: Container!
+  """
+  Container with the Rust toolchain and common components installed.
+  """
+  container: Container!
 
-  # Workspace defaults
-  let include: [String!]
-  let exclude: [String!]
+  let source: Directory
+  let cwd: String!
 
-  let targets: [String!]!
-  let components: [String!]!
-  let sourceDateEpoch: String
-  let envFile: String
-  let cargoTargetCache: CacheVolume
+  let env: Environment!
 
   new(
+    ws: Workspace,
     """
     Version (image tag) to use from the official Rust image repository as a base container.
     """
@@ -21,6 +20,14 @@ type Rust {
     """
     container: Container! = Dagger.container.from("rust:" + version),
     """
+    Path to the source directory within the workspace.
+    """
+    path: String! = "/",
+    """
+    Ignore paths included in the gitignore file.
+    """
+    gitignore: Boolean = true,
+    """
     Include only artifacts that match the given pattern (e.g., ["app/", "package.*"]).
     """
     include: [String!],
@@ -28,6 +35,16 @@ type Rust {
     Exclude artifacts that match the given pattern (e.g., ["node_modules/", ".git*"]).
     """
     exclude: [String!],
+    """
+    Source directory. Defaults to the workspace directory at the given path.
+    """
+    source: Directory = { ws.directory(path, exclude, include, gitignore) },
+    """
+    Current working directory within the source.
+    """
+    cwd: String! = {
+      Path.mustBeRelativeTo(ws.cwd ?? "/", "/" + path.trimPrefix("/"))
+    },
     """
     Overlay to apply to the base container.
     """
@@ -47,9 +64,9 @@ type Rust {
     """
     sourceDateEpoch: String,
     """
-    Env file to load into workspace containers.
+    Env file to load into the container.
 
-    Relative paths are resolved from the workspace cwd; absolute paths are resolved from the workspace root.
+    Relative paths are resolved from the working directory absolute paths are resolved from the root.
     """
     envFile: String,
     """
@@ -90,171 +107,67 @@ type Rust {
       null
     },
   ) {
-    self.baseContainer = container
-      .withExec(["rustup", "set", "auto-self-update", "disable"])
-      .withExec(["rustup", "set", "auto-install", "disable"])
-      .{ withCache(_, "${CARGO_HOME}/registry/index", cargoRegistryIndexCache) }
-      .{ withCache(_, "${CARGO_HOME}/registry/cache", cargoRegistryArchiveCache) }
-      .{ withCache(_, "${CARGO_HOME}/git/db", cargoGitDbCache) }
-      .withFile(
-        "/usr/local/bin/",
-        Dagger
-          .github
-          .release("v0.2.0", "sagikazarmark/cargo-artifacts")
-          .asset(`cargo-artifacts-${arch}-unknown-linux-gnu.tar.xz`)
-          .extracted(true)
-          .file("cargo-artifacts"),
-      )
-      .{ overlay.apply(_) ?? _ }
+    let env = Environment(
+      cargoRegistryIndexCache: cargoRegistryIndexCache,
+      cargoRegistryArchiveCache: cargoRegistryArchiveCache,
+      cargoGitDbCache: cargoGitDbCache,
+      overlay: overlay,
 
-    self.include = include
-    self.exclude = exclude
-    self.targets = targets
-    self.components = components
-    self.sourceDateEpoch = sourceDateEpoch
-    self.envFile = envFile
-    self.cargoTargetCache = cargoTargetCache
+      targets: targets,
+      components: components,
+      cargoTargetCache: cargoTargetCache,
+      sourceDateEpoch: sourceDateEpoch,
+      envFile: envFile,
+    )
+
+    self.container = env.init(container, source, cwd)
+    self.source = source
+    self.cwd = cwd
+
+    self.env = env
 
     self
   }
 
-  """
-  Container with the Rust toolchain and common components installed.
-  """
-  container: Container! {
-    self.withTargetsComponents(self.baseContainer)
-  }
+  # """
+  # Mounts the given source directory into the container.
+  # """
+  # withSource(
+  #   """
+  #   Source directory to mount in the container.
+  #   """
+  #   source: Directory!,
+  #   """
+  #   Current working directory within the source directory.
+  #   """
+  #   cwd: String! = "/",
+  #   """
+  #   Overlay to apply to the container before mounting the source in the container.
+  #   """
+  #   overlay: Overlay,
+  # ): WorkspaceContext! {
+  #   let envFile: EnvFile
+  #   if (self.envFile != null) {
+  #     let path = self.envFile!
 
-  """
-  Mounts the given workspace into the container.
-  """
-  withWorkspace(
-    ws: Workspace!,
-    """
-    Overlay to apply to the container before mounting the source in the container.
-    """
-    overlay: Overlay,
-  ): WorkspaceContext! {
-    self.prepareWorkspace(ws) { overlay.apply(_) ?? _ }
-  }
+  #     # relative path
+  #     if (!Path.isAbs(path)) {
+  #       path = Path.join([cwd, path])
+  #     }
 
-  """
-  Mounts the given source directory into the container.
-  """
-  withSource(
-    """
-    Source directory to mount in the container.
-    """
-    source: Directory!,
-    """
-    Current working directory within the source directory.
-    """
-    cwd: String! = "/",
-    """
-    Overlay to apply to the container before mounting the source in the container.
-    """
-    overlay: Overlay,
-  ): WorkspaceContext! {
-    let envFile: EnvFile
-    if (self.envFile != null) {
-      let path = self.envFile!
+  #     envFile = source.file(path).asEnvFile
+  #   }
 
-      # relative path
-      if (!path.hasPrefix("/")) {
-        path = Path.join([cwd, path])
-      }
-
-      envFile = source.file(path).asEnvFile
-    }
-
-    self.prepare(source, cwd, envFile) { overlay.apply(_) ?? _ }
-  }
-
-  let prepareWorkspace(ws: Workspace!, &fn(container: Container!): Container!): WorkspaceContext! {
-    let source = ws.directory(
-      "/",
-      gitignore: true,
-      include: self.include,
-      exclude: self.exclude,
-    )
-    let cwd = ws.cwd
-
-    let envFile: EnvFile
-    if (self.envFile != null) {
-      envFile = ws.file(self.envFile!).asEnvFile
-    }
-
-    self.prepare(source, cwd, envFile) { fn(_) }
-  }
-
-  let prepare(
-    source: Directory!,
-    cwd: String!,
-    envFile: EnvFile,
-    &fn(container: Container!): Container!,
-  ): WorkspaceContext! {
-    let container = self
-      .baseContainer
-      .{ fn(_) }
-      .{ withToolchain(_, source, cwd) }
-      .{ if (envFile != null) _.withEnvFileVariables(envFile) else _ }
-      .withEnvVariable("CARGO_TARGET_DIR", "/work/target")
-      .{ withCache(_, "${CARGO_TARGET_DIR}", self.cargoTargetCache) }
-      .{ withEnvVariable(_, "SOURCE_DATE_EPOCH", self.sourceDateEpoch ?? commitDate(source)) }
-      .withMountedDirectory("/work/src", source)
-      .withWorkdir(Path.join(["/work/src", cwd]))
-
-    WorkspaceContext(container, source, cwd)
-  }
-
-  let withToolchain(container: Container!, source: Directory!, cwd: String!): Container! {
-    container
-      .{ self.withRustToolchain(_, source, cwd) }
-      .{ self.withTargetsComponents(_) }
-  }
-
-  let withRustToolchain(container: Container!, source: Directory!, cwd: String!): Container! {
-    let toolchain = source.findUp("rust-toolchain.toml", cwd)
-
-    if (toolchain == null) {
-      return container
-    }
-
-    container
-      .withWorkdir(Path.join(["/work/src", cwd]))
-      .withMountedFile(Path.join(["/work/src", toolchain]), source.file(toolchain))
-      .withExec(["rustup", "toolchain", "install", "--no-self-update"])
-  }
-
-  let withTargetsComponents(container: Container!): Container! {
-    container
-      .{ self.withTargets(_) }
-      .{ self.withComponents(_) }
-  }
-
-  let withTargets(container: Container!): Container! {
-    if (self.targets.isEmpty) {
-      return container
-    }
-
-    container.withExec(["rustup", "target", "add"] + self.targets)
-  }
-
-  let withComponents(container: Container!): Container! {
-    let components = ["rustfmt", "clippy"] + self.components
-
-    container.withExec(["rustup", "component", "add"] + components.uniq)
-  }
-
+  #   self.prepare(source, cwd, envFile) { overlay.apply(_) ?? _ }
+  # }
   """
   Audit Cargo.lock files for vulnerable crates.
   """
   audit(
-    ws: Workspace!,
     """
     Exit with an error on any violation.
     """
-    deny: CargoAuditDeny = null,
+    deny: CargoAuditDeny,
     """
     Advisory id to ignore (can be specified multiple times).
     """
@@ -280,8 +193,8 @@ type Rust {
     }
 
     self
-      .prepareWorkspace(ws) { withCargoAudit(_).withMountedDirectory(DB_PATH, db) }
       .container
+      .withMountedDirectory(DB_PATH, db)
       .withExec(args)
       .stdout
   }
@@ -290,7 +203,6 @@ type Rust {
   Compile a local package and all of its dependencies.
   """
   build(
-    ws: Workspace!,
     """
     Package to build.
     """
@@ -401,7 +313,6 @@ type Rust {
     }
 
     self
-      .withWorkspace(ws)
       .container
       .withExec(
         args,
@@ -537,20 +448,18 @@ type Rust {
       profile,
     )
 
-    self.withWorkspace(ws).container.withExec(args).combinedOutput
+    self.container.withExec(args).combinedOutput
   }
 
   """
   Format the codebase using rustfmt.
   """
-  fmt(ws: Workspace!): Changeset! @generate {
-    let ctx = self.withWorkspace(ws)
-
-    ctx
+  fmt: Changeset! @generate {
+    self
       .container
       .withExec(["cargo", "fmt", "--", "--check"])
       .directory("")
-      .changes(ctx.source)
+      .changes(self.source!)
   }
 
   """
@@ -591,7 +500,7 @@ type Rust {
     deny.each { d => args += ["--deny", d] }
     forbid.each { f => args += ["--forbid", f] }
 
-    self.withWorkspace(ws).container.withExec(args).stdout
+    self.container.withExec(args).stdout
   }
 
   """
@@ -674,8 +583,8 @@ type Rust {
     )
 
     self
-      .prepareWorkspace(ws) { _.withEnvVariable("RUSTDOCFLAGS", "-D warnings") }
       .container
+      .withEnvVariable("RUSTDOCFLAGS", "-D warnings")
       .withExec(args)
       .stdout
   }
@@ -686,26 +595,4 @@ type Rust {
   fix: Fix! {
     Fix(self)
   }
-}
-
-"""
-Represents a context with a prepared workspace.
-
-Meaning: source code is mounted into the container, workspace specific toolchain (if any) is installed.
-"""
-type WorkspaceContext {
-  """
-  The container with the workspace mounted.
-  """
-  container: Container!
-
-  """
-  The source code directory (containing the entire workspace).
-  """
-  source: Directory!
-
-  """
-  The current working directory within the workspace.
-  """
-  cwd: String!
 }

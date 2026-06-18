@@ -2,8 +2,6 @@
 
 type Path {
   let clean(path: String!): String! {
-    let path = path.trimSpace
-
     if (path == "") {
       return "."
     }
@@ -42,13 +40,117 @@ type Path {
   }
 
   let join(parts: [String!]!): String! {
-    clean(parts.reject { part => part == "" }.join(separator))
+    let parts = parts.reject { part => part == "" }
+
+    if (parts.isEmpty) {
+      ""
+    } else {
+      clean(parts.join(separator))
+    }
   }
 
   """
   Path separator
   """
   let separator: String! { "/" }
+
+  """
+  Checks whether a path is absolute.
+  """
+  let isAbs(path: String!): Boolean! {
+    path.hasPrefix(separator)
+  }
+
+  """
+  Returns an absolute, cleaned path.
+  """
+  let abs(path: String!, root: String! = separator): String! {
+    if (isAbs(path)) {
+      return clean(path)
+    }
+
+    let root = if (root == "") {
+      separator
+    } else if (isAbs(root)) {
+      root
+    } else {
+      separator + root
+    }
+
+    join([root, path])
+  }
+
+  """
+  Returns an absolute, cleaned path.
+  """
+  let absolute(path: String!, root: String! = separator): String! {
+    abs(path, root)
+  }
+
+  """
+  Returns the last element of path.
+  """
+  let base(path: String!): String! {
+    if (path == "") {
+      return "."
+    }
+
+    let parts = path.split(separator).reject { part => part == "" }
+
+    if (parts.isEmpty) {
+      separator
+    } else {
+      parts[parts.length - 1]!
+    }
+  }
+
+  """
+  Returns all but the last element of path.
+  """
+  let dir(path: String!): String! {
+    clean(split(path)[0]!)
+  }
+
+  """
+  Returns the file name extension used by path.
+  """
+  let ext(path: String!): String! {
+    let file = split(path)[1]!
+    let parts = file.split(".")
+
+    if (parts.length == 1) {
+      ""
+    } else {
+      "." + parts[parts.length - 1]!
+    }
+  }
+
+  """
+  Splits path after the final slash, returning [dir, file].
+  """
+  let split(path: String!): [String!]! {
+    let parts = path.split(separator)
+
+    if (parts.length == 1) {
+      return ["", path]
+    }
+
+    [parts.dropLast.join(separator) + separator, parts[parts.length - 1]!]
+  }
+
+  """
+  Checks whether path is rooted at root.
+  """
+  let hasSameRoot(root: String!, path: String!): Boolean! {
+    isRelativeTo(path, root)
+  }
+
+  """
+  Checks whether path is rooted at root.
+  """
+  let sameRoot(root: String!, path: String!): Boolean! {
+    hasSameRoot(root, path)
+  }
 
   let isRelativeTo(path: String!, base: String!): Boolean! {
     let cleanBase = clean(base)

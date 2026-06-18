@@ -1,28 +1,7 @@
 type CargoCommand {
-  let locked: Boolean! = false
-  let offline: Boolean! = false
-  let frozen: Boolean! = false
-
-  new(
-    """
-    Assert that `Cargo.lock` will remain unchanged.
-    """
-    locked: Boolean! = false,
-    """
-    Run without accessing the network.
-    """
-    offline: Boolean! = false,
-    """
-    Equivalent to specifying both --locked and --offline.
-    """
-    frozen: Boolean! = false,
-  ) {
-    self.locked = locked
-    self.offline = offline
-    self.frozen = frozen
-
-    self
-  }
+  locked: Boolean! = false
+  offline: Boolean! = false
+  frozen: Boolean! = false
 
   generic(command: String!): [String!]! {
     let args = ["cargo", command]
@@ -32,89 +11,26 @@ type CargoCommand {
     args
   }
 
-  """
-  Compile a local package and all of its dependencies.
-  """
   build(
-    """
-    Package to build.
-    """
     package: [String!]! = [],
-    """
-    Build all packages in the workspace.
-    """
     all: Boolean! = false,
-    """
-    Exclude packages from the build.
-    """
     exclude: [String!]! = [],
-    """
-    Build only this package's library.
-    """
     lib: Boolean! = false,
-    """
-    Build all binaries.
-    """
     bins: Boolean! = false,
-    """
-    Build only the specified binary.
-    """
     bin: [String!]! = [],
-    """
-    Build all examples.
-    """
     examples: Boolean! = false,
-    """
-    Build only the specified example.
-    """
     example: [String!]! = [],
-    """
-    Build all targets that have `test = true` set.
-    """
     tests: Boolean! = false,
-    """
-    Build only the specified test target.
-    """
     test: [String!]! = [],
-    """
-    Build all targets that have `bench = true` set.
-    """
     benches: Boolean! = false,
-    """
-    Build only the specified bench target.
-    """
     bench: [String!]! = [],
-    """
-    Build all targets.
-    """
     allTargets: Boolean! = false,
-    """
-    Build for the target triple.
-    """
     target: [String!]! = [],
-    """
-    Activate all available features.
-    """
     allFeatures: Boolean! = false,
-    """
-    List of features to activate.
-    """
     feature: [String!]! = [],
-    """
-    Do not activate the `default` feature.
-    """
     noDefaultFeatures: Boolean! = false,
-    """
-    Build artifacts in release mode, with optimizations.
-    """
     release: Boolean! = false,
-    """
-    Build artifacts with the specified profile.
-    """
     profile: String! = "",
-    """
-    Do not abort the build as soon as there is an error.
-    """
     keepGoing: Boolean! = false,
   ): [String!]! {
     let args = ["cargo", "build", "--message-format", "json-render-diagnostics"]
@@ -146,101 +62,29 @@ type CargoCommand {
     args
   }
 
-  """
-  Execute all unit and integration tests and build examples of a local package.
-  """
   test(
-    """
-    If specified, only run tests containing this string in their names.
-    """
     testName: String! = "",
-    """
-    Arguments for the test binary.
-    """
     args: [String!]! = [],
-    """
-    Run all tests regardless of failure.
-    """
     noFailFast: Boolean! = false,
-    """
-    Package to run tests for.
-    """
     package: [String!]! = [],
-    """
-    Test all packages in the workspace.
-    """
     all: Boolean! = false,
-    """
-    Exclude packages from the test.
-    """
     exclude: [String!]! = [],
-    """
-    Test only this package's library.
-    """
     lib: Boolean! = false,
-    """
-    Test all binaries.
-    """
     bins: Boolean! = false,
-    """
-    Test only the specified binary.
-    """
     bin: [String!]! = [],
-    """
-    Test all examples.
-    """
     examples: Boolean! = false,
-    """
-    Test only the specified example.
-    """
     example: [String!]! = [],
-    """
-    Test all targets that have `test = true` set.
-    """
     tests: Boolean! = false,
-    """
-    Test only the specified test target.
-    """
     test: [String!]! = [],
-    """
-    Test all targets that have `bench = true` set.
-    """
     benches: Boolean! = false,
-    """
-    Test only the specified bench target.
-    """
     bench: [String!]! = [],
-    """
-    Test all targets (does not include doctests).
-    """
     allTargets: Boolean! = false,
-    """
-    Build for the target triple.
-    """
     target: [String!]! = [],
-    """
-    Test only this library's documentation.
-    """
     doc: Boolean! = false,
-    """
-    Activate all available features.
-    """
     allFeatures: Boolean! = false,
-    """
-    List of features to activate.
-    """
     feature: [String!]! = [],
-    """
-    Do not activate the `default` feature.
-    """
     noDefaultFeatures: Boolean! = false,
-    """
-    Build artifacts in release mode, with optimizations.
-    """
     release: Boolean! = false,
-    """
-    Build artifacts with the specified profile.
-    """
     profile: String! = "",
   ): [String!]! {
     let _args = ["cargo", "test"]
@@ -279,65 +123,20 @@ type CargoCommand {
     _args
   }
 
-  """
-  Build a package's documentation.
-  """
   doc(
-    """
-    Don't build documentation for dependencies.
-    """
     noDeps: Boolean! = true,
-    """
-    Package to run tests for.
-    """
     package: [String!]! = [],
-    """
-    Test all packages in the workspace.
-    """
     all: Boolean! = false,
-    """
-    Exclude packages from the test.
-    """
     exclude: [String!]! = [],
-    """
-    Test only this package's library.
-    """
     lib: Boolean! = false,
-    """
-    Test all binaries.
-    """
     bins: Boolean! = false,
-    """
-    Test only the specified binary.
-    """
     bin: [String!]! = [],
-    """
-    Test all examples.
-    """
     examples: Boolean! = false,
-    """
-    Test only the specified example.
-    """
     example: [String!]! = [],
-    """
-    Activate all available features.
-    """
     allFeatures: Boolean! = false,
-    """
-    List of features to activate.
-    """
     feature: [String!]! = [],
-    """
-    Do not activate the `default` feature.
-    """
     noDefaultFeatures: Boolean! = false,
-    """
-    Build artifacts in release mode, with optimizations.
-    """
     release: Boolean! = false,
-    """
-    Build artifacts with the specified profile.
-    """
     profile: String! = "",
   ): [String!]! {
     let args = ["cargo", "doc"]

@@ -28,8 +28,6 @@ type CombineTests {
 
     assert { result.file("/usr/local/bin/a").contents == "AAA" }
     assert { result.file("/opt/tool").contents == "TTT" }
-
-    null
   }
 
   """
@@ -48,8 +46,6 @@ type CombineTests {
       .apply(Dagger.container)
 
     assert { result.file("/x").contents == "second" }
-
-    null
   }
 
   """
@@ -64,8 +60,6 @@ type CombineTests {
       .apply(Dagger.container)
 
     assert { result.file("/usr/local/bin/kept").contents == "still-here" }
-
-    null
   }
 
   """
@@ -78,8 +72,6 @@ type CombineTests {
 
     assert { result.file("/marker").contents == "m" }
     assert { result.directory("/").entries == ["marker"] }
-
-    null
   }
 }
 
@@ -91,8 +83,6 @@ type ExecTests {
     let result = Dagger.overlays.withExec(["sh", "-c", "printf ran > /marker"]).apply(alpine)
 
     assert { result.file("/marker").contents == "ran" }
-
-    null
   }
 
   """
@@ -102,8 +92,6 @@ type ExecTests {
     let result = Dagger.overlays.withExec(["cat"], stdin: "hello", redirectStdout: "/out").apply(alpine)
 
     assert { result.file("/out").contents == "hello" }
-
-    null
   }
 }
 
@@ -117,8 +105,6 @@ type FilesystemTests {
     let result = Dagger.overlays.withFile("/usr/local/bin/mytool", file).apply(Dagger.container)
 
     assert { result.file("/usr/local/bin/mytool").contents == "binary-contents" }
-
-    null
   }
 
   """
@@ -130,8 +116,6 @@ type FilesystemTests {
     let result = Dagger.overlays.withFile("/opt/mytool", file, permissions: 493).apply(alpine)
 
     assert { result.withExec(["stat", "-c", "%a", "/opt/mytool"]).stdout.trimSpace == "755" }
-
-    null
   }
 
   """
@@ -145,8 +129,6 @@ type FilesystemTests {
 
     assert { result.file("/usr/local/bin/a").contents == "AAA" }
     assert { result.file("/usr/local/bin/b").contents == "BBB" }
-
-    null
   }
 
   """
@@ -158,8 +140,6 @@ type FilesystemTests {
     let result = Dagger.overlays.withMountedFile("/etc/app.conf", file).apply(Dagger.container)
 
     assert { result.file("/etc/app.conf").contents == "config-data" }
-
-    null
   }
 
   """
@@ -175,8 +155,6 @@ type FilesystemTests {
 
     assert { result.file("/usr/local/bin/mytool").contents == "xyz" }
     assert { result.file("/usr/local/lib/libthing.so").contents == "lib-contents" }
-
-    null
   }
 
   """
@@ -191,8 +169,6 @@ type FilesystemTests {
     let result = Dagger.overlays.withDirectory("/opt", dir, exclude: [], include: ["*.txt"]).apply(Dagger.container)
 
     assert { result.directory("/opt").entries == ["keep.txt"] }
-
-    null
   }
 
   """
@@ -204,7 +180,5 @@ type FilesystemTests {
     let result = Dagger.overlays.withMountedDirectory("/mnt", dir).apply(Dagger.container)
 
     assert { result.file("/mnt/data/file").contents == "mounted" }
-
-    null
   }
 }

@@ -1,7 +1,7 @@
 type Dioxus {
   # let env: Environment!
 
-  let rust: RustToolchain!
+  let rust: Rust!
 
   new(
     ws: Workspace,
@@ -121,24 +121,23 @@ type Dioxus {
       null
     },
   ) {
-    let overlay = DioxusOverlay(
+    self.rust = Dagger.rust(
+      version: version,
+      container: container,
       source: source,
       cwd: cwd,
-      dioxusVersion: version,
-      wasmPackVersion: wasmPackVersion,
-      binaryenVersion: binaryenVersion,
-      esbuildVersion: esbuildVersion,
-      tailwindVersion: tailwindVersion,
-      overlay: overlay,
-    )
-
-    let rustToolchain = RustToolchain(
-      version: rustVersion,
-      source: source,
-      cwd: cwd,
-      targets: targets,
-      components: components,
-      overlay: overlay,
+      targets: targets + ["wasm32-unknown-unknown"],
+      components: components + ["rust-std"],
+      overlay: dioxusOverlay(
+        source: source,
+        cwd: cwd,
+        dioxusVersion: version,
+        wasmPackVersion: wasmPackVersion,
+        binaryenVersion: binaryenVersion,
+        esbuildVersion: esbuildVersion,
+        tailwindVersion: tailwindVersion,
+        overlay: overlay,
+      ),
       envFile: envFile,
       sourceDateEpoch: sourceDateEpoch,
       cargoRegistryIndexCache: cargoRegistryIndexCache,
@@ -146,6 +145,32 @@ type Dioxus {
       cargoGitDbCache: cargoGitDbCache,
       cargoTargetCache: cargoTargetCache,
     )
+
+    # let rustToolchain = RustToolchain(
+    #   version: rustVersion,
+    #   container: container,
+    #   source: source,
+    #   cwd: cwd,
+    #   targets: targets,
+    #   components: components,
+    #   overlay: FooOverlay,
+    #   # overlay: dioxusOverlay(
+    #   #   source: source,
+    #   #   cwd: cwd,
+    #   #   dioxusVersion: version,
+    #   #   wasmPackVersion: wasmPackVersion,
+    #   #   binaryenVersion: binaryenVersion,
+    #   #   esbuildVersion: esbuildVersion,
+    #   #   tailwindVersion: tailwindVersion,
+    #   #   overlay: overlay,
+    #   # ),
+    #   envFile: envFile,
+    #   sourceDateEpoch: sourceDateEpoch,
+    #   cargoRegistryIndexCache: cargoRegistryIndexCache,
+    #   cargoRegistryArchiveCache: cargoRegistryArchiveCache,
+    #   cargoGitDbCache: cargoGitDbCache,
+    #   cargoTargetCache: cargoTargetCache,
+    # )
 
     # let env = Environment(
     #   rustToolchain,
@@ -157,7 +182,7 @@ type Dioxus {
     #   tailwindVersion: tailwindVersion,
     # )
 
-    self.rust = rustToolchain
+    # self.rust = rustToolchain
 
     self
   }
@@ -166,7 +191,7 @@ type Dioxus {
   Container with the Rust and Dioxus toolchains installed.
   """
   container: Container! {
-    self.rust.rust.container
+    self.rust.container
   }
 
   # """

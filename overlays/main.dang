@@ -38,6 +38,17 @@ type Overlays {
   }
 
   """
+  Set an environment variable in the container.
+  """
+  withEnvVariable(
+    name: String!,
+    value: String!,
+    expand: Boolean,
+  ): WithEnvVariable! {
+    WithEnvVariable(name: name, value: value, expand: expand)
+  }
+
+  """
   Add a file to the container at the specified path.
   """
   withFile(
@@ -191,6 +202,16 @@ type WithExec implements Overlay {
       expand: self.expand,
       noInit: self.noInit,
     )
+  }
+}
+
+type WithEnvVariable implements Overlay {
+  name: String!
+  value: String!
+  expand: Boolean
+
+  apply(container: Container!): Container! {
+    container.withEnvVariable(name: self.name, value: self.value, expand: self.expand)
   }
 }
 

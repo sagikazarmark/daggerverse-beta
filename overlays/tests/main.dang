@@ -3,6 +3,8 @@ type Tests {
 
   exec: ExecTests! { ExecTests }
 
+  env: EnvTests! { EnvTests }
+
   filesystem: FilesystemTests! { FilesystemTests }
 }
 
@@ -92,6 +94,17 @@ type ExecTests {
     let result = Dagger.overlays.withExec(["cat"], stdin: "hello", redirectStdout: "/out").apply(alpine)
 
     assert { result.file("/out").contents == "hello" }
+  }
+}
+
+type EnvTests {
+  """
+  withEnvVariable sets an environment variable in the container.
+  """
+  withEnvVariable: Void @check {
+    let result = Dagger.overlays.withEnvVariable("MARKER", "value").apply(alpine)
+
+    assert { result.withExec(["printenv", "MARKER"]).stdout.trimSpace == "value" }
   }
 }
 

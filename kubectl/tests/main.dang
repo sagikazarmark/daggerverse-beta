@@ -202,7 +202,7 @@ type Tests {
   """
   "kubectl" is prepended to the command when it is not the first argument.
   """
-  exec: Void @check @cache(policy: neverCache) {
+  exec: Void @check @cache(policy: FunctionCachePolicy.Never) {
     let output = Dagger.kubectl.withExec(["version", "--client"]).stdout
 
     assert { output.contains("Client Version") }
@@ -211,7 +211,7 @@ type Tests {
   """
   The command is left untouched when it already starts with "kubectl".
   """
-  execPrefixed: Void @check @cache(policy: neverCache) {
+  execPrefixed: Void @check @cache(policy: FunctionCachePolicy.Never) {
     let output = Dagger.kubectl.withExec(["kubectl", "version", "--client"]).stdout
 
     assert { output.contains("Client Version") }
@@ -220,7 +220,7 @@ type Tests {
   """
   Standard output and error can be redirected to files.
   """
-  execRedirects: Void @check @cache(policy: neverCache) {
+  execRedirects: Void @check @cache(policy: FunctionCachePolicy.Never) {
     let stdout = Dagger
       .kubectl
       .withExec(["version", "--client"], redirectStdout: "/stdout")
@@ -245,7 +245,7 @@ type Tests {
   """
   Standard input can be redirected from a file.
   """
-  execRedirectStdin: Void @check @cache(policy: neverCache) {
+  execRedirectStdin: Void @check @cache(policy: FunctionCachePolicy.Never) {
     let output = Dagger
       .kubectl(
         Dagger
@@ -274,7 +274,7 @@ type Tests {
   """
   Commands can target a specific context.
   """
-  execContext: Void @check @cache(policy: neverCache) {
+  execContext: Void @check @cache(policy: FunctionCachePolicy.Never) {
     let output = self.kubectl.withExec(["version"], context: "default").stdout
 
     assert { output.contains("Server Version") }
@@ -283,7 +283,7 @@ type Tests {
   """
   Standard input is passed to the command.
   """
-  execStdin: Void @check @cache(policy: neverCache) {
+  execStdin: Void @check @cache(policy: FunctionCachePolicy.Never) {
     let output = self
       .kubectl
       .withExec(["apply", "--filename", "-"], stdin: namespaceManifest("kubectl-test-stdin"))
@@ -315,7 +315,7 @@ type Tests {
   """
   applyFile applies a manifest file to the cluster.
   """
-  applyFile: Void @check @cache(policy: neverCache) {
+  applyFile: Void @check @cache(policy: FunctionCachePolicy.Never) {
     let output = self
       .kubectl
       .applyFile(fixture("manifest.yaml"), context: "default")
@@ -328,7 +328,7 @@ type Tests {
   """
   applyFile can apply a manifest in a specific namespace.
   """
-  applyFileNamespace: Void @check @cache(policy: neverCache) {
+  applyFileNamespace: Void @check @cache(policy: FunctionCachePolicy.Never) {
     let output = self
       .kubectl
       .applyFile(fixture("namespaced-manifest.yaml"), namespace: "kubectl-test-ns")
@@ -341,7 +341,7 @@ type Tests {
   """
   applyDirectory applies all manifests from a directory to the cluster.
   """
-  applyDirectory: Void @check @cache(policy: neverCache) {
+  applyDirectory: Void @check @cache(policy: FunctionCachePolicy.Never) {
     let output = self
       .kubectl
       .applyDirectory(
@@ -357,7 +357,7 @@ type Tests {
   """
   applyDirectory can process a directory recursively.
   """
-  applyDirectoryRecursive: Void @check @cache(policy: neverCache) {
+  applyDirectoryRecursive: Void @check @cache(policy: FunctionCachePolicy.Never) {
     let output = self
       .kubectl
       .applyDirectory(

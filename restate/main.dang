@@ -14,7 +14,7 @@ type Restate {
     """
     Custom container to use as a base container.
     """
-    container: Container! = Dagger.container.from("docker.restate.dev/restatedev/restate:" + version),
+    container: Container! = Dagger.container.from("ghcr.io/restatedev/restate:" + version),
   ) {
     self.container = container
 

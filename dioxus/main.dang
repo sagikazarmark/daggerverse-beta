@@ -1,6 +1,4 @@
 type Dioxus {
-  # let env: Environment!
-
   let rust: Rust!
 
   new(
@@ -146,44 +144,6 @@ type Dioxus {
       cargoTargetCache: cargoTargetCache,
     )
 
-    # let rustToolchain = RustToolchain(
-    #   version: rustVersion,
-    #   container: container,
-    #   source: source,
-    #   cwd: cwd,
-    #   targets: targets,
-    #   components: components,
-    #   overlay: FooOverlay,
-    #   # overlay: dioxusOverlay(
-    #   #   source: source,
-    #   #   cwd: cwd,
-    #   #   dioxusVersion: version,
-    #   #   wasmPackVersion: wasmPackVersion,
-    #   #   binaryenVersion: binaryenVersion,
-    #   #   esbuildVersion: esbuildVersion,
-    #   #   tailwindVersion: tailwindVersion,
-    #   #   overlay: overlay,
-    #   # ),
-    #   envFile: envFile,
-    #   sourceDateEpoch: sourceDateEpoch,
-    #   cargoRegistryIndexCache: cargoRegistryIndexCache,
-    #   cargoRegistryArchiveCache: cargoRegistryArchiveCache,
-    #   cargoGitDbCache: cargoGitDbCache,
-    #   cargoTargetCache: cargoTargetCache,
-    # )
-
-    # let env = Environment(
-    #   rustToolchain,
-    #   container: container,
-    #   version: version,
-    #   wasmPackVersion: wasmPackVersion,
-    #   binaryenVersion: binaryenVersion,
-    #   esbuildVersion: esbuildVersion,
-    #   tailwindVersion: tailwindVersion,
-    # )
-
-    # self.rust = rustToolchain
-
     self
   }
 
@@ -194,25 +154,6 @@ type Dioxus {
     self.rust.container
   }
 
-  # """
-  # Prepares the Dioxus toolchain for the given source directory.
-  # """
-  # withSource(
-  #   """
-  #   Source directory to mount in the container.
-  #   """
-  #   source: Directory!,
-  #   """
-  #   Current working directory within the source directory.
-  #   """
-  #   cwd: String! = "/",
-  #   """
-  #   Overlay to apply to the base container before mounting the source in the container.
-  #   """
-  #   overlay: Overlay,
-  # ): WorkspaceContext! {
-  #   self.env.withSource(source, cwd, overlay)
-  # }
   """
   Initializes a new Dioxus project with the given name.
   """
@@ -241,28 +182,6 @@ type Dioxus {
   }
 }
 
-"""
-Represents a context with a prepared workspace.
-
-Meaning: source code is mounted into the container, workspace specific toolchain (if any) is installed.
-"""
-type WorkspaceContext {
-  """
-  The container with the workspace mounted.
-  """
-  container: Container!
-
-  """
-  The source code directory (containing the entire workspace).
-  """
-  source: Directory!
-
-  """
-  The current working directory within the workspace.
-  """
-  cwd: String!
-}
-
 type Init {
   let name: String!
   let template: Directory!
@@ -289,7 +208,6 @@ type Init {
       "--yes",
       "--name", self.name,
       "--template", "/work/template",
-      "--option", "default_platform=web",
     ]
 
     let subtemplate = self.subtemplate

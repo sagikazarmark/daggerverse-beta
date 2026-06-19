@@ -1,19 +1,35 @@
 type CargoLock {
-  let lockFile: File!
+  let file: File!
 
-  # TODO: why is this necessary?
-  let lock: String
+  new(
+    ws: Workspace! = Dagger.currentWorkspace,
+    """
+    Cargo.lock file to use.
+    """
+    file: File! = {
+      let path: String = ws.findUp("Cargo.lock")
 
-  new(workspace: Workspace!) {
-    let lock: String = workspace.findUp("Cargo.lock")
+      if (path == null) {
+        raise `No Cargo.lock found in ${ws.cwd} (or any parent directory)`
+      }
 
-    if (lock == null) {
-      raise `No Cargo.lock found in ${workspace.cwd} (or any parent directory)`
-    }
-
-    self.lockFile = workspace.file(lock)
+      ws.file(path)
+    },
+  ) {
+    self.file = file
 
     self
+  }
+
+  let parse: LockFile! {
+    TOML.decode(self.file.contents) :: LockFile!
+  }
+
+  """
+  The list of packages in the Cargo.lock file.
+  """
+  packages: [Package!]! {
+    self.parse.packages
   }
 
   """
@@ -22,48 +38,27 @@ type CargoLock {
   May return an empty list if no package is found, or a list of packages if multiple are found.
   """
   find(name: String!): [Package!]! {
-    self.select(name)
+    self.packages.filter { _.name == name }
   }
 
   """
   Report whether a package with the given name exists.
   """
   has(name: String!): Boolean! {
-    !self.select(name).isEmpty
+    self.findOne(name) != null
   }
 
   """
   Find a package by name (if any).
   """
   findOne(name: String!): Package {
-    self.select(name)[0]
+    self.packages.find { _.name == name }
   }
+}
 
-  let select(name: String!): [Package!]! {
-    let expr = `[.package[] | select(.name == "${name}") | {"name": .name, "version": .version}]`
-
-    fromJSON(self.eval(expr)) :: [Package!]!
-  }
-
-  let eval(expr: String!): String! {
-    yq
-      .withMountedFile("Cargo.lock", self.lockFile)
-      .withExec(
-        [
-          "yq",
-          "-p", "toml", "-o", "json", "-I=0",
-          expr,
-          "Cargo.lock",
-        ],
-        redirectStdout: "/stdout",
-      )
-      .file("/stdout")
-      .contents
-  }
-
-  let yq: Container! {
-    Dagger.container.from("mikefarah/yq:4.53.2@sha256:0cb4a78491b6e62ee8a9bf4fbeacbd15b5013d19bc420591b05383a696315e60")
-  }
+type LockFile {
+  version: Int!
+  packages: [Package!]! @TOML.field(name: "package")
 }
 
 type Package {

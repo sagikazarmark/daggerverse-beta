@@ -1,26 +1,33 @@
 type Tests {
-  wasmBindgen(workspace: Workspace!): Void @check {
-    let package = Dagger.cargoLock(workspace).findOne("wasm-bindgen")!
+  let file: File! = Dagger.currentModule.source.file("Cargo.lock")
+  let ws: Workspace! = Dagger
+    .directory
+    .withFile("Cargo.lock", file)
+    .asWorkspace
 
-    assert { package.name == "wasm-bindgen" }
-    assert { package.version == "0.2.122" }
+  let tests = ["wasm-bindgen": {{package: "wasm-bindgen", version: "0.2.122"}}, "dioxus": {{package: "dioxus", version: "0.7.9"}}]
+
+  found: Void @check {
+    tests.each { key, value =>
+      let package = Dagger.cargoLock(ws: ws).findOne(key)!
+
+      assert { package.name == key }
+      assert { package.version == value.version }
+
+      let package = Dagger.cargoLock(file: file).findOne(key)!
+
+      assert { package.name == key }
+      assert { package.version == value.version }
+    }
 
     null
   }
 
-  dioxus(workspace: Workspace!): Void @check {
-    let package = Dagger.cargoLock(workspace).findOne("dioxus")!
+  notFound: Void @check {
+    assert { !Dagger.cargoLock(ws).has("foobarbaz_THIS_SHOULD_NOT_EXIST") }
+    assert { Dagger.cargoLock(ws).has("dioxus") }
 
-    assert { package.name == "dioxus" }
-    assert { package.version == "0.7.9" }
-
-    null
-  }
-
-  notFound(workspace: Workspace!): Void @check {
-    assert { !Dagger.cargoLock(workspace).has("foobarbaz_THIS_SHOULD_NOT_EXIST") }
-    assert { Dagger.cargoLock(workspace).has("dioxus") }
-
-    null
+    assert { !Dagger.cargoLock(file: file).has("foobarbaz_THIS_SHOULD_NOT_EXIST") }
+    assert { Dagger.cargoLock(file: file).has("dioxus") }
   }
 }

@@ -21,8 +21,8 @@ type Command {
 
   run(
     args: [String!]! = [],
-    expect: ReturnType = null,
-    redirectStdout: String = null,
+    expect: ReturnType,
+    redirectStdout: String,
   ): Container! {
     self
       .container
@@ -75,7 +75,7 @@ type Command {
     self
   }
 
-  withKeyArg(file: File!, password: Secret = null): Command! {
+  withKeyArg(file: File!, password: Secret): Command! {
     let cmd = self.withFileArg(file)
 
     if (password != null) {
@@ -85,7 +85,7 @@ type Command {
     cmd
   }
 
-  withKey(file: File!, password: Secret = null): Command! {
+  withKey(file: File!, password: Secret): Command! {
     self.withArgs(["--key"]).withKeyArg(file, password)
   }
 }

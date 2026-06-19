@@ -43,7 +43,7 @@ type PublicKey {
     """
     Fingerprint format.
     """
-    format: FingerprintFormat = null,
+    format: FingerprintFormat,
   ): String! {
     Command(["crypto", "key", "fingerprint"])
       .withFileArg(self.file)
@@ -112,7 +112,7 @@ type PrivateKey {
     """
     Password used to decrypt the private key.
     """
-    password: Secret = null,
+    password: Secret,
   ): String! {
     self.ensurePassword(password)
 
@@ -135,7 +135,7 @@ type PrivateKey {
     """
     Password used to decrypt the private key.
     """
-    password: Secret = null,
+    password: Secret,
   ): PublicKey! {
     self.ensurePassword(password)
 
@@ -157,7 +157,7 @@ type PrivateKey {
     """
     Password used to decrypt the private key.
     """
-    password: Secret = null,
+    password: Secret,
   ): String! {
     self.ensurePassword(password)
 
@@ -184,20 +184,18 @@ type PrivateKey {
     let result = Command(["crypto", "change-pass"])
       .withFileArg(self.file)
       .withArgs(["--out", fileName])
-      .{ cmd =>
+      .{
         if (old != null) {
-          cmd = cmd.withArg("--password-file").withSecretArg("old-password", old)
-        }
-
-        cmd
+          _.withArg("--password-file").withSecretArg("old-password", old)
+        } else _
       }
-      .{ cmd =>
+      .{
         if (new != null) {
-          cmd
+          _
             .withArg("--new-password-file")
             .withSecretArg("new-password", new)
         } else {
-          cmd.withArgs(["--no-password", "--insecure"])
+          _.withArgs(["--no-password", "--insecure"])
         }
       }
       .run
@@ -261,14 +259,10 @@ type RsaKeyParams implements KeyParams {
 }
 
 enum EcCurve {
-  P_256
-  P_384
-  P_521
+  P256
+  P384
+  P521
 }
-
-# P256
-# P384
-# P521
 
 type EcKeyParams implements KeyParams {
   curve: EcCurve
@@ -300,9 +294,10 @@ type EcKeyParams implements KeyParams {
 
   let curveString: String! {
     case (self.curve) {
-      EcCurve.P_256 => "P-256"
-      EcCurve.P_384 => "P-384"
-      EcCurve.P_521 => "P-521"
+      EcCurve.P256 => "P-256"
+      EcCurve.P384 => "P-384"
+      EcCurve.P521 => "P-521"
+      else => raise `unsupported curve: ${self.curve}`
     }
   }
 }
@@ -331,11 +326,11 @@ type Keys {
 
     Resulting keys will be called NAME.pub and NAME.key.
     """
-    name: String = null,
+    name: String,
     """
     Password used to encrypt the generated private key.
     """
-    password: Secret = null,
+    password: Secret,
   ): KeyGenerator! {
     KeyGenerator(name, password)
   }
@@ -373,7 +368,7 @@ type KeyGenerator {
     """
     RSA key size (default: 2048).
     """
-    size: Int = null,
+    size: Int,
   ): KeyPair! {
     self.generate(RsaKeyParams(size))
   }
@@ -385,7 +380,7 @@ type KeyGenerator {
     """
     Elliptic curve to use for the generated EC key (default: P256).
     """
-    curve: EcCurve = null,
+    curve: EcCurve,
   ): KeyPair! {
     self.generate(EcKeyParams(curve))
   }

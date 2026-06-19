@@ -9,7 +9,7 @@ type Certificate {
   """
   chain: File
 
-  new(file: File!, chain: File = null) {
+  new(file: File!, chain: File) {
     self.file = file
     self.chain = chain
 
@@ -73,17 +73,11 @@ type Certificate {
     Renewal window as a duration (e.g. "8h") or a percentage
     of the certificate lifetime (e.g. "25%") (default: 66%).
     """
-    expiresIn: String = null,
+    expiresIn: String,
   ): Boolean! {
     let result = Command(["certificate", "needs-renewal"])
       .withFileArg(self.file)
-      .{ cmd =>
-        if (expiresIn != null) {
-          cmd = cmd.withArgs(["--expires-in", expiresIn])
-        }
-
-        cmd
-      }
+      .{ if (expiresIn != null) _.withArgs(["--expires-in", expiresIn]) else _ }
       .run(expect: ReturnType.ANY)
 
     case (result.exitCode) {
@@ -139,7 +133,7 @@ type CertificateAuthority {
     """
     Password used to decrypt the private key.
     """
-    password: Secret = null,
+    password: Secret,
   ): CertificateIssuer! {
     self.key.ensurePassword(password)
 
@@ -218,15 +212,15 @@ type CertificateRequest {
     """
     Certificate template file.
     """
-    template: File = null,
+    template: File,
     """
     Certificate validity end time or duration.
     """
-    notAfter: String = null,
+    notAfter: String,
     """
     Certificate validity start time or duration.
     """
-    notBefore: String = null,
+    notBefore: String,
   ): CertificateRequestSigner! {
     CertificateRequestSigner(
       csr: self.csr,
@@ -278,7 +272,7 @@ type CertificateRequestSigner {
     """
     Maximum path length to set in the pathLenConstraint of the certificate (default: 0; -1 for no limit).
     """
-    pathLen: Int = null,
+    pathLen: Int,
     """
     Certificate template file.
     """
@@ -371,15 +365,15 @@ type X509 {
     """
     Certificate template file.
     """
-    template: File = null,
+    template: File,
     """
     Certificate validity end time or duration.
     """
-    notAfter: String = null,
+    notAfter: String,
     """
     Certificate validity start time or duration.
     """
-    notBefore: String = null,
+    notBefore: String,
   ): CreateCertificateKeySelector! {
     CreateCertificateKeySelector(template, notAfter, notBefore)
   }

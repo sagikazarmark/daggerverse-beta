@@ -34,7 +34,7 @@ type X509Tests {
   selfSigned: File! @check {
     x509
       .create
-      .ec(CryptoEcCurve.P_256)
+      .ec(CryptoEcCurve.P256)
       .selfSigned("self-signed.local", sans: ["self-signed.local"])
       .certificate
       .fullChain
@@ -122,7 +122,7 @@ type X509Tests {
   CSR creation returns a CSR file.
   """
   csr: File! @check {
-    x509.create.ec(CryptoEcCurve.P_256).csr("test.local", sans: ["test.local"]).csr
+    x509.create.ec(CryptoEcCurve.P256).csr("test.local", sans: ["test.local"]).csr
   }
 
   """

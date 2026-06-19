@@ -1,7 +1,3 @@
-# @cache directive args only see the core prelude in the first-processed file
-# of a multi-file module, so the policy needs a top-level alias here.
-let neverCache: FunctionCachePolicy! = FunctionCachePolicy.Never
-
 """
 A kubectl client preconfigured to access the K3s cluster.
 
@@ -64,7 +60,7 @@ type Kubectl {
     """
     Name of the context entry in kubeconfig.
     """
-    context: String = null,
+    context: String,
   ): Kubectl! {
     self.inner = self.inner.withNamespace(namespace, context: context)
 
@@ -85,28 +81,28 @@ type Kubectl {
     """
     Name of the context entry in kubeconfig to use.
     """
-    context: String = null,
+    context: String,
     """
     Content to write to the command's standard input.
     """
-    stdin: String = null,
+    stdin: String,
     """
     Redirect the command's standard input from this path.
     """
-    redirectStdin: String = null,
+    redirectStdin: String,
     """
     Redirect the command's standard output to this path.
     """
-    redirectStdout: String = null,
+    redirectStdout: String,
     """
     Redirect the command's standard error to this path.
     """
-    redirectStderr: String = null,
+    redirectStderr: String,
     """
     Exit codes this command is allowed to exit with without error (default: SUCCESS).
     """
-    expect: ReturnType = null,
-  ): Container! @cache(policy: neverCache) {
+    expect: ReturnType,
+  ): Container! @cache(policy: FunctionCachePolicy.Never) {
     self.inner.withExec(
       args,
       context: context,
@@ -129,12 +125,12 @@ type Kubectl {
     """
     Name of the context entry in kubeconfig to use.
     """
-    context: String = null,
+    context: String,
     """
     Namespace to apply the manifest in.
     """
-    namespace: String = null,
-  ): Container! @cache(policy: neverCache) {
+    namespace: String,
+  ): Container! @cache(policy: FunctionCachePolicy.Never) {
     self.inner.applyFile(file, context: context, namespace: namespace)
   }
 
@@ -149,16 +145,16 @@ type Kubectl {
     """
     Name of the context entry in kubeconfig to use.
     """
-    context: String = null,
+    context: String,
     """
     Namespace to apply the manifests in.
     """
-    namespace: String = null,
+    namespace: String,
     """
     Process the directory recursively.
     """
     recursive: Boolean! = false,
-  ): Container! @cache(policy: neverCache) {
+  ): Container! @cache(policy: FunctionCachePolicy.Never) {
     self.inner.applyDirectory(
       directory,
       context: context,

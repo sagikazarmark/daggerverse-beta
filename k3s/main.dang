@@ -33,7 +33,7 @@ type K3s {
     so a previously generated kubeconfig keeps working.
     When null, a fresh set is generated (and cached for future use).
     """
-    certs: Directory = null,
+    certs: Directory,
     """
     Node ports to expose on the k3s service.
     """
@@ -359,9 +359,6 @@ type K3s {
   }
 
   # The rendered /etc/rancher/k3s/registries.yaml mirror configuration.
-  #
-  # JSON is valid YAML, so we render the structure as JSON rather than
-  # hand-formatting YAML.
   let registriesFile: File! {
     let config = {{
       mirrors: mirrors.map { registry, mirror =>
@@ -380,7 +377,7 @@ type K3s {
       }
     }}
 
-    Dagger.file("registries.yaml", toJSON(config))
+    Dagger.file("registries.yaml", YAML.encode(config))
   }
 
   let gencerts(seed: String!): Directory! {
@@ -403,7 +400,7 @@ type K3s {
 
     let issuer = intermediate.issuer
 
-    let ecgen = x509.create(notAfter: "88800h").ec(CryptoEcCurve.P_256)
+    let ecgen = x509.create(notAfter: "88800h").ec(CryptoEcCurve.P256)
 
     let client = ecgen.intermediate(
       "k3s-client-ca" + suffix,

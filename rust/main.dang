@@ -1,13 +1,8 @@
 type Rust {
-  """
-  Container with the Rust toolchain and common components installed.
-  """
-  container: Container!
+  let env: Environment!
 
   let source: Directory
   let cwd: String!
-
-  let env: Environment!
 
   new(
     ws: Workspace,
@@ -68,7 +63,7 @@ type Rust {
 
     Relative paths are resolved from the working directory absolute paths are resolved from the root.
     """
-    envFile: String,
+    envFile: File,
     """
     Whether to disable automatically mounted cache volumes.
     Useful if you want to mount cache volumes manually or use a different cache volume strategy.
@@ -108,58 +103,37 @@ type Rust {
     },
   ) {
     let env = Environment(
+      container: container,
+      source: source,
+      cwd: cwd,
+
       cargoRegistryIndexCache: cargoRegistryIndexCache,
       cargoRegistryArchiveCache: cargoRegistryArchiveCache,
       cargoGitDbCache: cargoGitDbCache,
-      overlay: overlay,
 
       targets: targets,
       components: components,
+      overlay: overlay,
+      envFile: envFile,
       cargoTargetCache: cargoTargetCache,
       sourceDateEpoch: sourceDateEpoch,
-      envFile: envFile,
     )
 
-    self.container = env.init(container, source, cwd)
+    self.env = env
+
     self.source = source
     self.cwd = cwd
-
-    self.env = env
 
     self
   }
 
-  # """
-  # Mounts the given source directory into the container.
-  # """
-  # withSource(
-  #   """
-  #   Source directory to mount in the container.
-  #   """
-  #   source: Directory!,
-  #   """
-  #   Current working directory within the source directory.
-  #   """
-  #   cwd: String! = "/",
-  #   """
-  #   Overlay to apply to the container before mounting the source in the container.
-  #   """
-  #   overlay: Overlay,
-  # ): WorkspaceContext! {
-  #   let envFile: EnvFile
-  #   if (self.envFile != null) {
-  #     let path = self.envFile!
+  """
+  Container with the Rust toolchain and common components installed.
+  """
+  container: Container! {
+    self.env.container
+  }
 
-  #     # relative path
-  #     if (!Path.isAbs(path)) {
-  #       path = Path.join([cwd, path])
-  #     }
-
-  #     envFile = source.file(path).asEnvFile
-  #   }
-
-  #   self.prepare(source, cwd, envFile) { overlay.apply(_) ?? _ }
-  # }
   """
   Audit Cargo.lock files for vulnerable crates.
   """

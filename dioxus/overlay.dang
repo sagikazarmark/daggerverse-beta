@@ -1,8 +1,27 @@
-interface Overlay implements OverlaysOverlay {
+interface Overlay implements OverlaysOverlay & RustOverlay {
   apply(container: Container!): Container!
 }
 
-let withDioxus(version: String): OverlaysOverlay! {
+type WithFile implements Overlay {
+  path: String!
+  source: File!
+  permissions: Int
+
+  apply(container: Container!): Container! {
+    container.withFile(self.path, self.source, permissions: self.permissions)
+  }
+}
+
+type WithDirectory implements Overlay {
+  path: String!
+  source: Directory!
+
+  apply(container: Container!): Container! {
+    container.withDirectory(self.path, self.source)
+  }
+}
+
+let withDioxus(version: String): Overlay! {
   if (version != null and version != "") {
     version = "v" + version.trimPrefix("v")
   }
@@ -14,10 +33,10 @@ let withDioxus(version: String): OverlaysOverlay! {
     .extracted
     .file("dx")!
 
-  Dagger.overlays.withFile("/usr/local/bin/", binary)
+  WithFile(path: "/usr/local/bin/", source: binary)
 }
 
-let withWasmBindgen(version: String): OverlaysOverlay! {
+let withWasmBindgen(version: String): Overlay! {
   let binaries = Dagger
     .github
     .release(version, "wasm-bindgen/wasm-bindgen")
@@ -25,10 +44,10 @@ let withWasmBindgen(version: String): OverlaysOverlay! {
     .extracted(true)
     .filter(include: ["wasm-bindgen-test-runner", "wasm2es6js", "wasm-bindgen"])!
 
-  Dagger.overlays.withDirectory("/usr/local/bin/", binaries)
+  WithDirectory(path: "/usr/local/bin/", source: binaries)
 }
 
-let withWasmPack(version: String): OverlaysOverlay! {
+let withWasmPack(version: String): Overlay! {
   let binary = Dagger
     .github
     .release(version, "wasm-bindgen/wasm-pack")
@@ -36,17 +55,17 @@ let withWasmPack(version: String): OverlaysOverlay! {
     .extracted(true)
     .file("wasm-pack")!
 
-  Dagger.overlays.withFile("/usr/local/bin/", binary)
+  WithFile(path: "/usr/local/bin/", source: binary)
 }
 
-let withBinaryen(version: String): OverlaysOverlay! {
+let withBinaryen(version: String): Overlay! {
   let dir = Dagger
     .github
     .release(version, "WebAssembly/binaryen")
     .{ _.asset(`binaryen-${_.tagName}-${arch}-linux.tar.gz`) }
     .extracted(true)!
 
-  Dagger.overlays.withDirectory("/usr/local/", dir)
+  WithDirectory(path: "/usr/local/", source: dir)
 }
 
 # Downloads the esbuild binary for the current platform from the npm registry.
@@ -70,17 +89,17 @@ let esbuildBinary(version: String!): File! {
     .file("/tmp/package/bin/esbuild")
 }
 
-let withEsbuild(version: String): OverlaysOverlay! {
+let withEsbuild(version: String): Overlay! {
   let version = if (version == null or version == "") {
     Dagger.github.release(null, "evanw/esbuild").tagName.trimPrefix("v")
   } else {
     version.trimPrefix("v")
   }
 
-  Dagger.overlays.withFile("/usr/local/bin/esbuild", esbuildBinary(version))
+  WithFile(path: "/usr/local/bin/esbuild", source: esbuildBinary(version))
 }
 
-let withTailwind(version: String): OverlaysOverlay! {
+let withTailwind(version: String): Overlay! {
   let binary = Dagger
     .github
     .release(version, "tailwindlabs/tailwindcss")
@@ -88,5 +107,5 @@ let withTailwind(version: String): OverlaysOverlay! {
     .file!
     .withName("tailwindcss")
 
-  Dagger.overlays.withFile("/usr/local/bin/", binary, permissions: 755)
+  WithFile(path: "/usr/local/bin/", source: binary, permissions: 755)
 }

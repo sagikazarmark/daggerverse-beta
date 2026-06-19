@@ -41,10 +41,6 @@ type Rust {
       Path.mustBeRelativeTo(ws.cwd ?? "/", "/" + path.trimPrefix("/"))
     },
     """
-    Overlay to apply to the base container.
-    """
-    overlay: Overlay,
-    """
     Targets to install for cross-compilation.
     """
     targets: [String!]! = [],
@@ -53,17 +49,21 @@ type Rust {
     """
     components: [String!]! = [],
     """
-    Override the source date epoch for reproducible builds.
-
-    If not set, the epoch is determined from the git log (if available).
+    Overlay to apply to the base container.
     """
-    sourceDateEpoch: String,
+    overlay: Overlay,
     """
     Env file to load into the container.
 
     Relative paths are resolved from the working directory absolute paths are resolved from the root.
     """
     envFile: File,
+    """
+    Override the source date epoch for reproducible builds.
+
+    If not set, the epoch is determined from the git log (if available).
+    """
+    sourceDateEpoch: String,
     """
     Whether to disable automatically mounted cache volumes.
     Useful if you want to mount cache volumes manually or use a different cache volume strategy.

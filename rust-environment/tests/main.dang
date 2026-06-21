@@ -1,0 +1,31 @@
+let rustVersion: String! = "1.96.0-slim-trixie@sha256:082a5849a6870672b5f7a5bf4eddc71723fce38756fd834a0d734a5306a310ab"
+
+let realProject: Directory! {
+  Dagger
+    .git("https://github.com/sagikazarmark/cargo-artifacts.git")
+    .head
+    .tree
+}
+
+type Tests {
+  container: ContainerTests! { ContainerTests }
+
+  toolchain: ToolchainTests! { ToolchainTests }
+
+  overlay: Void @check {
+    let container = Dagger.container.from("rust:" + rustVersion)
+
+    assert { container.envVariable("FOO") == null }
+
+    container = Dagger
+      .rustEnvironment(overlay: overlays.withEnvVariable("FOO", "bar"))
+      .apply(container)
+
+    assert { container.envVariable("FOO") == "bar" }
+  }
+
+  workspace: Void @check {
+    assert { realProject.digest == realProject.asWorkspace.directory("").digest }
+    assert { realProject.digest == realProject.asWorkspace.directory("/").digest }
+  }
+}

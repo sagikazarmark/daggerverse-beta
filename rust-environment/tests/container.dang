@@ -1,0 +1,22 @@
+type ContainerTests {
+  defaults: Container! @check {
+    Dagger
+      .rustEnvironment
+      .container(version: rustVersion)
+      .withExec(["cargo", "version"])
+  }
+
+  emptyWorkspace: Container! @check {
+    Dagger
+      .rustEnvironment
+      .container(Dagger.directory.asWorkspace, version: rustVersion)
+      .withExec(["cargo", "version"])
+  }
+
+  realProjectSource: Container! @check {
+    Dagger
+      .rustEnvironment
+      .container(realProject.asWorkspace, version: rustVersion)
+      .withExec(["cargo", "version"])
+  }
+}

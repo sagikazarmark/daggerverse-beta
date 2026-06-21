@@ -1,0 +1,76 @@
+type ToolchainTests {
+  let workspace = Dagger
+    .directory
+    .withFile("rust-toolchain.toml", Dagger.currentModule.source.file("toolchain.toml"))
+    .withDirectory("path/to/project", Dagger.directory)
+    .asWorkspace("path/to/project")
+
+  defaults: Void @check {
+    let container = Dagger.rustEnvironment.container(version: rustVersion)
+
+    assert { !targets(container).contains("wasm32-unknown-unknown") }
+    assert { !components(container).contains("rust-src") }
+  }
+
+  constructorConfigured: Void @check {
+    let container = Dagger
+      .rustEnvironment(
+        targets: ["wasm32-unknown-unknown"],
+        components: ["rust-src"],
+      )
+      .container(version: rustVersion)
+
+    assert { targets(container).contains("wasm32-unknown-unknown") }
+    assert { components(container).contains("rust-src") }
+  }
+
+  toml: Void @check {
+    let container = Dagger
+      .rustEnvironment
+      .container(self.workspace, version: rustVersion)
+      .withMountedDirectory("/work/src", self.workspace.directory("/"))
+      .withWorkdir("/work/src" + self.workspace.cwd)
+
+    assert { toolchains(container).any { _.hasPrefix("1.88-") } }
+    assert { targets(container).contains("wasm32-unknown-unknown") }
+    assert { components(container).contains("rust-src") }
+  }
+
+  tomlAndConstructor: Void @check {
+    let container = Dagger
+      .rustEnvironment(
+        targets: ["aarch64-unknown-linux-musl"],
+        components: ["rustfmt"],
+      )
+      .container(self.workspace, version: rustVersion)
+      .withMountedDirectory("/work/src", self.workspace.directory("/"))
+      .withWorkdir("/work/src" + self.workspace.cwd)
+
+    assert { toolchains(container).any { _.hasPrefix("1.88-") } }
+    assert { targets(container).contains("wasm32-unknown-unknown") }
+    assert { targets(container).contains("aarch64-unknown-linux-musl") }
+    assert { components(container).contains("rust-src") }
+    assert { components(container).any { _.hasPrefix("rustfmt-") } }
+  }
+
+  let targets(container: Container!): [String!]! {
+    container
+      .withExec(["rustup", "target", "list", "--installed"])
+      .stdout
+      .split("\n")
+  }
+
+  let components(container: Container!): [String!]! {
+    container
+      .withExec(["rustup", "component", "list", "--installed"])
+      .stdout
+      .split("\n")
+  }
+
+  let toolchains(container: Container!): [String!]! {
+    container
+      .withExec(["rustup", "toolchain", "list"])
+      .stdout
+      .split("\n")
+  }
+}

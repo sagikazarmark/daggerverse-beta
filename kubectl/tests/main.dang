@@ -156,7 +156,7 @@ type Tests {
   """
   currentContext returns the selected context name.
   """
-  currentContext: String! @check {
+  currentContext: String @check {
     let current = self.multiContextKubectl.currentContext
 
     assert { current == "context-a" }
@@ -197,6 +197,81 @@ type Tests {
     assert { config.contains("current-context: context-a") }
     assert { config.contains("namespace: namespace-a") }
     assert { config.contains("namespace: namespace-b") }
+  }
+
+  """
+  Setting a cluster entry replaces the whole previous entry.
+  """
+  clusterReplace: Void @check {
+    let config = Dagger
+      .kubectl
+      .withCluster(
+        "replace-me",
+        "https://old.example",
+        ca: self.kubeApiServer.ca,
+        serverName: "old.example",
+      )
+      .withCluster("replace-me", "https://new.example")
+      .config
+      .contents
+
+    assert { config.contains("name: replace-me") }
+    assert { config.contains("server: https://new.example") }
+    assert { config.contains("insecure-skip-tls-verify: true") }
+    assert { !config.contains("old.example") }
+    assert { !config.contains("certificate-authority-data") }
+  }
+
+  """
+  Setting a context entry replaces the whole previous entry.
+  """
+  contextReplace: Void @check {
+    let config = Dagger
+      .kubectl
+      .withContext(
+        "replace-me",
+        cluster: "old-cluster",
+        user: "old-user",
+        namespace: "old-namespace",
+      )
+      .withContext(
+        "replace-me",
+        cluster: "new-cluster",
+        user: "new-user",
+      )
+      .config
+      .contents
+
+    assert { config.contains("name: replace-me") }
+    assert { config.contains("cluster: new-cluster") }
+    assert { config.contains("user: new-user") }
+    assert { !config.contains("old-cluster") }
+    assert { !config.contains("old-user") }
+    assert { !config.contains("old-namespace") }
+    assert { !config.contains("namespace:") }
+  }
+
+  """
+  withNamespace patches the namespace of an existing context.
+  """
+  namespacePatch: Void @check {
+    let config = Dagger
+      .kubectl
+      .withContext(
+        "patch-me",
+        cluster: "kept-cluster",
+        user: "kept-user",
+        namespace: "old-namespace",
+      )
+      .withNamespace("new-namespace", context: "patch-me")
+      .config
+      .contents
+
+    assert { config.contains("name: patch-me") }
+    assert { config.contains("cluster: kept-cluster") }
+    assert { config.contains("user: kept-user") }
+    assert { config.contains("namespace: new-namespace") }
+    assert { !config.contains("old-namespace") }
   }
 
   """

@@ -1,6 +1,14 @@
 type Kubectl {
   let baseContainer: Container!
-  let services: Map[Service!] = [:]
+
+  let clusterEntries: Map[Cluster!] = [:]
+  let userEntries: Map[User!] = [:]
+  let contextEntries: Map[Context!] = [:]
+
+  """
+  Name of the current context.
+  """
+  currentContext: String
 
   new(
     """
@@ -19,29 +27,42 @@ type Kubectl {
   Container with kubectl configured.
   """
   container: Container! {
-    self.services.keys.reduce(self.baseContainer) { container, name =>
-      let service = self.services.get(name)!
+    self.clusterEntries.values.reduce(self.configuredContainer) { container, cluster =>
+      let service = cluster.service
 
-      container.withServiceBinding(service.hostname, service)
+      if (service != null) {
+        container.withServiceBinding(service.hostname, service)
+      } else container
     }
   }
 
-  let with(&fn(container: Container!): Container!): Kubectl! {
-    self.baseContainer = fn(self.baseContainer)
-
+  let configuredContainer: Container! {
     self
-  }
-
-  let withService(name: String!, service: Service!): Kubectl! {
-    self.services = self.services.with(name, service)
-
-    self
-  }
-
-  let withoutService(name: String!): Kubectl! {
-    self.services = self.services.without(name)
-
-    self
+      .baseContainer
+      .{
+        self.clusterEntries.keys.reduce(_) { container, name =>
+          self.clusterEntries[name]!.apply(name, container)
+        }
+      }
+      .{
+        self.userEntries.keys.reduce(_) { container, name =>
+          self.userEntries[name]!.apply(name, container)
+        }
+      }
+      .{
+        self.contextEntries.keys.reduce(_) { container, name =>
+          self.contextEntries[name]!.apply(name, container)
+        }
+      }
+      .{
+        let currentContext = self.currentContext
+        if (currentContext != null and currentContext != "") {
+          _.withExec([
+            "kubectl",
+            "config", "set", "current-context", currentContext,
+          ])
+        } else _
+      }
   }
 
   """
@@ -49,7 +70,7 @@ type Kubectl {
   """
   config: File! {
     self
-      .baseContainer
+      .configuredContainer
       .withExec(
         ["kubectl", "config", "view", "--flatten", "--merge", "--output", "yaml"],
         redirectStdout: "/kubeconfig",
@@ -78,28 +99,12 @@ type Kubectl {
     """
     serverName: String,
   ): Kubectl! {
-    let args = [
-      "kubectl",
-      "config", "set-cluster", name,
-      "--server", server,
-    ]
-
-    if (serverName != null) {
-      args += ["--tls-server-name", serverName]
-    }
-
-    let caPath = `/kube/certs/servers/${name}/ca.crt`
-
-    args += if (ca != null) {
-      ["--certificate-authority", caPath]
-    } else {
-      ["--insecure-skip-tls-verify"]
-    }
+    self.clusterEntries = self.clusterEntries.with(
+      name,
+      Cluster(server, ca, serverName, null),
+    )
 
     self
-      .withoutService(name)
-      .with { if (ca != null) _.withMountedFile(caPath, ca) else _ }
-      .with { _.withExec(args) }
   }
 
   """
@@ -111,20 +116,16 @@ type Kubectl {
     """
     name: String!,
   ): Kubectl! {
+    self.clusterEntries = self.clusterEntries.without(name)
+
     self
-      .withoutService(name)
-      .with { _.withExec(["kubectl", "config", "delete-cluster", name]) }
   }
 
   """
   List cluster entries in kubeconfig.
   """
   clusters: [String!]! {
-    self
-      .baseContainer
-      .withExec(["kubectl", "config", "get-clusters"])
-      .stdout
-      .{ configNames(_) }
+    self.clusterEntries.keys
   }
 
   """
@@ -152,14 +153,17 @@ type Kubectl {
     """
     serverName: String,
   ): Kubectl! {
-    self
-      .withCluster(
-        name,
+    self.clusterEntries = self.clusterEntries.with(
+      name,
+      Cluster(
         service.endpoint(scheme: "https", port: servicePort),
         ca,
         serverName,
-      )
-      .withService(name, service)
+        service,
+      ),
+    )
+
+    self
   }
 
   """
@@ -179,23 +183,9 @@ type Kubectl {
     """
     key: File!,
   ): Kubectl! {
-    let path = `/kube/certs/users/${name}/`
-    let certPath = path + "client.crt"
-    let keyPath = path + "client.key"
+    self.userEntries = self.userEntries.with(name, User(certificate, key))
 
-    let args = [
-      "kubectl",
-      "config", "set-credentials", name,
-      "--client-certificate", certPath, "--client-key", keyPath,
-      "--embed-certs",
-    ]
-
-    self.with {
-      _
-        .withMountedFile(certPath, certificate)
-        .withMountedFile(keyPath, key)
-        .withExec(args)
-    }
+    self
   }
 
   """
@@ -207,18 +197,16 @@ type Kubectl {
     """
     name: String!,
   ): Kubectl! {
-    self.with { _.withExec(["kubectl", "config", "delete-user", name]) }
+    self.userEntries = self.userEntries.without(name)
+
+    self
   }
 
   """
   List user entries in kubeconfig.
   """
   users: [String!]! {
-    self
-      .baseContainer
-      .withExec(["kubectl", "config", "get-users"])
-      .stdout
-      .{ configNames(_) }
+    self.userEntries.keys
   }
 
   """
@@ -246,25 +234,20 @@ type Kubectl {
     """
     use: Boolean! = false,
   ): Kubectl! {
-    let args = [
-      "kubectl",
-      "config", "set-context", name,
-      "--cluster", cluster, "--user", user,
-    ]
+    self.contextEntries = self.contextEntries.with(
+      name,
+      Context(
+        cluster,
+        user,
+        namespace,
+      ),
+    )
 
-    if (namespace != null) {
-      args += ["--namespace", namespace]
+    if (use) {
+      self.currentContext = name
     }
 
-    self.with {
-      _
-        .withExec(args)
-        .{
-          if (use) {
-            _.withExec(["kubectl", "config", "use-context", name])
-          } else { _ }
-        }
-    }
+    self
   }
 
   """
@@ -276,29 +259,16 @@ type Kubectl {
     """
     name: String!,
   ): Kubectl! {
-    self.with { _.withExec(["kubectl", "config", "delete-context", name]) }
+    self.contextEntries = self.contextEntries.without(name)
+
+    self
   }
 
   """
   List context entries in kubeconfig.
   """
   contexts: [String!]! {
-    self
-      .baseContainer
-      .withExec(["kubectl", "config", "get-contexts", "--output", "name"])
-      .stdout
-      .{ configNames(_) }
-  }
-
-  """
-  Name of the current context.
-  """
-  currentContext: String! {
-    self
-      .baseContainer
-      .withExec(["kubectl", "config", "current-context"])
-      .stdout
-      .trimSpace
+    self.contextEntries.keys
   }
 
   """
@@ -314,7 +284,26 @@ type Kubectl {
     """
     newName: String!,
   ): Kubectl! {
-    self.with { _.withExec(["kubectl", "config", "rename-context", name, newName]) }
+    let context = self.contextEntries.get(name)
+
+    if (context == null) {
+      raise `context "${name}" not found in kubeconfig`
+    }
+
+    if (self.contextEntries.get(newName) != null) {
+      raise `context "${newName}" already exists in kubeconfig`
+    }
+
+    self.contextEntries = self
+      .contextEntries
+      .without(name)
+      .with(newName, context!)
+
+    if (self.currentContext == name) {
+      self.currentContext = newName
+    }
+
+    self
   }
 
   """
@@ -330,14 +319,24 @@ type Kubectl {
     """
     context: String,
   ): Kubectl! {
-    let args = [
-      "kubectl",
-      "config", "set-context",
-      if (context != null) { context } else { "--current" },
-      "--namespace", namespace,
-    ]
+    let name = if (context != null) { context } else { self.currentContext }
 
-    self.with { _.withExec(args) }
+    if (name == null or name == "") {
+      raise "current context is not set in kubeconfig"
+    }
+
+    let entry = self.contextEntries.get(name)
+
+    if (entry == null) {
+      raise `context "${name}" not found in kubeconfig`
+    }
+
+    self.contextEntries = self.contextEntries.with(
+      name,
+      Context(entry.cluster, entry.user, namespace),
+    )
+
+    self
   }
 
   """
@@ -376,6 +375,28 @@ type Kubectl {
     """
     expect: ReturnType,
   ): Container! @cache(policy: FunctionCachePolicy.Never) {
+    self._withExec(
+      self.container,
+      args,
+      context,
+      stdin,
+      redirectStdin,
+      redirectStdout,
+      redirectStderr,
+      expect,
+    )
+  }
+
+  let _withExec(
+    container: Container!,
+    args: [String!]!,
+    context: String,
+    stdin: String,
+    redirectStdin: String,
+    redirectStdout: String,
+    redirectStderr: String,
+    expect: ReturnType,
+  ): Container! @cache(policy: FunctionCachePolicy.Never) {
     let command = ["kubectl"]
 
     if (context != null) {
@@ -386,8 +407,7 @@ type Kubectl {
       args = args.dropFirst
     }
 
-    self
-      .container
+    container
       .withEnvVariable("DAGGER_CACHE_KEY", Random.string)
       .withExec(
         command + args,
@@ -418,9 +438,11 @@ type Kubectl {
   ): Container! @cache(policy: FunctionCachePolicy.Never) {
     let path = "/work/manifest.yaml"
 
-    self
-      .with { _.withMountedFile(path, file) }
-      .withExec(applyArgs(path, namespace), context: context)
+    self._withExec(
+      self.container.withMountedFile(path, file),
+      applyArgs(path, namespace),
+      context: context,
+    )
   }
 
   """
@@ -452,9 +474,79 @@ type Kubectl {
       args += ["--recursive"]
     }
 
-    self
-      .with { _.withMountedDirectory(path, directory) }
-      .withExec(args, context: context)
+    self._withExec(self.container.withMountedDirectory(path, directory), args, context: context)
+  }
+}
+
+type Cluster {
+  let server: String!
+  let ca: File
+  let serverName: String
+  let service: Service
+
+  let apply(name: String!, container: Container!): Container! {
+    let args = [
+      "kubectl",
+      "config", "set-cluster", name,
+      "--server", self.server,
+    ]
+
+    if (self.serverName != null) {
+      args += ["--tls-server-name", self.serverName!]
+    }
+
+    let ca = self.ca
+    if (ca != null) {
+      let caPath = `/kube/certs/servers/${name}/ca.crt`
+
+      container = container.withMountedFile(caPath, ca)
+      args += ["--certificate-authority", caPath]
+    } else {
+      args += ["--insecure-skip-tls-verify"]
+    }
+
+    container.withExec(args)
+  }
+}
+
+type User {
+  let certificate: File!
+  let key: File!
+
+  let apply(name: String!, container: Container!): Container! {
+    let path = `/kube/certs/users/${name}/`
+    let certPath = path + "client.crt"
+    let keyPath = path + "client.key"
+
+    container
+      .withMountedFile(certPath, self.certificate)
+      .withMountedFile(keyPath, self.key)
+      .withExec([
+        "kubectl",
+        "config", "set-credentials", name,
+        "--client-certificate", certPath, "--client-key", keyPath,
+        "--embed-certs",
+      ])
+  }
+}
+
+type Context {
+  let cluster: String!
+  let user: String!
+  let namespace: String
+
+  let apply(name: String!, container: Container!): Container! {
+    let args = [
+      "kubectl",
+      "config", "set-context", name,
+      "--cluster", self.cluster, "--user", self.user,
+    ]
+
+    if (self.namespace != null) {
+      args += ["--namespace", self.namespace!]
+    }
+
+    container.withExec(args)
   }
 }
 
@@ -466,8 +558,4 @@ let applyArgs(path: String!, namespace: String): [String!]! {
   }
 
   args
-}
-
-let configNames(output: String!): [String!]! {
-  output.trimSpace.split("\n").reject { name => name == "" or name == "NAME" }
 }

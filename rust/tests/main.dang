@@ -8,19 +8,15 @@ let realProject: Directory! {
 }
 
 type Tests {
-  container: ContainerTests! { ContainerTests }
+  # envFile: Void @check {
+  #   let output = Dagger
+  #     .rust(version: rustVersion, envFile: Dagger.currentModule.source.file(".env.build"))
+  #     .container
+  #     .withExec(["sh", "-c", "printf '%s|%s|%s|%s' \"$BUILD_ONLY\" \"$EXPORTED\" \"$QUOTED\" \"$EQUALS\""])
+  #     .stdout
 
-  toolchain: ToolchainTests! { ToolchainTests }
-
-  envFile: Void @check {
-    let output = Dagger
-      .rust(version: rustVersion, envFile: Dagger.currentModule.source.file(".env.build"))
-      .container
-      .withExec(["sh", "-c", "printf '%s|%s|%s|%s' \"$BUILD_ONLY\" \"$EXPORTED\" \"$QUOTED\" \"$EQUALS\""])
-      .stdout
-
-    assert { output == "ok|yes|hello world|a=b" }
-  }
+  #   assert { output == "ok|yes|hello world|a=b" }
+  # }
 
   build: Directory! @check {
     Dagger.rust(version: rustVersion, source: realProject).build

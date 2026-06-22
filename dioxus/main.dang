@@ -1,5 +1,14 @@
 type Dioxus {
-  let rust: Rust!
+  let env: RustEnvironment!
+
+  let baseContainer: Container!
+  let overlay: OverlaysOverlay
+  let source: Directory
+  let cwd: String!
+
+  let sourceDir(cwd: String): String! {
+    Path.join(["/work/src", cwd ?? ""])
+  }
 
   new(
     ws: Workspace,
@@ -7,14 +16,6 @@ type Dioxus {
     Dioxus CLI version to use (default: auto-detect from Cargo.lock).
     """
     version: String,
-    """
-    Version (image tag) to use from the official Rust image repository as a base container.
-    """
-    rustVersion: String! = "latest",
-    """
-    Custom container to use as a base container.
-    """
-    container: Container! = Dagger.container.from("rust:" + rustVersion),
     """
     Version of wasm-pack to use (default: latest).
     """
@@ -31,6 +32,14 @@ type Dioxus {
     Version of Tailwind CSS to use.
     """
     tailwindVersion: String,
+    """
+    Version (image tag) to use from the official Rust image repository as a base container.
+    """
+    rustVersion: String! = "latest",
+    """
+    Custom container to use as a base container.
+    """
+    container: Container! = Dagger.container.from("rust:" + rustVersion),
     """
     Path to the source directory within the workspace.
     """
@@ -91,58 +100,56 @@ type Dioxus {
     """
     cargoRegistryIndexCache: CacheVolume = if (!noCache) {
       Dagger.cacheVolume("cargo-registry-index")
-    } else {
-      null
-    },
+    } else null,
     """
     Cache volume for cargo registry archive.
     """
     cargoRegistryArchiveCache: CacheVolume = if (!noCache) {
       Dagger.cacheVolume("cargo-registry-cache")
-    } else {
-      null
-    },
+    } else null,
     """
     Cache volume for cargo git db.
     """
     cargoGitDbCache: CacheVolume = if (!noCache) {
       Dagger.cacheVolume("cargo-git-db")
-    } else {
-      null
-    },
+    } else null,
     """
     Cache volume for cargo target.
     """
     cargoTargetCache: CacheVolume = if (!noCache) {
       Dagger.cacheVolume("cargo-target")
-    } else {
-      null
-    },
+    } else null,
   ) {
-    self.rust = Dagger.rust(
-      version: version,
-      container: container,
-      source: source,
-      cwd: cwd,
-      targets: targets + ["wasm32-unknown-unknown"],
-      components: components + ["rust-std"],
-      overlay: dioxusOverlay(
-        source: source,
-        cwd: cwd,
-        dioxusVersion: version,
-        wasmPackVersion: wasmPackVersion,
-        binaryenVersion: binaryenVersion,
-        esbuildVersion: esbuildVersion,
-        tailwindVersion: tailwindVersion,
-        overlay: overlay,
-      ),
-      envFile: envFile,
-      sourceDateEpoch: sourceDateEpoch,
+    self.env = Dagger.rustEnvironment(
       cargoRegistryIndexCache: cargoRegistryIndexCache,
       cargoRegistryArchiveCache: cargoRegistryArchiveCache,
       cargoGitDbCache: cargoGitDbCache,
+
+      targets: ["wasm32-unknown-unknown"] + targets,
+      components: ["rust-std"] + components,
       cargoTargetCache: cargoTargetCache,
     )
+
+    let wasmBindgenVersion: String = null
+
+    if (source != null) {
+      version = version ?? packageVersion(source, cwd, "dioxus")
+      wasmBindgenVersion = wasmBindgenVersion ?? packageVersion(source, cwd, "wasm-bindgen")
+    }
+
+    self.overlay = dioxusOverlay(
+      dioxusVersion: version,
+      wasmBindgenVersion: wasmBindgenVersion,
+      wasmPackVersion: wasmPackVersion,
+      binaryenVersion: binaryenVersion,
+      esbuildVersion: esbuildVersion,
+      tailwindVersion: tailwindVersion,
+      overlay: overlay,
+    )
+
+    self.baseContainer = container
+    self.source = source
+    self.cwd = cwd
 
     self
   }
@@ -151,7 +158,21 @@ type Dioxus {
   Container with the Rust and Dioxus toolchains installed.
   """
   container: Container! {
-    self.rust.container
+    self
+      .env
+      .applyWorkspace(self.source.asWorkspace(self.cwd), self.baseContainer)
+      .{ self.overlay.apply(_) ?? _ }
+      .{
+        source = self.source
+        if (source != null) {
+          _
+            .withMountedDirectory(self.sourceDir, source)
+            .withWorkdir(self.sourceDir(self.cwd))
+        } else _
+      }
+    # .{ self.withEnvFile(_) }
+    # .{ self.withEpoch(_, source) }
+    # .{ self.withMountedSource(_, source) }
   }
 
   """

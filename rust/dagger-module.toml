@@ -6,3 +6,11 @@ include = ["!tests"]
 [[dependencies]]
 name = "github"
 source = "../github"
+
+[[dependencies]]
+name = "rust-environment"
+source = "../rust-environment"
+
+[[dependencies]]
+name = "overlays"
+source = "../overlays"

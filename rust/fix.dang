@@ -5,7 +5,7 @@ type Fix {
     parent
       .container
       .withExec(args)
-      .directory(parent.env.sourceDir)
+      .directory(parent.sourceDir)
       .changes(parent.source!)
   }
 

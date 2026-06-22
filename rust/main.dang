@@ -1,8 +1,14 @@
 type Rust {
-  let env: Environment!
+  let env: RustEnvironment!
 
+  let baseContainer: Container!
+  let overlay: Overlay
   let source: Directory
   let cwd: String!
+
+  let sourceDir(cwd: String): String! {
+    Path.join(["/work/src", cwd ?? ""])
+  }
 
   new(
     ws: Workspace,
@@ -74,53 +80,38 @@ type Rust {
     """
     cargoRegistryIndexCache: CacheVolume = if (!noCache) {
       Dagger.cacheVolume("cargo-registry-index")
-    } else {
-      null
-    },
+    } else null,
     """
     Cache volume for cargo registry archive.
     """
     cargoRegistryArchiveCache: CacheVolume = if (!noCache) {
       Dagger.cacheVolume("cargo-registry-cache")
-    } else {
-      null
-    },
+    } else null,
     """
     Cache volume for cargo git db.
     """
     cargoGitDbCache: CacheVolume = if (!noCache) {
       Dagger.cacheVolume("cargo-git-db")
-    } else {
-      null
-    },
+    } else null,
     """
     Cache volume for cargo target.
     """
     cargoTargetCache: CacheVolume = if (!noCache) {
       Dagger.cacheVolume("cargo-target")
-    } else {
-      null
-    },
+    } else null,
   ) {
-    let env = Environment(
-      container: container,
-      source: source,
-      cwd: cwd,
-
+    self.env = Dagger.rustEnvironment(
       cargoRegistryIndexCache: cargoRegistryIndexCache,
       cargoRegistryArchiveCache: cargoRegistryArchiveCache,
       cargoGitDbCache: cargoGitDbCache,
 
       targets: targets,
-      components: components,
-      overlay: overlay,
-      envFile: envFile,
+      components: ["rustfmt", "clippy"] + components,
       cargoTargetCache: cargoTargetCache,
-      sourceDateEpoch: sourceDateEpoch,
     )
 
-    self.env = env
-
+    self.baseContainer = container
+    self.overlay = overlay
     self.source = source
     self.cwd = cwd
 
@@ -131,7 +122,35 @@ type Rust {
   Container with the Rust toolchain and common components installed.
   """
   container: Container! {
-    self.env.container
+    self
+      .env
+      .applyWorkspace(self.source.asWorkspace(self.cwd), self.baseContainer)
+      .withFiles(
+        "/usr/local/bin/",
+        [
+          Dagger
+            .github
+            .release("v0.2.0", "sagikazarmark/cargo-artifacts")
+            .asset(`cargo-artifacts-${arch}-unknown-linux-gnu.tar.xz`)
+            .extracted(true)
+            .file("cargo-artifacts"),
+
+          cargoAuditBinary,
+        ],
+        permissions: 755,
+      )
+      .{ self.overlay.apply(_) ?? _ }
+      .{
+        source = self.source
+        if (source != null) {
+          _
+            .withMountedDirectory(self.sourceDir, source)
+            .withWorkdir(self.sourceDir(self.cwd))
+        } else _
+      }
+    # .{ self.withEnvFile(_) }
+    # .{ self.withEpoch(_, source) }
+    # .{ self.withMountedSource(_, source) }
   }
 
   """
@@ -302,7 +321,6 @@ type Rust {
   Execute all unit and integration tests and build examples of a local package.
   """
   test(
-    ws: Workspace!,
     """
     If specified, only run tests containing this string in their names.
     """

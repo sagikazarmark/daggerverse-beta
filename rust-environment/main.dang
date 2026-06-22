@@ -88,7 +88,7 @@ type RustEnvironment {
       .{ self.withDefaults(_) }
       .{ self.withCaches(_) }
       .{ self.overlay.apply(_) ?? _ }
-      .{ self.rustup(_, workspace) }
+      .{ self.rustup(workspace, _) }
       .{ self.withTargetCache(_) }
   }
 
@@ -134,7 +134,7 @@ type RustEnvironment {
       }
   }
 
-  let rustup(container: Container!, workspace: Workspace): Container! {
+  let rustup(workspace: Workspace, container: Container!): Container! {
     let toolchainFile = workspace.findUp("rust-toolchain.toml")
     let sourceDir = "/tmp/rust-environment/src"
 
@@ -153,7 +153,7 @@ type RustEnvironment {
         if (workspace != null and toolchainFile != null) {
           _
             .withoutMount(sourceDir + toolchainFile)
-            .withoutWorkdir # In case there was a rust-toolchain.toml mounted
+            .withoutWorkdir
         } else _
       }
   }

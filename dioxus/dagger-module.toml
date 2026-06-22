@@ -12,6 +12,10 @@ name = "rust"
 source = "../rust"
 
 [[dependencies]]
+name = "rust-environment"
+source = "../rust-environment"
+
+[[dependencies]]
 name = "cargo-lock"
 source = "../cargo-lock"
 

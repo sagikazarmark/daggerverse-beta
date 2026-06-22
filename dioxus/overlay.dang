@@ -2,6 +2,42 @@ interface Overlay implements OverlaysOverlay {
   apply(container: Container!): Container!
 }
 
+let dioxusOverlay(
+  dioxusVersion: String,
+  wasmBindgenVersion: String,
+  wasmPackVersion: String,
+  binaryenVersion: String,
+  esbuildVersion: String!,
+  tailwindVersion: String,
+  overlay: Overlay,
+): OverlaysOverlay! {
+  Dagger.overlays.combine([
+    Dagger.overlays.withEnvVariable("NO_DOWNLOADS", "1"), # Prevent dioxus CLI from downloading tool dependencies
+    withDioxus(dioxusVersion),
+    withWasmBindgen(wasmBindgenVersion),
+    withWasmPack(wasmPackVersion),
+    withBinaryen(binaryenVersion),
+    withEsbuild(esbuildVersion),
+    withTailwind(tailwindVersion),
+    overlay,
+  ])
+}
+
+let packageVersion(source: Directory!, cwd: String!, name: String!): String {
+  let path = source.findUp("Cargo.lock", cwd)
+  if (path == null) {
+    return null
+  }
+
+  let package = Dagger.cargoLock(file: source.file(path)).findOne(name)
+
+  if (package == null) {
+    return null
+  }
+
+  package.version
+}
+
 let withDioxus(version: String): OverlaysOverlay! {
   if (version != null and version != "") {
     version = "v" + version.trimPrefix("v")

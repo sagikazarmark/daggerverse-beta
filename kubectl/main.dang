@@ -76,7 +76,7 @@ type Kubectl {
     """
     TLS server name for the cluster entry in kubeconfig.
     """
-    tlsServerName: String,
+    serverName: String,
   ): Kubectl! {
     let args = [
       "kubectl",
@@ -84,8 +84,8 @@ type Kubectl {
       "--server", server,
     ]
 
-    if (tlsServerName != null) {
-      args += ["--tls-server-name", tlsServerName]
+    if (serverName != null) {
+      args += ["--tls-server-name", serverName]
     }
 
     let caPath = `/kube/certs/servers/${name}/ca.crt`
@@ -98,11 +98,8 @@ type Kubectl {
 
     self
       .withoutService(name)
-      .with {
-        if (ca != null) { _ = _.withMountedFile(caPath, ca) }
-
-        _.withExec(args)
-      }
+      .with { if (ca != null) _.withMountedFile(caPath, ca) else _ }
+      .with { _.withExec(args) }
   }
 
   """

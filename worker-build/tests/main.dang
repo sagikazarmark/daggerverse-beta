@@ -28,7 +28,6 @@ type Tests {
 
   let workerBuild(source: Directory! = self.source, cwd: String! = "/"): WorkerBuild! {
     Dagger.workerBuild(
-      version: self.version,
       rustVersion: rustVersion,
       container: self.container,
       source: source,

@@ -13,7 +13,7 @@ type WorkerBuild {
   new(
     ws: Workspace,
     """
-    worker-build version to install (default: latest).
+    worker-build version to install (default: auto-detect from Cargo.lock worker crate, then latest).
     """
     version: String,
     """
@@ -127,6 +127,7 @@ type WorkerBuild {
     )
 
     if (source != null) {
+      version = version ?? packageVersion(source, cwd, "worker")
       wasmBindgenVersion = wasmBindgenVersion ?? packageVersion(source, cwd, "wasm-bindgen")
     }
 

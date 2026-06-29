@@ -1,0 +1,107 @@
+let rustVersion: String! = "1.96.0-slim-trixie@sha256:082a5849a6870672b5f7a5bf4eddc71723fce38756fd834a0d734a5306a310ab"
+
+type Tests {
+  let source: Directory!
+  let container: Container!
+
+  new(
+    """
+    workers-rs version.
+    """
+    version: String,
+  ) {
+    let release = Dagger.github.release(version, "cloudflare/workers-rs")
+
+    self.source = Dagger
+      .git("https://github.com/cloudflare/workers-rs.git")
+      .tag(release.tagName)
+      .tree
+
+    self.container = Dagger
+      .container
+      .from("rust:" + rustVersion)
+      .withEnvVariable("DEBIAN_FRONTEND", "noninteractive")
+      .withExec(["apt-get", "update"])
+      .withExec(["apt-get", "install", "-y", "--no-install-recommends", "pkg-config", "libssl-dev"])
+
+    self
+  }
+
+  let workerBuild(source: Directory! = self.source, cwd: String! = "/"): WorkerBuild! {
+    Dagger.workerBuild(
+      rustVersion: rustVersion,
+      container: self.container,
+      source: source,
+      cwd: cwd,
+    )
+  }
+
+  let buildExample(source: Directory! = self.source, name: String!): Directory! {
+    let output = self
+      .workerBuild(source: source, cwd: "examples/" + name)
+      .build
+      .withFile(
+        "wrangler.toml",
+        Dagger
+          .currentModule
+          .source
+          .file("wrangler.toml")
+          .withReplaced("REPLACE_NAME", name),
+      )
+
+    assert { output.file("index.js").contents.contains("wasm") }
+
+    output
+  }
+
+  """
+  Build the Cloudflare workers-rs axum example with worker-build.
+  """
+  axum: Directory! @check {
+    let source = self
+      .source
+      .withoutFile("examples/axum/Cargo.lock")
+      .{
+        _.withFile(
+          "Cargo.toml",
+          _.file("Cargo.toml").withReplaced(
+            search: """    "examples/axum",
+            """,
+            replacement: "",
+          ),
+        )
+      }
+
+    self.buildExample(source: source, name: "axum")
+  }
+
+  """
+  Build the Cloudflare workers-rs digest example with worker-build.
+  """
+  digest: Directory! @check {
+    self.buildExample(name: "digest")
+  }
+
+  """
+  Build the Cloudflare workers-rs digest example and verify it runs with Wrangler dev.
+  """
+  digestService: Void @check @cache(policy: FunctionCachePolicy.Never) {
+    let service = Dagger.wrangler.dev(self.digest)
+
+    let response = Dagger.http(
+      service.endpoint(scheme: "http", port: 8787),
+      experimentalServiceHost: service,
+    )
+
+    assert { response.contents.contains("Woohoo! Hash of 'Hello, World!' is: dffd6021bb2bd5b0af676290809ec3a53191dd81c7f70a4b28688a362182986f") }
+
+    null
+  }
+
+  """
+  Build the Cloudflare workers-rs tracing example with worker-build.
+  """
+  tracing: Directory! @check {
+    self.buildExample(name: "tracing")
+  }
+}

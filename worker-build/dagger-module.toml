@@ -1,0 +1,20 @@
+name = "worker-build"
+engineVersion = "v1.0.0"
+runtime.source = "dang"
+include = ["!tests"]
+
+[[dependencies]]
+name = "github"
+source = "../github"
+
+[[dependencies]]
+name = "rust-environment"
+source = "../rust-environment"
+
+[[dependencies]]
+name = "cargo-lock"
+source = "../cargo-lock"
+
+[[dependencies]]
+name = "overlays"
+source = "../overlays"

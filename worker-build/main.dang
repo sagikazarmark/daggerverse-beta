@@ -1,0 +1,330 @@
+type WorkerBuild {
+  let env: RustEnvironment!
+
+  let baseContainer: Container!
+  let overlay: OverlaysOverlay
+  let source: Directory
+  let cwd: String!
+
+  let sourceDir(cwd: String): String! {
+    Path.join(["/work/src", cwd ?? ""])
+  }
+
+  new(
+    ws: Workspace,
+    """
+    worker-build version to install (default: latest).
+    """
+    version: String,
+    """
+    wasm-bindgen CLI version to use (default: auto-detect from Cargo.lock).
+    """
+    wasmBindgenVersion: String,
+    """
+    Version of Binaryen to use (default: latest).
+    """
+    binaryenVersion: String,
+    """
+    Version of esbuild to use.
+    """
+    esbuildVersion: String! = "0.28.0",
+    """
+    Version (image tag) to use from the official Rust image repository as a base container.
+    """
+    rustVersion: String! = "latest",
+    """
+    Custom container to use as a base container.
+    """
+    container: Container! = Dagger.container.from("rust:" + rustVersion),
+    """
+    Path to the source directory within the workspace.
+    """
+    path: String! = "/",
+    """
+    Ignore paths included in the gitignore file.
+    """
+    gitignore: Boolean = true,
+    """
+    Include only artifacts that match the given pattern (e.g., ["app/", "package.*"]).
+    """
+    include: [String!],
+    """
+    Exclude artifacts that match the given pattern (e.g., ["node_modules/", ".git*"]).
+    """
+    exclude: [String!],
+    """
+    Source directory. Defaults to the workspace directory at the given path.
+    """
+    source: Directory = { ws.directory(path, exclude, include, gitignore) },
+    """
+    Current working directory within the source.
+    """
+    cwd: String! = {
+      Path.mustBeRelativeTo(ws.cwd ?? "/", "/" + path.trimPrefix("/"))
+    },
+    """
+    Targets to install for cross-compilation.
+    """
+    targets: [String!]! = [],
+    """
+    Additional components to install.
+    """
+    components: [String!]! = [],
+    """
+    Overlay to apply to the base container.
+    """
+    overlay: Overlay,
+    """
+    Env file to load into the container.
+
+    Relative paths are resolved from the working directory absolute paths are resolved from the root.
+    """
+    envFile: File,
+    """
+    Override the source date epoch for reproducible builds.
+
+    If not set, the epoch is determined from the git log (if available).
+    """
+    sourceDateEpoch: String,
+    """
+    Whether to disable automatically mounted cache volumes.
+    Useful if you want to mount cache volumes manually or use a different cache volume strategy.
+    """
+    noCache: Boolean! = false,
+    """
+    Cache volume for cargo registry index.
+    """
+    cargoRegistryIndexCache: CacheVolume = if (!noCache) {
+      Dagger.cacheVolume("cargo-registry-index")
+    } else null,
+    """
+    Cache volume for cargo registry archive.
+    """
+    cargoRegistryArchiveCache: CacheVolume = if (!noCache) {
+      Dagger.cacheVolume("cargo-registry-cache")
+    } else null,
+    """
+    Cache volume for cargo git db.
+    """
+    cargoGitDbCache: CacheVolume = if (!noCache) {
+      Dagger.cacheVolume("cargo-git-db")
+    } else null,
+    """
+    Cache volume for cargo target.
+    """
+    cargoTargetCache: CacheVolume = if (!noCache) {
+      Dagger.cacheVolume("cargo-target")
+    } else null,
+  ) {
+    self.env = Dagger.rustEnvironment(
+      cargoRegistryIndexCache: cargoRegistryIndexCache,
+      cargoRegistryArchiveCache: cargoRegistryArchiveCache,
+      cargoGitDbCache: cargoGitDbCache,
+
+      targets: ["wasm32-unknown-unknown"] + targets,
+      components: ["rust-std"] + components,
+      cargoTargetCache: cargoTargetCache,
+    )
+
+    if (source != null) {
+      wasmBindgenVersion = wasmBindgenVersion ?? packageVersion(source, cwd, "wasm-bindgen")
+    }
+
+    self.baseContainer = container
+    self.overlay = workerBuildOverlay(
+      version: version,
+      wasmBindgenVersion: wasmBindgenVersion,
+      binaryenVersion: binaryenVersion,
+      esbuildVersion: esbuildVersion,
+      overlay: overlay,
+    )
+    self.source = source
+    self.cwd = cwd
+
+    self
+  }
+
+  """
+  Container with the Rust toolchain and worker-build installed.
+  """
+  container: Container! {
+    self
+      .env
+      .applyWorkspace(self.source.asWorkspace(self.cwd), self.baseContainer)
+      .{ self.overlay.apply(_) ?? _ }
+      .{
+        source = self.source
+        if (source != null) {
+          _
+            .withMountedDirectory(self.sourceDir, source)
+            .withWorkdir(self.sourceDir(self.cwd))
+        } else _
+      }
+    # .{ self.withEnvFile(_) }
+    # .{ self.withEpoch(_, source) }
+    # .{ self.withMountedSource(_, source) }
+  }
+
+  """
+  Run worker-build and return the generated Worker output directory.
+  """
+  build(
+    """
+    Build in release mode.
+    """
+    release: Boolean! = true,
+    """
+    Create a development build. Enables debug info and disables optimizations.
+    """
+    dev: Boolean! = false,
+    """
+    Skip optimization with wasm-opt.
+    """
+    noOpt: Boolean! = false,
+    """
+    Enable panic=unwind support.
+    """
+    panicUnwind: Boolean! = false,
+    """
+    Additional arguments to pass to `cargo build`.
+    """
+    args: [String!]! = [],
+  ): Directory! @check {
+    let buildArgs = ["worker-build"]
+    if (dev) {
+      buildArgs += ["--dev"]
+    } else if (release) {
+      buildArgs += ["--release"]
+    }
+
+    if (noOpt) {
+      buildArgs += ["--no-opt"]
+    }
+
+    if (panicUnwind) {
+      buildArgs += ["--panic-unwind"]
+    }
+
+    buildArgs += ["--out-dir", "/work/out"]
+    buildArgs += [self.sourceDir(self.cwd)]
+    buildArgs += args
+
+    self
+      .container
+      .withExec(buildArgs)
+      .directory("/work/out")
+  }
+}
+
+interface Overlay implements OverlaysOverlay {
+  apply(container: Container!): Container!
+}
+
+let workerBuildOverlay(
+  version: String,
+  wasmBindgenVersion: String,
+  binaryenVersion: String,
+  esbuildVersion: String!,
+  overlay: Overlay,
+): OverlaysOverlay! {
+  let installArgs: [String!]! = ["cargo", "install", "worker-build", "--locked"]
+  if (version != null and version != "") {
+    installArgs += ["--version", version]
+  }
+
+  Dagger.overlays.combine([
+    withWasmBindgen(wasmBindgenVersion),
+    withBinaryen(binaryenVersion),
+    withEsbuild(esbuildVersion),
+    Dagger.overlays.withEnvVariable("WASM_BINDGEN_BIN", "wasm-bindgen"),
+    Dagger.overlays.withEnvVariable("WASM_OPT_BIN", "wasm-opt"),
+    Dagger.overlays.withEnvVariable("ESBUILD_BIN", "esbuild"),
+    Dagger.overlays.withExec(installArgs),
+    overlay,
+  ])
+}
+
+let packageVersion(source: Directory!, cwd: String!, name: String!): String {
+  let path = source.findUp("Cargo.lock", cwd)
+  if (path == null) {
+    return null
+  }
+
+  let package = Dagger.cargoLock(file: source.file(path)).findOne(name)
+
+  if (package == null) {
+    return null
+  }
+
+  package.version
+}
+
+let withWasmBindgen(version: String): OverlaysOverlay! {
+  let binaries = Dagger
+    .github
+    .release(version, "wasm-bindgen/wasm-bindgen")
+    .{ _.asset(`wasm-bindgen-${_.tagName}-${arch}-unknown-linux-gnu.tar.gz`) }
+    .extracted(true)
+    .filter(include: ["wasm-bindgen-test-runner", "wasm2es6js", "wasm-bindgen"])!
+
+  Dagger.overlays.withDirectory(path: "/usr/local/bin/", source: binaries)
+}
+
+let withBinaryen(version: String): OverlaysOverlay! {
+  let dir = Dagger
+    .github
+    .release(version, "WebAssembly/binaryen")
+    .{ _.asset(`binaryen-${_.tagName}-${arch}-linux.tar.gz`) }
+    .extracted(true)!
+
+  Dagger.overlays.withDirectory(path: "/usr/local/", source: dir)
+}
+
+# Downloads the esbuild binary for the current platform from the npm registry.
+#
+# esbuild ships its native binaries as platform-specific npm packages
+# (`@esbuild/<platform>`), each a tarball containing the binary at
+# `package/bin/esbuild`. This avoids needing a Node.js toolchain just to obtain
+# the binary.
+let esbuildBinary(version: String!): File! {
+  let platform = "linux-" + esbuildArch
+  let tarball = Dagger.http(
+    `https://registry.npmjs.org/@esbuild/${platform}/-/${platform}-${version}.tgz`,
+    name: `esbuild-${version}.tgz`,
+  )
+
+  Dagger
+    .container
+    .from("alpine:3.23.4@sha256:5b10f432ef3da1b8d4c7eb6c487f2f5a8f096bc91145e68878dd4a5019afde11")
+    .withMountedFile("/tmp/esbuild.tgz", tarball)
+    .withExec(["tar", "-xzf", "/tmp/esbuild.tgz", "-C", "/tmp", "package/bin/esbuild"])
+    .file("/tmp/package/bin/esbuild")
+}
+
+let withEsbuild(version: String): OverlaysOverlay! {
+  let version = if (version == null or version == "") {
+    Dagger.github.release(null, "evanw/esbuild").tagName.trimPrefix("v")
+  } else {
+    version.trimPrefix("v")
+  }
+
+  Dagger.overlays.withFile(path: "/usr/local/bin/esbuild", source: esbuildBinary(version))
+}
+
+let arch: String! {
+  case (Dagger.defaultPlatform) {
+    "linux/amd64" => "x86_64"
+    "linux/arm64" => "aarch64"
+    else => raise "unsupported platform: " + toString(Dagger.defaultPlatform).trim("\"")
+  }
+}
+
+# esbuild publishes platform binaries under npm package names that use the
+# x64/arm64 architecture naming rather than the GNU x86_64/aarch64 names.
+let esbuildArch: String! {
+  case (Dagger.defaultPlatform) {
+    "linux/amd64" => "x64"
+    "linux/arm64" => "arm64"
+    else => raise "unsupported platform: " + toString(Dagger.defaultPlatform).trim("\"")
+  }
+}

@@ -1,6 +1,47 @@
+let rustVersion: String! = "1.96.0-slim-trixie@sha256:082a5849a6870672b5f7a5bf4eddc71723fce38756fd834a0d734a5306a310ab"
+
 type Tests {
-  let dioxus: Dioxus! {
-    Dagger.dioxus(rustVersion: "1.96.0-slim-trixie@sha256:082a5849a6870672b5f7a5bf4eddc71723fce38756fd834a0d734a5306a310ab")
+  let dioxusVersion: String!
+  let source: Directory!
+  let wasmBindgenVersion: String!
+
+  new(
+    """
+    Dioxus release tag to test, or null for the latest release.
+    """
+    version: String,
+  ) {
+    self.dioxusVersion = (version ?? Dagger.github.releases("DioxusLabs/dioxus").latest.tagName).trimPrefix("v")
+    self.source = Dagger.git("https://github.com/DioxusLabs/dioxus.git").tag("v" + self.dioxusVersion).tree
+    self.wasmBindgenVersion = Dagger.cargoLock(file: self.source.file("Cargo.lock")).findOne("wasm-bindgen")!.version
+
+    self
+  }
+
+  let dioxusDependencies: String! {
+    `dioxus = { version = "${self.dioxusVersion}", features = ["web"] }` + "\n" + `wasm-bindgen = "=${self.wasmBindgenVersion}"`
+  }
+
+  let dioxus(source: Directory, cwd: String! = "/"): Dioxus! {
+    Dagger.dioxus(
+      version: self.dioxusVersion,
+      wasmBindgenVersion: self.wasmBindgenVersion,
+      rustVersion: rustVersion,
+      source: source,
+      cwd: cwd,
+    )
+  }
+
+  let buildExample(source: Directory!): Directory! {
+    let output = self
+      .dioxus(source)
+      .container
+      .withExec(["dx", "bundle", "--platform", "web", "--out-dir", "/work/out"])
+      .directory("/work/out/public")
+
+    assert { output.file("index.html").contents.contains("main") }
+
+    output
   }
 
   init: Directory! @check {
@@ -16,12 +57,65 @@ type Tests {
 
   build: Container! @check {
     Dagger
-      .dioxus(
-        rustVersion: "1.96.0-slim-trixie@sha256:082a5849a6870672b5f7a5bf4eddc71723fce38756fd834a0d734a5306a310ab",
-        source: init,
-      )
+      .dioxus(rustVersion: rustVersion, source: init)
       .container
       .withExec(["dx", "build"])
+  }
+
+  """
+  Build the Dioxus counter example from the upstream repository.
+  """
+  counter: Directory! @check {
+    let cargoToml = """
+      [package]
+      name = "dioxus-counter-example"
+      version = "0.1.0"
+      edition = "2021"
+      publish = false
+
+      [dependencies]
+    """ + "\n" + self.dioxusDependencies + "\n"
+
+    let source = Dagger
+      .directory
+      .withFile(
+        "Cargo.toml",
+        Dagger
+          .currentModule
+          .source
+          .file("counter.cargo.toml")
+          .withReplaced("DIOXUS_VERSION", self.dioxusVersion)
+          .withReplaced("WASM_BINDGEN_VERSION", self.wasmBindgenVersion),
+      )
+      .withFile("Dioxus.toml", Dagger.currentModule.source.file("counter.dioxus.toml"))
+      .withFile("src/main.rs", self.source.file("examples/02-building-ui/counter.rs"))
+
+    self.buildExample(source)
+  }
+
+  """
+  Build the Dioxus PWA integration example from the upstream repository.
+  """
+  pwa: Directory! @check {
+    let source = self
+      .source
+      .directory("examples/10-integrations/pwa")
+      .{
+        _.withFile(
+          "Cargo.toml",
+          _.file("Cargo.toml").withReplaced(
+            search: "dioxus = { workspace = true, features = [\"web\"] }",
+            replacement: self.dioxusDependencies,
+          ),
+        )
+      }
+
+    let output = self.buildExample(source)
+
+    assert { output.file("index.html").contents.contains("serviceWorker") }
+    assert { output.file("manifest.json").contents.contains("Dioxus") }
+
+    output
   }
 
   serve: Void @check {

@@ -5,3 +5,11 @@ runtime.source = "dang"
 [[dependencies]]
 name = "dioxus"
 source = ".."
+
+[[dependencies]]
+name = "cargo-lock"
+source = "../../cargo-lock"
+
+[[dependencies]]
+name = "github"
+source = "../../github"

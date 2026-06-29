@@ -1,0 +1,7 @@
+[application]
+name = "dioxus-counter-example"
+default_platform = "web"
+out_dir = "dist"
+
+[web.app]
+title = "Dioxus Counter"

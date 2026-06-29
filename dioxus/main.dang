@@ -17,6 +17,10 @@ type Dioxus {
     """
     version: String,
     """
+    wasm-bindgen CLI version to use (default: auto-detect from Cargo.lock).
+    """
+    wasmBindgenVersion: String,
+    """
     Version of wasm-pack to use (default: latest).
     """
     wasmPackVersion: String,
@@ -129,8 +133,6 @@ type Dioxus {
       components: ["rust-std"] + components,
       cargoTargetCache: cargoTargetCache,
     )
-
-    let wasmBindgenVersion: String = null
 
     if (source != null) {
       version = version ?? packageVersion(source, cwd, "dioxus")

@@ -1,6 +1,8 @@
 let rustVersion: String! = "1.96.0-slim-trixie@sha256:082a5849a6870672b5f7a5bf4eddc71723fce38756fd834a0d734a5306a310ab"
 
 type Tests {
+  let version: String!
+
   let source: Directory!
   let container: Container!
 
@@ -10,12 +12,9 @@ type Tests {
     """
     version: String,
   ) {
-    let release = Dagger.github.release(version, "cloudflare/workers-rs")
+    self.version = version ?? Dagger.github.releases("cloudflare/workers-rs").latest.tagName
 
-    self.source = Dagger
-      .git("https://github.com/cloudflare/workers-rs.git")
-      .tag(release.tagName)
-      .tree
+    self.source = Dagger.git("https://github.com/cloudflare/workers-rs.git").tag(self.version).tree
 
     self.container = Dagger
       .container
@@ -29,6 +28,7 @@ type Tests {
 
   let workerBuild(source: Directory! = self.source, cwd: String! = "/"): WorkerBuild! {
     Dagger.workerBuild(
+      version: self.version,
       rustVersion: rustVersion,
       container: self.container,
       source: source,

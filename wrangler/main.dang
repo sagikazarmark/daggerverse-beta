@@ -1,47 +1,47 @@
 type Wrangler {
-  let base: Container!
+  let baseContainer: Container!
 
   new(
     """
     Wrangler version to install (default: latest).
     """
-    version: String = null,
+    version: String,
     """
     Environment to use for operations, and for selecting .env and .dev.vars files.
     """
-    environment: String = null,
+    environment: String,
     """
     Account ID for the Cloudflare account.
     """
-    accountId: String = null,
+    accountId: String,
     """
     API token for your Cloudflare account.
     """
-    apiToken: Secret = null,
+    apiToken: Secret,
     """
     Log level to use for Wrangler operations.
     """
-    logLevel: LogLevel = null,
+    logLevel: LogLevel,
     """
     Docker socket used for local development of Containers.
 
     Takes precedence over Docker host.
     """
-    dockerSocket: Socket = null,
+    dockerSocket: Socket,
     """
     Docker host used for local development of Containers.
 
     Mutually exclusive with Docker socket.
     """
-    dockerHost: String = null,
+    dockerHost: String,
     """
     Custom HTTPS key when running wrangler dev.
     """
-    defaultHttpsKey: File = null,
+    defaultHttpsKey: File,
     """
     Custom HTTPS certificate when running wrangler dev.
     """
-    defaultHttpsCert: File = null,
+    defaultHttpsCert: File,
     """
     Node version (image tag) to use from the official Node image repository as a base container.
     """
@@ -51,7 +51,7 @@ type Wrangler {
     """
     container: Container! = Dagger.container.from("node:" + nodeVersion),
   ) {
-    self.base = container
+    self.baseContainer = container
       .withEnvVariable("HOME", "/root")
       .withMountedCache("${HOME}/.npm", Dagger.cacheVolume("npm"), expand: true)
       .withExec(["npm", "install", "-g", `wrangler@${version ?? "latest"}`])
@@ -99,10 +99,10 @@ type Wrangler {
     logLevel: LogLevel,
   ): Container! {
     container
-      .{ withEnvVariable(_, "CLOUDFLARE_ENV", env) }
-      .{ withEnvVariable(_, "CLOUDFLARE_ACCOUNT_ID", accountId) }
-      .{ withSecretVariable(_, "CLOUDFLARE_API_TOKEN", apiToken) }
-      .{ withEnvVariable(_, "WRANGLER_LOG", if (logLevel != null) { toString(logLevel).trim("\"").toLower } else { null }) }
+      .{ if (env != null) _.withEnvVariable("CLOUDFLARE_ENV", env) else _ }
+      .{ if (accountId != null) _.withEnvVariable("CLOUDFLARE_ACCOUNT_ID", accountId) else _ }
+      .{ if (apiToken != null) _.withSecretVariable("CLOUDFLARE_API_TOKEN", apiToken) else _ }
+      .{ if (logLevel != null) _.withEnvVariable("WRANGLER_LOG", toString(logLevel).toLower) else _ }
   }
 
   """
@@ -126,7 +126,7 @@ type Wrangler {
     """
     logLevel: LogLevel,
   ): Container! {
-    prepContainer(self.base, environment, accountId, apiToken, logLevel)
+    prepContainer(self.baseContainer, environment, accountId, apiToken, logLevel)
   }
 
   """
@@ -205,7 +205,7 @@ type Wrangler {
     Log level to use for Wrangler operations.
     """
     logLevel: LogLevel,
-  ): Container! @cache(policy: neverCache) {
+  ): Container! @cache(policy: FunctionCachePolicy.Never) {
     let args = ["wrangler", "deploy"]
 
     if (name != null and name != "") {

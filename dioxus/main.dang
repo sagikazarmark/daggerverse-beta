@@ -29,9 +29,9 @@ type Dioxus {
     """
     binaryenVersion: String,
     """
-    Version of esbuild to use.
+    Version of esbuild to use (default: latest).
     """
-    esbuildVersion: String! = "0.28.0",
+    esbuildVersion: String,
     """
     Version of Tailwind CSS to use.
     """

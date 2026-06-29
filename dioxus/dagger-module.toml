@@ -22,3 +22,7 @@ source = "../cargo-lock"
 [[dependencies]]
 name = "overlays"
 source = "../overlays"
+
+[[dependencies]]
+name = "wasm-tools"
+source = "../wasm-tools"

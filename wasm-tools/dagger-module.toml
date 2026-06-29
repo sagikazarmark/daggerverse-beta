@@ -1,0 +1,11 @@
+name = "wasm-tools"
+engineVersion = "v1.0.0"
+runtime.source = "dang"
+
+[[dependencies]]
+name = "github"
+source = "../github"
+
+[[dependencies]]
+name = "overlays"
+source = "../overlays"

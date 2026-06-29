@@ -1,0 +1,118 @@
+type WasmTools implements OverlaysOverlay {
+  let tools: Map[ToolRequest!]! = [:]
+
+  new(
+    """
+    Install all tools with their default versions.
+    """
+    all: Boolean! = false,
+  ) {
+    if (all) {
+      self.tools = Tool.values.reduce(self.tools) { tools, tool =>
+        tools.with(toString(tool), ToolRequest(tool, null))
+      }
+    }
+
+    self
+  }
+
+  """
+  Select a tool to install with an optional version (defaults to latest).
+  """
+  withTool(tool: Tool!, version: String): WasmTools! {
+    self.tools = self.tools.with(toString(tool), ToolRequest(tool, version))
+
+    self
+  }
+
+  apply(container: Container!): Container! {
+    self.tools.values.reduce(container) { container, request =>
+      install(request, container)
+    }
+  }
+}
+
+enum Tool {
+  WASM_BINDGEN
+  WASM_PACK
+  BINARYEN
+  ESBUILD
+}
+
+type ToolRequest {
+  let tool: Tool!
+  let version: String
+}
+
+let install(request: ToolRequest!, container: Container!): Container! {
+  case (request.tool) {
+    Tool.WASM_BINDGEN => installWasmBindgen(request.version, container)
+    Tool.WASM_PACK => installWasmPack(request.version, container)
+    Tool.BINARYEN => installBinaryen(request.version, container)
+    Tool.ESBUILD => installEsbuild(request.version, container)
+    else => raise `unsupported tool: ${toString(request.tool)}`
+  }
+}
+
+let installWasmBindgen(version: String, container: Container!): Container! {
+  let binaries = Dagger
+    .github
+    .release(version, "wasm-bindgen/wasm-bindgen")
+    .{ _.asset(`wasm-bindgen-${_.tagName}-${arch}-unknown-linux-gnu.tar.gz`) }
+    .extracted(true)
+    .filter(include: ["wasm-bindgen-test-runner", "wasm2es6js", "wasm-bindgen"])!
+
+  container.withDirectory("/usr/local/bin/", binaries)
+}
+
+let installWasmPack(version: String, container: Container!): Container! {
+  let binary = Dagger
+    .github
+    .release(version, "wasm-bindgen/wasm-pack")
+    .{ _.asset(`wasm-pack-${_.tagName}-${arch}-unknown-linux-musl.tar.gz`) }
+    .extracted(true)
+    .file("wasm-pack")!
+
+  container.withFile("/usr/local/bin/wasm-pack", binary)
+}
+
+let installBinaryen(version: String, container: Container!): Container! {
+  let dir = Dagger
+    .github
+    .release(version, "WebAssembly/binaryen")
+    .{ _.asset(`binaryen-${_.tagName}-${arch}-linux.tar.gz`) }
+    .extracted(true)!
+
+  container.withDirectory("/usr/local/", dir)
+}
+
+let installEsbuild(version: String, container: Container!): Container! {
+  let version: String! = if (version == null or version == "") {
+    Dagger.github.release(null, "evanw/esbuild").tagName.trimPrefix("v")
+  } else {
+    version!.trimPrefix("v")
+  }
+
+  let arch = case (Dagger.defaultPlatform) {
+    "linux/amd64" => "x64"
+    "linux/arm64" => "arm64"
+    else => raise "unsupported platform: " + toString(Dagger.defaultPlatform).trim("\"")
+  }
+  let platform = "linux-" + arch
+  let tarball = Dagger.http(
+    `https://registry.npmjs.org/@esbuild/${platform}/-/${platform}-${version}.tgz`,
+    name: `esbuild-${version}.tgz`,
+  )
+
+  let binary = Archive.extract(tarball, 2).file("esbuild")
+
+  container.withFile("/usr/local/bin/esbuild", binary)
+}
+
+let arch: String! {
+  case (Dagger.defaultPlatform) {
+    "linux/amd64" => "x86_64"
+    "linux/arm64" => "aarch64"
+    else => raise "unsupported platform: " + toString(Dagger.defaultPlatform).trim("\"")
+  }
+}

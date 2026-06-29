@@ -12,9 +12,9 @@ type Tests {
     """
     version: String,
   ) {
-    self.version = version ?? Dagger.github.releases("cloudflare/workers-rs").latest.tagName
+    self.version = version ?? Dagger.github.releases("cloudflare/workers-rs").latest.tagName.trimPrefix("v")
 
-    self.source = Dagger.git("https://github.com/cloudflare/workers-rs.git").tag(self.version).tree
+    self.source = Dagger.git("https://github.com/cloudflare/workers-rs.git").tag("v" + self.version).tree
 
     self.container = Dagger
       .container

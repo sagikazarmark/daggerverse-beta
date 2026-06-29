@@ -2,6 +2,7 @@ type CargoLock {
   let file: File!
 
   new(
+    # TODO: make this nullable (or maybe even remove?)
     ws: Workspace! = Dagger.currentWorkspace,
     """
     Cargo.lock file to use.

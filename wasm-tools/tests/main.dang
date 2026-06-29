@@ -1,0 +1,90 @@
+type Tests {
+  let base: Container! {
+    Dagger.container.from("debian:trixie-slim")
+  }
+
+  """
+  The default overlay does not install any tools.
+  """
+  default: Void @check {
+    let container = Dagger.wasmTools.apply(self.base)
+
+    assert { !container.exists("/usr/local/bin/wasm-bindgen", expectedType: ExistsType.REGULAR_TYPE) }
+    assert { !container.exists("/usr/local/bin/wasm-pack", expectedType: ExistsType.REGULAR_TYPE) }
+    assert { !container.exists("/usr/local/bin/wasm-opt", expectedType: ExistsType.REGULAR_TYPE) }
+    assert { !container.exists("/usr/local/bin/esbuild", expectedType: ExistsType.REGULAR_TYPE) }
+  }
+
+  """
+  all installs every wasm tool with its default version.
+  """
+  all: Void @check {
+    let container = Dagger.wasmTools(all: true).apply(self.base)
+
+    assert { container.exists("/usr/local/bin/wasm-bindgen", expectedType: ExistsType.REGULAR_TYPE) }
+    assert { container.exists("/usr/local/bin/wasm-pack", expectedType: ExistsType.REGULAR_TYPE) }
+    assert { container.exists("/usr/local/bin/wasm-opt", expectedType: ExistsType.REGULAR_TYPE) }
+    assert { container.exists("/usr/local/bin/esbuild", expectedType: ExistsType.REGULAR_TYPE) }
+  }
+
+  """
+  withTool installs the selected tool with the requested version.
+  """
+  esbuildVersion: Void @check {
+    let container = Dagger
+      .wasmTools
+      .withTool(WasmToolsTool.ESBUILD, "0.28.0")
+      .apply(self.base)
+
+    assert { container.withExec(["/usr/local/bin/esbuild", "--version"]).stdout.trimSpace == "0.28.0" }
+  }
+
+  """
+  wasm-bindgen runs after installation.
+  """
+  wasmBindgenVersion: Void @check {
+    let container = Dagger
+      .wasmTools
+      .withTool(WasmToolsTool.WASM_BINDGEN, "0.2.126")
+      .apply(self.base)
+
+    assert { container.withExec(["/usr/local/bin/wasm-bindgen", "--version"]).stdout.contains("0.2.126") }
+  }
+
+  """
+  wasm-pack runs after installation.
+  """
+  wasmPackVersion: Void @check {
+    let container = Dagger
+      .wasmTools
+      .withTool(WasmToolsTool.WASM_PACK, "v0.15.0")
+      .apply(self.base)
+
+    assert { container.withExec(["/usr/local/bin/wasm-pack", "--version"]).stdout.contains("0.15.0") }
+  }
+
+  """
+  wasm-opt runs after Binaryen installation.
+  """
+  binaryenVersion: Void @check {
+    let container = Dagger
+      .wasmTools
+      .withTool(WasmToolsTool.BINARYEN, "version_130")
+      .apply(self.base)
+
+    assert { container.withExec(["/usr/local/bin/wasm-opt", "--version"]).stdout.contains("130") }
+  }
+
+  """
+  Re-selecting a tool keeps a single request and the last version wins.
+  """
+  withToolUnique: Void @check {
+    let container = Dagger
+      .wasmTools
+      .withTool(WasmToolsTool.ESBUILD, "0.27.0")
+      .withTool(WasmToolsTool.ESBUILD, "0.28.0")
+      .apply(self.base)
+
+    assert { container.withExec(["/usr/local/bin/esbuild", "--version"]).stdout.trimSpace == "0.28.0" }
+  }
+}

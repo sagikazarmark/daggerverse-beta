@@ -39,7 +39,7 @@ type WorkerBuild {
     """
     Ignore paths included in the gitignore file.
     """
-    gitignore: Boolean = true,
+    gitignore: Boolean,
     """
     Include only artifacts that match the given pattern (e.g., ["app/", "package.*"]).
     """
@@ -51,7 +51,7 @@ type WorkerBuild {
     """
     Source directory. Defaults to the workspace directory at the given path.
     """
-    source: Directory = { ws.directory(path, exclude, include, gitignore) },
+    source: Directory = { ws.directory(path, exclude, include, gitignore ?? true) },
     """
     Current working directory within the source.
     """
@@ -160,7 +160,7 @@ type WorkerBuild {
     """
     Build in release mode.
     """
-    release: Boolean! = true,
+    release: Boolean,
     """
     Create a development build. Enables debug info and disables optimizations.
     """
@@ -181,7 +181,7 @@ type WorkerBuild {
     let buildArgs = ["worker-build"]
     if (dev) {
       buildArgs += ["--dev"]
-    } else if (release) {
+    } else if (release ?? true) {
       buildArgs += ["--release"]
     }
 

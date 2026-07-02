@@ -27,7 +27,7 @@ type Rust {
     """
     Ignore paths included in the gitignore file.
     """
-    gitignore: Boolean = true,
+    gitignore: Boolean,
     """
     Include only artifacts that match the given pattern (e.g., ["app/", "package.*"]).
     """
@@ -39,7 +39,7 @@ type Rust {
     """
     Source directory. Defaults to the workspace directory at the given path.
     """
-    source: Directory = { ws.directory(path, exclude, include, gitignore) },
+    source: Directory = { ws.directory(path, exclude, include, gitignore ?? true) },
     """
     Current working directory within the source.
     """
@@ -446,7 +446,7 @@ type Rust {
     """
     Run Clippy only on the given crate, without linting the dependencies.
     """
-    noDeps: Boolean! = true,
+    noDeps: Boolean,
     """
     Set lint warnings.
     """
@@ -465,7 +465,7 @@ type Rust {
     forbid: [String!]! = [],
   ): String! @check {
     let args = CargoCommand.generic("clippy")
-    if (noDeps) {
+    if (noDeps ?? true) {
       args += ["--no-deps"]
     }
 
@@ -487,7 +487,7 @@ type Rust {
     """
     Don't build documentation for dependencies.
     """
-    noDeps: Boolean! = true,
+    noDeps: Boolean,
     """
     Package to run tests for.
     """

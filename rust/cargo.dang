@@ -124,7 +124,7 @@ type CargoCommand {
   }
 
   doc(
-    noDeps: Boolean! = true,
+    noDeps: Boolean,
     package: [String!]! = [],
     all: Boolean! = false,
     exclude: [String!]! = [],
@@ -141,7 +141,7 @@ type CargoCommand {
   ): [String!]! {
     let args = ["cargo", "doc"]
 
-    if (noDeps) { args += ["--no-deps"] }
+    if (noDeps ?? true) { args += ["--no-deps"] }
 
     args += self.coreArgs(
       package,

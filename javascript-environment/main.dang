@@ -165,7 +165,7 @@ type JavascriptEnvironment {
   }
 
   apply(container: Container!): Container! {
-    self.applySource(null, container)
+    self.applySource(container)
   }
 
   applyWorkspace(
@@ -176,29 +176,30 @@ type JavascriptEnvironment {
     exclude: [String!],
   ): Container! {
     self.applySource(
+      container,
       workspace.directory(
         "/",
         exclude: exclude,
         include: include,
         gitignore: gitignore,
       ),
-      container,
       cwd: workspace.cwd,
     )
   }
 
-  applySource(source: Directory, container: Container, cwd: String): Container! {
-    let selectedSource = source ?? self.source
-    let selectedCwd = cwd ?? (if (source == null) { self.cwd } else "/")
-    let runtime = self.selectedRuntime(selectedSource, selectedCwd)
-    let packageCwd = packageCwd(selectedSource, selectedCwd, runtime)
-    let selectedContainer = container ?? self.defaultContainer(runtime)
+  applySource(container: Container, source: Directory, cwd: String): Container! {
+    let source = source ?? self.source
+    let cwd = cwd ?? self.cwd
+    let runtime = self.selectedRuntime(source, cwd)
+    let packageCwd = packageCwd(source, cwd, runtime)
+    let container = container ?? self.defaultContainer(runtime)
 
     case (runtime) {
-      Runtime.DENO => self.denoEnv.applySource(selectedContainer, selectedSource, packageCwd)
-      Runtime.BUN => self.bunEnv.applySource(selectedContainer, selectedSource, packageCwd)
-      Runtime.NODE => self.nodeEnv.applySource(selectedContainer, selectedSource, packageCwd)
-      else => raise "unsupported JavaScript runtime: " + toString(runtime).trim("\"")
+      Runtime.DENO => self.denoEnv.applySource(container, source, packageCwd)
+      Runtime.BUN => self.bunEnv.applySource(container, source, packageCwd)
+      Runtime.NODE => self.nodeEnv.applySource(container, source, packageCwd)
+
+      else => raise "unsupported JavaScript runtime: " + toString(runtime)
     }
   }
 

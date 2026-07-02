@@ -1,0 +1,130 @@
+let nodeVersion: String! = "22.20.0-bookworm-slim"
+
+let nodeProject: Directory! {
+  Dagger
+    .directory
+    .withNewFile("package.json", """{
+  "scripts": {
+    "check": "node check.js"
+  },
+  "dependencies": {
+    "dep": "file:dep"
+  }
+}
+""")
+    .withNewFile("check.js", """console.log(require("dep"));
+""")
+    .withNewFile("dep/package.json", """{
+  "name": "dep",
+  "version": "1.0.0",
+  "main": "index.js"
+}
+""")
+    .withNewFile("dep/index.js", """module.exports = "node-ok";
+""")
+}
+
+let nodeLockedProject: Directory! {
+  nodeProject
+    .withNewFile("package.json", """{
+  "name": "app",
+  "version": "1.0.0",
+  "scripts": {
+    "check": "node check.js"
+  },
+  "dependencies": {
+    "dep": "file:dep"
+  }
+}
+""")
+    .withNewFile("package-lock.json", """{
+  "name": "app",
+  "version": "1.0.0",
+  "lockfileVersion": 3,
+  "requires": true,
+  "packages": {
+    "": {
+      "name": "app",
+      "version": "1.0.0",
+      "dependencies": {
+        "dep": "file:dep"
+      }
+    },
+    "dep": {
+      "version": "1.0.0"
+    },
+    "node_modules/dep": {
+      "resolved": "dep",
+      "link": true
+    }
+  }
+}
+""")
+}
+
+let envFile: File! {
+  Dagger
+    .directory
+    .withNewFile(".env", "NODE_ENV_TEST=from-env-file\n")
+    .file(".env")
+}
+
+type Tests {
+  container: Void @check {
+    let container = Dagger
+      .nodeEnvironment(version: nodeVersion, source: Dagger.directory)
+      .container
+
+    assert { container.mounts.contains("/root/.npm") }
+    assert { container.withExec(["node", "--version"]).stdout.contains("v22.") }
+  }
+
+  noCache: Void @check {
+    let container = Dagger
+      .nodeEnvironment(version: nodeVersion, source: Dagger.directory, noCache: true)
+      .container
+
+    assert { !container.mounts.contains("/root/.npm") }
+  }
+
+  envFileAndEpoch: Void @check {
+    let container = Dagger
+      .nodeEnvironment(
+        version: nodeVersion,
+        source: Dagger.directory,
+        envFile: envFile,
+        sourceDateEpoch: "1234567890",
+      )
+      .container
+
+    assert { container.envVariable("NODE_ENV_TEST") == "from-env-file" }
+    assert { container.envVariable("SOURCE_DATE_EPOCH") == "1234567890" }
+  }
+
+  withRun: Void @check {
+    let output = Dagger
+      .nodeEnvironment(version: nodeVersion, source: nodeProject, install: true)
+      .withRun("check")
+      .stdout
+
+    assert { output.contains("node-ok") }
+  }
+
+  sourceWithRun: Void @check {
+    let output = Dagger
+      .nodeEnvironment(version: nodeVersion, source: nodeProject, install: true)
+      .withRun(script: "check")
+      .stdout
+
+    assert { output.contains("node-ok") }
+  }
+
+  lockedWithRun: Void @check {
+    let output = Dagger
+      .nodeEnvironment(version: nodeVersion, source: nodeLockedProject, install: true, locked: true)
+      .withRun("check")
+      .stdout
+
+    assert { output.contains("node-ok") }
+  }
+}

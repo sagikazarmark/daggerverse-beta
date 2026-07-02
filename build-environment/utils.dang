@@ -1,0 +1,20 @@
+let commitDate(source: Directory!): String {
+  # TODO: this always busts cache. Why?
+  return null
+  if (!source.exists(".git", expectedType: ExistsType.DIRECTORY_TYPE)) {
+    return null
+  }
+
+  # TODO: better exit code handling
+  let result = Dagger
+    .container
+    .from("alpine/git:v2.52.0@sha256:8786a6a02273827d0aa039d174aacd5e017fcce9aba0af62596d991970cab01a")
+    .withMountedDirectory("/git", source.filter(include: [".git"]))
+    .withExec(["log", "-1", "--format=%ct"], useEntrypoint: true, expect: ReturnType.ANY)
+
+  if (result.exitCode != 0) {
+    return null
+  }
+
+  result.stdout
+}

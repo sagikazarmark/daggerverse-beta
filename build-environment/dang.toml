@@ -1,0 +1,6 @@
+[imports.Dagger]
+dagger = true
+
+[[dependencies]]
+source = "github.com/sagikazarmark/danglib"
+packages = ["path"]

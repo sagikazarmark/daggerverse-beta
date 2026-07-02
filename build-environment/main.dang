@@ -1,0 +1,117 @@
+type BuildEnvironment {
+  source: Directory
+  cwd: String!
+  mountPath: String!
+
+  let overlay: Overlay
+  let envFile: File
+  let sourceDateEpoch: String
+
+  new(
+    """
+    Source directory to mount.
+    """
+    source: Directory,
+    """
+    Current working directory within the source.
+    """
+    cwd: String! = "/",
+    """
+    Overlay to apply to the base container.
+    """
+    overlay: Overlay,
+    """
+    Environment file to load into the container.
+    """
+    envFile: File,
+    """
+    Source date epoch to set in the container.
+    """
+    sourceDateEpoch: String,
+    """
+    Mount path for the source directory.
+    """
+    mountPath: String! = "/work/src",
+  ) {
+    self.source = source
+    self.cwd = cwd
+    self.mountPath = mountPath
+    self.overlay = overlay
+    self.envFile = envFile
+    self.sourceDateEpoch = sourceDateEpoch
+
+    self
+  }
+
+  apply(container: Container!): Container! {
+    self.applySource(container)
+  }
+
+  applyWorkspace(
+    workspace: Workspace,
+    container: Container!,
+    gitignore: Boolean,
+    include: [String!],
+    exclude: [String!],
+  ): Container! {
+    self.applySource(
+      container,
+      workspace.directory(
+        "/",
+        exclude: exclude,
+        include: include,
+        gitignore: gitignore,
+      ),
+      workspace.cwd,
+    )
+  }
+
+  applySource(container: Container!, source: Directory, cwd: String): Container! {
+    container
+      .{ self.overlay.apply(_) ?? _ }
+      .{ self.withEnvFile(_) }
+      .{ self.withEpoch(_, source) }
+      .{ self.withMountedSource(_, source, cwd) }
+  }
+
+  let withEnvFile(container: Container!): Container! {
+    let envFile = self.envFile
+    if (envFile == null) {
+      return container
+    }
+
+    container.withEnvFileVariables(envFile.asEnvFile)
+  }
+
+  let withEpoch(container: Container!, source: Directory): Container! {
+    let source = source ?? self.source
+    let epoch = self.sourceDateEpoch
+    # TODO: this always busts cache for some reason
+    # if (epoch == null and source != null) {
+    #   epoch = commitDate(source)
+    # }
+
+    if (epoch == null) {
+      return container
+    }
+
+    container.withEnvVariable("SOURCE_DATE_EPOCH", epoch)
+  }
+
+  let withMountedSource(container: Container!, source: Directory, cwd: String): Container! {
+    let source = source ?? self.source
+    let cwd = cwd ?? self.cwd
+
+    if (source == null) {
+      return container
+    }
+
+    container
+      .withMountedDirectory(self.mountPath, source)
+      .withWorkdir(Path.join([self.mountPath, cwd]))
+  }
+}
+
+interface Overlay {
+  apply(container: Container!): Container!
+}

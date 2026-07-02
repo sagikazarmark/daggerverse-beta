@@ -1,0 +1,180 @@
+type DenoEnvironment {
+  let buildEnv: BuildEnvironment!
+
+  let defaultContainer: Container!
+  let cache: CacheVolume
+
+  let install: Boolean!
+  let locked: Boolean!
+
+  new(
+    """
+    Version (image tag) to use from the official Deno image repository.
+    """
+    version: String! = "latest",
+    """
+    Custom container to use as the default container.
+    """
+    container: Container! = Dagger.container.from("denoland/deno:" + version),
+    """
+    Source directory to mount into source-backed containers.
+    """
+    source: Directory,
+    """
+    Current working directory within the source.
+    """
+    cwd: String! = "/",
+    """
+    Overlay to apply to the container after the initial setup.
+    """
+    overlay: Overlay,
+    """
+    Environment file to load into the containers.
+    """
+    envFile: File,
+    """
+    Source date epoch to set in the containers.
+    """
+    sourceDateEpoch: String,
+    """
+    Install dependencies when a source-backed container is retrieved.
+    """
+    install: Boolean! = false,
+    """
+    Install dependencies from the lockfile without updating it.
+    """
+    locked: Boolean! = false,
+    """
+    Whether to disable automatically mounted cache volumes.
+    Useful if you want to mount cache volumes manually or use a different cache volume strategy.
+    """
+    noCache: Boolean! = false,
+    """
+    Cache volume for Deno's dependency cache.
+    """
+    cache: CacheVolume = if (!noCache) {
+      Dagger.cacheVolume("deno")
+    } else null,
+  ) {
+    self.buildEnv = Dagger.buildEnvironment(
+      source: source,
+      cwd: cwd,
+      overlay: overlay,
+      envFile: envFile,
+      sourceDateEpoch: sourceDateEpoch,
+    )
+
+    self.defaultContainer = container
+    self.cache = cache
+
+    self.install = install
+    self.locked = locked
+
+    self
+  }
+
+  """
+  Configure this environment to install dependencies when a source-backed container is retrieved.
+  """
+  withInstall(
+    """
+    Install dependencies from the lockfile without updating it.
+    """
+    locked: Boolean! = false,
+  ): DenoEnvironment! {
+    self.install = true
+    self.locked = locked
+
+    self
+  }
+
+  container: Container! {
+    self.applySource
+  }
+
+  apply(container: Container!): Container! {
+    self.applySource(container)
+  }
+
+  applyWorkspace(
+    workspace: Workspace,
+    container: Container,
+    gitignore: Boolean,
+    include: [String!],
+    exclude: [String!],
+  ): Container! {
+    self.applySource(
+      container,
+      workspace.directory(
+        "/",
+        exclude: exclude,
+        include: include,
+        gitignore: gitignore,
+      ),
+      workspace.cwd,
+    )
+  }
+
+  applySource(container: Container, source: Directory, cwd: String): Container! {
+    let container = container ?? self.defaultContainer
+
+    container
+      .{ self.withDefaults(_) }
+      .{ self.withCache(_) }
+      .{ self.buildEnv.applySource(_, source, cwd) }
+      .{ self.installDependencies(_) }
+  }
+
+  """
+  Run a Deno task in the source.
+  """
+  withRun(
+    """
+    Deno task to run.
+    """
+    task: String!,
+    """
+    Arguments to pass to the task.
+    """
+    args: [String!]! = [],
+  ): Container! {
+    self
+      .container
+      .withExec(["deno", "task", task] + args)
+  }
+
+  let withDefaults(container: Container!): Container! {
+    container
+      .{
+        if (_.envVariable("DENO_DIR") == null or _.envVariable("DENO_DIR") == "") {
+          _.withEnvVariable("DENO_DIR", "/usr/local/cache/deno")
+        } else _
+      }
+  }
+
+  let withCache(container: Container!): Container! {
+    let cache = self.cache
+    if (cache == null) {
+      return container
+    }
+
+    container.withMountedCache("${DENO_DIR}", cache, expand: true)
+  }
+
+  let installDependencies(container: Container!): Container! {
+    if (!self.install) {
+      return container
+    }
+
+    let args = ["deno", "install"]
+    if (self.locked) {
+      args += ["--frozen"]
+    }
+
+    container.withExec(args)
+  }
+}
+
+interface Overlay implements BuildEnvironmentOverlay {
+  apply(container: Container!): Container!
+}

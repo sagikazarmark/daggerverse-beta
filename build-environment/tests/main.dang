@@ -1,0 +1,83 @@
+let alpine: Container! {
+  Dagger.container.from("alpine:3.23.4@sha256:5b10f432ef3da1b8d4c7eb6c487f2f5a8f096bc91145e68878dd4a5019afde11")
+}
+
+let source: Directory! {
+  Dagger
+    .directory
+    .withNewFile("app/marker.txt", "source-ok")
+    .withNewFile("app/drop.txt", "drop")
+    .withNewFile("keep.txt", "keep")
+}
+
+let envFile: File! {
+  Dagger
+    .directory
+    .withNewFile(".env", "BUILD_ENV_TEST=from-env-file\nBUILD_ENV_EQUALS=a=b\n")
+    .file(".env")
+}
+
+type Tests {
+  sourceMountAndCwd: Void @check {
+    let container = Dagger
+      .buildEnvironment(source: source, cwd: "/app", mountPath: "/workspace")
+      .apply(alpine)
+
+    assert { container.mounts.contains("/workspace") or container.mounts.contains("/workspace/") }
+    assert { container.file("/workspace/app/marker.txt").contents == "source-ok" }
+
+    let output = container
+      .withExec(["sh", "-c", "printf '%s|%s' \"$(pwd)\" \"$(cat marker.txt)\""])
+      .stdout
+
+    assert { output == "/workspace/app|source-ok" }
+  }
+
+  envFileAndEpoch: Void @check {
+    let container = Dagger
+      .buildEnvironment(
+        source: source,
+        envFile: envFile,
+        sourceDateEpoch: "1234567890",
+      )
+      .apply(alpine)
+
+    assert { container.envVariable("BUILD_ENV_TEST") == "from-env-file" }
+    assert { container.envVariable("BUILD_ENV_EQUALS") == "a=b" }
+    assert { container.envVariable("SOURCE_DATE_EPOCH") == "1234567890" }
+
+    let output = container
+      .withExec(["sh", "-c", "printf '%s|%s|%s' \"$BUILD_ENV_TEST\" \"$BUILD_ENV_EQUALS\" \"$SOURCE_DATE_EPOCH\""])
+      .stdout
+
+    assert { output == "from-env-file|a=b|1234567890" }
+  }
+
+  overlay: Void @check {
+    let container = Dagger
+      .buildEnvironment(overlay: overlays.withEnvVariable("BUILD_ENV_OVERLAY", "overlay-ok"))
+      .apply(alpine)
+
+    assert { container.envVariable("BUILD_ENV_OVERLAY") == "overlay-ok" }
+    assert { container.withExec(["printenv", "BUILD_ENV_OVERLAY"]).stdout.trimSpace == "overlay-ok" }
+  }
+
+  workspace: Void @check {
+    let container = Dagger
+      .buildEnvironment(mountPath: "/src")
+      .applyWorkspace(
+        source.asWorkspace("/app"),
+        alpine,
+        include: ["app/**"],
+        exclude: ["app/drop.txt"],
+      )
+
+    assert { container.directory("/src/app").entries == ["marker.txt"] }
+
+    let output = container
+      .withExec(["sh", "-c", "printf '%s|%s' \"$(pwd)\" \"$(cat marker.txt)\""])
+      .stdout
+
+    assert { output == "/src/app|source-ok" }
+  }
+}

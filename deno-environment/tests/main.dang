@@ -1,0 +1,127 @@
+let denoVersion: String! = "2.4.5"
+
+let denoProject: Directory! {
+  Dagger
+    .directory
+    .withNewFile("deno.json", """{
+  "imports": {
+    "dep": "./dep.ts"
+  },
+  "tasks": {
+    "check": "deno eval \"import value from \\\"dep\\\"; console.log(value)\""
+  }
+}
+""")
+    .withNewFile("dep.ts", """export default "deno-ok";
+""")
+}
+
+let envFile: File! {
+  Dagger
+    .directory
+    .withNewFile(".env", "DENO_ENV_TEST=from-env-file\n")
+    .file(".env")
+}
+
+type Tests {
+  container: Void @check {
+    let container = Dagger
+      .denoEnvironment(version: denoVersion, source: Dagger.directory)
+      .container
+
+    assert { container.envVariable("DENO_DIR") == "/deno-dir/" }
+    assert { container.mounts.contains("/deno-dir") or container.mounts.contains("/deno-dir/") }
+    assert { container.withExec(["deno", "--version"]).stdout.contains("deno " + denoVersion) }
+  }
+
+  unsetDenoDir: Void @check {
+    let container = Dagger
+      .denoEnvironment
+      .apply(Dagger.container)
+
+    assert { container.envVariable("DENO_DIR") == "/usr/local/cache/deno" }
+    assert { container.mounts.contains("/usr/local/cache/deno") or container.mounts.contains("/usr/local/cache/deno/") }
+  }
+
+  customDenoDir: Void @check {
+    let container = Dagger
+      .denoEnvironment(
+        version: denoVersion,
+        source: Dagger.directory,
+        container: Dagger
+          .container
+          .from("denoland/deno:" + denoVersion)
+          .withEnvVariable("DENO_DIR", "/custom/deno"),
+      )
+      .container
+
+    assert { container.envVariable("DENO_DIR") == "/custom/deno" }
+    assert { container.mounts.contains("/custom/deno") or container.mounts.contains("/custom/deno/") }
+  }
+
+  emptyDenoDir: Void @check {
+    let container = Dagger
+      .denoEnvironment(
+        version: denoVersion,
+        source: Dagger.directory,
+        container: Dagger
+          .container
+          .from("denoland/deno:" + denoVersion)
+          .withEnvVariable("DENO_DIR", ""),
+      )
+      .container
+
+    assert { container.envVariable("DENO_DIR") == "/usr/local/cache/deno" }
+    assert { container.mounts.contains("/usr/local/cache/deno") or container.mounts.contains("/usr/local/cache/deno/") }
+  }
+
+  noCache: Void @check {
+    let container = Dagger
+      .denoEnvironment(version: denoVersion, source: Dagger.directory, noCache: true)
+      .container
+
+    assert { !container.mounts.contains("/deno-dir") and !container.mounts.contains("/deno-dir/") }
+    assert { !container.mounts.contains("/usr/local/cache/deno") and !container.mounts.contains("/usr/local/cache/deno/") }
+  }
+
+  envFileAndEpoch: Void @check {
+    let container = Dagger
+      .denoEnvironment(
+        version: denoVersion,
+        source: Dagger.directory,
+        envFile: envFile,
+        sourceDateEpoch: "1234567890",
+      )
+      .container
+
+    assert { container.envVariable("DENO_ENV_TEST") == "from-env-file" }
+    assert { container.envVariable("SOURCE_DATE_EPOCH") == "1234567890" }
+  }
+
+  withRun: Void @check {
+    let output = Dagger
+      .denoEnvironment(version: denoVersion, source: denoProject, install: true)
+      .withRun("check")
+      .stdout
+
+    assert { output.contains("deno-ok") }
+  }
+
+  sourceWithRun: Void @check {
+    let output = Dagger
+      .denoEnvironment(version: denoVersion, source: denoProject, install: true)
+      .withRun(task: "check")
+      .stdout
+
+    assert { output.contains("deno-ok") }
+  }
+
+  lockedWithRun: Void @check {
+    let output = Dagger
+      .denoEnvironment(version: denoVersion, source: denoProject, install: true, locked: true)
+      .withRun("check")
+      .stdout
+
+    assert { output.contains("deno-ok") }
+  }
+}

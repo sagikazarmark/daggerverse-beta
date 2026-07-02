@@ -1,0 +1,184 @@
+type NodeEnvironment {
+  let buildEnv: BuildEnvironment!
+
+  let defaultContainer: Container!
+  let cache: CacheVolume
+
+  let install: Boolean!
+  let locked: Boolean!
+
+  new(
+    """
+    Version (image tag) to use from the official Node image repository.
+    """
+    version: String! = "latest",
+    """
+    Custom container to use as the default container.
+    """
+    container: Container! = Dagger.container.from("node:" + version),
+    """
+    Source directory to mount into source-backed containers.
+    """
+    source: Directory,
+    """
+    Current working directory within the source.
+    """
+    cwd: String! = "/",
+    """
+    Overlay to apply to the container after the initial setup.
+    """
+    overlay: Overlay,
+    """
+    Environment file to load into the containers.
+    """
+    envFile: File,
+    """
+    Source date epoch to set in the containers.
+    """
+    sourceDateEpoch: String,
+    """
+    Install dependencies when a source-backed container is retrieved.
+    """
+    install: Boolean! = false,
+    """
+    Install dependencies from the lockfile without updating it.
+    """
+    locked: Boolean! = false,
+    """
+    Whether to disable automatically mounted cache volumes.
+    Useful if you want to mount cache volumes manually or use a different cache volume strategy.
+    """
+    noCache: Boolean! = false,
+    """
+    Cache volume for npm's package cache.
+    """
+    cache: CacheVolume = if (!noCache) {
+      Dagger.cacheVolume("node-npm")
+    } else null,
+  ) {
+    self.buildEnv = Dagger.buildEnvironment(
+      source: source,
+      cwd: cwd,
+      overlay: overlay,
+      envFile: envFile,
+      sourceDateEpoch: sourceDateEpoch,
+    )
+
+    self.defaultContainer = container
+    self.cache = cache
+
+    self.install = install
+    self.locked = locked
+
+    self
+  }
+
+  """
+  Configure this environment to install dependencies when a source-backed container is retrieved.
+  """
+  withInstall(
+    """
+    Install dependencies from the lockfile without updating it.
+    """
+    locked: Boolean! = false,
+  ): NodeEnvironment! {
+    self.install = true
+    self.locked = locked
+
+    self
+  }
+
+  container: Container! {
+    self.applySource
+  }
+
+  apply(container: Container!): Container! {
+    self.applySource(container)
+  }
+
+  applyWorkspace(
+    workspace: Workspace,
+    container: Container,
+    gitignore: Boolean,
+    include: [String!],
+    exclude: [String!],
+  ): Container! {
+    self.applySource(
+      container,
+      workspace.directory(
+        "/",
+        exclude: exclude,
+        include: include,
+        gitignore: gitignore,
+      ),
+      workspace.cwd,
+    )
+  }
+
+  applySource(container: Container, source: Directory, cwd: String): Container! {
+    let container = container ?? self.defaultContainer
+
+    container
+      .{ self.withDefaults(_) }
+      .{ self.withCache(_) }
+      .{ self.buildEnv.applySource(_, source, cwd) }
+      .{ self.installDependencies(_) }
+  }
+
+  """
+  Run an npm script in the source.
+  """
+  withRun(
+    """
+    npm script to run.
+    """
+    script: String!,
+    """
+    Arguments to pass to the script.
+    """
+    args: [String!]! = [],
+  ): Container! {
+    let command = ["npm", "run", script]
+    if (args.length > 0) {
+      command += ["--"] + args
+    }
+
+    self
+      .container
+      .withExec(command)
+  }
+
+  let withDefaults(container: Container!): Container! {
+    container
+      .{
+        if (_.envVariable("NPM_CONFIG_CACHE") == null) {
+          _.withEnvVariable("NPM_CONFIG_CACHE", "/root/.npm")
+        } else _
+      }
+  }
+
+  let withCache(container: Container!): Container! {
+    let cache = self.cache
+    if (cache == null) {
+      return container
+    }
+
+    container.withMountedCache("${NPM_CONFIG_CACHE}", cache, expand: true)
+  }
+
+  let installDependencies(container: Container!): Container! {
+    if (!self.install) {
+      return container
+    }
+
+    if (self.locked) {
+      return container.withExec(["npm", "ci"])
+    }
+
+    container.withExec(["npm", "install"])
+  }
+}
+
+interface Overlay implements BuildEnvironmentOverlay {
+  apply(container: Container!): Container!
+}

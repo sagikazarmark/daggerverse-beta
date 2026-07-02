@@ -1,0 +1,16 @@
+name = "javascript-environment"
+engineVersion = "v1.0.0"
+runtime.source = "dang"
+include = ["!tests"]
+
+[[dependencies]]
+name = "node-environment"
+source = "../node-environment"
+
+[[dependencies]]
+name = "bun-environment"
+source = "../bun-environment"
+
+[[dependencies]]
+name = "deno-environment"
+source = "../deno-environment"

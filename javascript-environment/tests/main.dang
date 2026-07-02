@@ -1,0 +1,292 @@
+let nodeVersion: String! = "22.20.0-bookworm-slim"
+let bunVersion: String! = "1.2.22"
+let denoVersion: String! = "2.4.5"
+
+let denoProject: Directory! {
+  Dagger
+    .directory
+    .withNewFile("deno.json", """{
+  "imports": {
+    "dep": "./dep.ts"
+  },
+  "tasks": {
+    "check": "deno eval \"import value from \\\"dep\\\"; console.log(value)\""
+  }
+}
+""")
+    .withNewFile("dep.ts", """export default "deno-auto";
+""")
+}
+
+let bunProject: Directory! {
+  Dagger
+    .directory
+    .withNewFile("bun.lock", """{
+  "lockfileVersion": 1,
+  "workspaces": {
+    "": {
+      "dependencies": {
+        "dep": "file:dep",
+      },
+    },
+  },
+  "packages": {
+    "dep": ["dep@file:dep", {}],
+  }
+}
+""")
+    .withNewFile("package.json", """{
+  "scripts": {
+    "check": "bun check.js"
+  },
+  "dependencies": {
+    "dep": "file:dep"
+  }
+}
+""")
+    .withNewFile("check.js", """import dep from "dep";
+console.log(dep);
+""")
+    .withNewFile("dep/package.json", """{
+  "name": "dep",
+  "version": "1.0.0",
+  "type": "module",
+  "exports": "./index.js"
+}
+""")
+    .withNewFile("dep/index.js", """export default "bun-auto";
+""")
+}
+
+let nodeProject: Directory! {
+  Dagger
+    .directory
+    .withNewFile("package.json", """{
+  "scripts": {
+    "check": "node check.js"
+  },
+  "dependencies": {
+    "dep": "file:dep"
+  }
+}
+""")
+    .withNewFile("check.js", """console.log(require("dep"));
+""")
+    .withNewFile("dep/package.json", """{
+  "name": "dep",
+  "version": "1.0.0",
+  "main": "index.js"
+}
+""")
+    .withNewFile("dep/index.js", """module.exports = "node-auto";
+""")
+}
+
+let nodeLockedProject: Directory! {
+  nodeProject
+    .withNewFile("package.json", """{
+  "name": "app",
+  "version": "1.0.0",
+  "scripts": {
+    "check": "node check.js"
+  },
+  "dependencies": {
+    "dep": "file:dep"
+  }
+}
+""")
+    .withNewFile("package-lock.json", """{
+  "name": "app",
+  "version": "1.0.0",
+  "lockfileVersion": 3,
+  "requires": true,
+  "packages": {
+    "": {
+      "name": "app",
+      "version": "1.0.0",
+      "dependencies": {
+        "dep": "file:dep"
+      }
+    },
+    "dep": {
+      "version": "1.0.0"
+    },
+    "node_modules/dep": {
+      "resolved": "dep",
+      "link": true
+    }
+  }
+}
+""")
+}
+
+let envFile: File! {
+  Dagger
+    .directory
+    .withNewFile(".env", "JAVASCRIPT_ENV_TEST=from-env-file\n")
+    .file(".env")
+}
+
+let mixedProject: Directory! {
+  Dagger
+    .directory
+    .withDirectory(".", denoProject)
+    .withDirectory("node", nodeProject)
+}
+
+let nestedNodeProject: Directory! {
+  Dagger
+    .directory
+    .withDirectory("app", nodeProject)
+}
+
+let tailwindProject: Directory! {
+  Dagger.currentModule.source.directory("testdata/tailwind")
+}
+
+let tailwindBunProject: Directory! {
+  tailwindProject
+    .withFile("bun.lock", Dagger.currentModule.source.file("testdata/tailwind-bun/bun.lock"))
+}
+
+type Tests {
+  detectsDenoFirst: Void @check {
+    let output = Dagger
+      .javascriptEnvironment(
+        source: denoProject,
+        install: true,
+        denoVersion: denoVersion,
+      )
+      .withRun("check")
+      .stdout
+
+    assert { output.contains("deno-auto") }
+  }
+
+  detectsBunBeforeNode: Void @check {
+    let output = Dagger
+      .javascriptEnvironment(
+        source: bunProject,
+        install: true,
+        bunVersion: bunVersion,
+      )
+      .withRun("check")
+      .stdout
+
+    assert { output.contains("bun-auto") }
+  }
+
+  detectsNode: Void @check {
+    let output = Dagger
+      .javascriptEnvironment(
+        source: nodeProject,
+        install: true,
+        nodeVersion: nodeVersion,
+      )
+      .withRun("check")
+      .stdout
+
+    assert { output.contains("node-auto") }
+  }
+
+  sourceAndCwd: Void @check {
+    let output = Dagger
+      .javascriptEnvironment(
+        source: nestedNodeProject,
+        cwd: "/app",
+        install: true,
+        nodeVersion: nodeVersion,
+      )
+      .withRun("check")
+      .stdout
+
+    assert { output.contains("node-auto") }
+  }
+
+  runtimeOverrideWithoutSource: Void @check {
+    let output = Dagger
+      .javascriptEnvironment(
+        runtime: JavascriptEnvironmentRuntime.NODE,
+        nodeVersion: nodeVersion,
+      )
+      .container
+      .withExec(["node", "--version"])
+      .stdout
+
+    assert { output.contains("v22.") }
+  }
+
+  envFileAndEpoch: Void @check {
+    let container = Dagger
+      .javascriptEnvironment(
+        runtime: JavascriptEnvironmentRuntime.NODE,
+        envFile: envFile,
+        sourceDateEpoch: "1234567890",
+        nodeVersion: nodeVersion,
+      )
+      .container
+
+    assert { container.envVariable("JAVASCRIPT_ENV_TEST") == "from-env-file" }
+    assert { container.envVariable("SOURCE_DATE_EPOCH") == "1234567890" }
+  }
+
+  runtimeOverride: Void @check {
+    let output = Dagger
+      .javascriptEnvironment(
+        source: mixedProject,
+        cwd: "/node",
+        runtime: JavascriptEnvironmentRuntime.NODE,
+        install: true,
+        nodeVersion: nodeVersion,
+      )
+      .withRun("check")
+      .stdout
+
+    assert { output.contains("node-auto") }
+  }
+
+  locked: Void @check {
+    let output = Dagger
+      .javascriptEnvironment(
+        source: nodeLockedProject,
+        runtime: JavascriptEnvironmentRuntime.NODE,
+        install: true,
+        locked: true,
+        nodeVersion: nodeVersion,
+      )
+      .withRun("check")
+      .stdout
+
+    assert { output.contains("node-auto") }
+  }
+
+  tailwindBun: Void @check {
+    let css = Dagger
+      .javascriptEnvironment(
+        source: tailwindBunProject,
+        install: true,
+        bunVersion: bunVersion,
+      )
+      .withRun("build")
+      .file("/work/src/assets/tailwind.css")
+      .contents
+
+    assert { css.contains("--color-primary") }
+    assert { css.contains(".btn") }
+  }
+
+  tailwindNode: Void @check {
+    let css = Dagger
+      .javascriptEnvironment(
+        source: tailwindProject,
+        install: true,
+        nodeVersion: nodeVersion,
+      )
+      .withRun("build")
+      .file("/work/src/assets/tailwind.css")
+      .contents
+
+    assert { css.contains("--color-primary") }
+    assert { css.contains(".btn") }
+  }
+}

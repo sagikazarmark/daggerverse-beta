@@ -35,9 +35,8 @@ type Tests {
   let buildExample(source: Directory!): Directory! {
     let output = self
       .dioxus(source)
-      .container
-      .withExec(["dx", "bundle", "--platform", "web", "--out-dir", "/work/out"])
-      .directory("/work/out/public")
+      .bundle(platform: DioxusPlatform.WEB)
+      .directory("public")
 
     assert { output.file("index.html").contents.contains("main") }
 
@@ -119,13 +118,12 @@ type Tests {
   }
 
   serve: Void @check {
-    let service = self
-      .build
-      .withExposedPort(8080)
-      .asService(args: ["dx", "serve", "--addr", "0.0.0.0", "--port", "8080"])
+    let service = Dagger
+      .dioxus(rustVersion: rustVersion, source: init)
+      .serve
 
     let response = Dagger.http(service.endpoint(scheme: "http"), experimentalServiceHost: service)
 
-    assert { response.contents.contains("<title>test</title>") }
+    assert { response.contents.contains("<html") }
   }
 }

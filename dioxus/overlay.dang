@@ -2,7 +2,7 @@ interface Overlay implements OverlaysOverlay {
   apply(container: Container!): Container!
 }
 
-let dioxusOverlay(
+let moduleOverlay(
   source: Directory,
   cwd: String!,
   dioxusVersion: String,

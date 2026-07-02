@@ -131,7 +131,7 @@ type Dioxus {
     )
 
     self.buildEnv = Dagger.buildEnvironment(
-      overlay: dioxusOverlay(
+      overlay: moduleOverlay(
         source: source,
         cwd: cwd,
         dioxusVersion: version,

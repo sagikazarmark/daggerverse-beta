@@ -1,0 +1,49 @@
+interface Overlay implements OverlaysOverlay {
+  apply(container: Container!): Container!
+}
+
+let moduleOverlay(
+  cargoArtifactsVersion: String,
+  cargoAuditVersion: String!,
+  overlay: Overlay,
+): OverlaysList! {
+  let cargoArtifactsVersion = "v" + cargoArtifactsVersion.trimPrefix("v") ?? null
+  let cargoAuditVersion = "v" + cargoAuditVersion.trimPrefix("v")
+
+  Dagger.overlays.combine([
+    Dagger.overlays.withFiles(
+      "/usr/local/bin/",
+      [
+        Dagger
+          .github
+          .release(cargoArtifactsVersion, "sagikazarmark/cargo-artifacts")
+          .asset(`cargo-artifacts-${arch}-unknown-linux-gnu.tar.xz`)
+          .extracted(true)
+          .file("cargo-artifacts"),
+
+        cargoAuditBinary(cargoAuditVersion),
+      ],
+    ),
+
+    overlay,
+  ])
+}
+
+let cargoAuditBinary(version: String!): File! {
+  let arch = Dagger
+    .defaultPlatform
+    .{
+      case (_) {
+        "linux/amd64" => "x86_64"
+        "linux/arm64" => "aarch64"
+        else => raise "unsupported platform: " + toString(_)
+      }
+    }
+
+  Dagger
+    .github
+    .release(`cargo-audit/${version}`, "rustsec/rustsec")
+    .asset(`cargo-audit-${arch}-unknown-linux-gnu-${version}.tgz`)
+    .extracted(true)
+    .file("cargo-audit")
+}

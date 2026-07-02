@@ -1,8 +1,8 @@
 type Rust {
   let env: RustEnvironment!
+  let buildEnv: BuildEnvironment!
 
   let baseContainer: Container!
-  let overlay: Overlay
   let source: Directory
   let cwd: String!
 
@@ -44,7 +44,7 @@ type Rust {
     Current working directory within the source.
     """
     cwd: String! = {
-      Path.mustBeRelativeTo(ws.cwd ?? "/", "/" + path.trimPrefix("/"))
+      Path.mustBeRelativeTo(ws.cwd ?? "/", Path.abs(path))
     },
     """
     Targets to install for cross-compilation.
@@ -110,8 +110,17 @@ type Rust {
       cargoTargetCache: cargoTargetCache,
     )
 
+    self.buildEnv = Dagger.buildEnvironment(
+      overlay: moduleOverlay(
+        cargoArtifactsVersion: "v0.2.0",
+        cargoAuditVersion: "0.22.0",
+        overlay: overlay,
+      ),
+      envFile: envFile,
+      sourceDateEpoch: sourceDateEpoch,
+    )
+
     self.baseContainer = container
-    self.overlay = overlay
     self.source = source
     self.cwd = cwd
 
@@ -123,34 +132,9 @@ type Rust {
   """
   container: Container! {
     self
-      .env
-      .applyWorkspace(self.source.asWorkspace(self.cwd), self.baseContainer)
-      .withFiles(
-        "/usr/local/bin/",
-        [
-          Dagger
-            .github
-            .release("v0.2.0", "sagikazarmark/cargo-artifacts")
-            .asset(`cargo-artifacts-${arch}-unknown-linux-gnu.tar.xz`)
-            .extracted(true)
-            .file("cargo-artifacts"),
-
-          cargoAuditBinary,
-        ],
-        permissions: 755,
-      )
-      .{ self.overlay.apply(_) ?? _ }
-      .{
-        source = self.source
-        if (source != null) {
-          _
-            .withMountedDirectory(self.sourceDir, source)
-            .withWorkdir(self.sourceDir(self.cwd))
-        } else _
-      }
-    # .{ self.withEnvFile(_) }
-    # .{ self.withEpoch(_, source) }
-    # .{ self.withMountedSource(_, source) }
+      .baseContainer
+      .{ self.env.applyWorkspace(self.source.asWorkspace(self.cwd), _) }
+      .{ self.buildEnv.applySource(_, self.source, self.cwd) }
   }
 
   """

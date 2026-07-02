@@ -12,5 +12,9 @@ name = "rust-environment"
 source = "../rust-environment"
 
 [[dependencies]]
+name = "build-environment"
+source = "../build-environment"
+
+[[dependencies]]
 name = "overlays"
 source = "../overlays"

@@ -1,14 +1,10 @@
 type WorkerBuild {
-  let env: RustEnvironment!
+  let rustEnv: RustEnvironment!
+  let buildEnv: BuildEnvironment!
 
   let baseContainer: Container!
-  let overlay: OverlaysOverlay
   let source: Directory
   let cwd: String!
-
-  let sourceDir(cwd: String): String! {
-    Path.join(["/work/src", cwd ?? ""])
-  }
 
   new(
     ws: Workspace,
@@ -60,7 +56,7 @@ type WorkerBuild {
     Current working directory within the source.
     """
     cwd: String! = {
-      Path.mustBeRelativeTo(ws.cwd ?? "/", "/" + path.trimPrefix("/"))
+      Path.mustBeRelativeTo(ws.cwd ?? "/", Path.abs(path))
     },
     """
     Targets to install for cross-compilation.
@@ -116,7 +112,7 @@ type WorkerBuild {
       Dagger.cacheVolume("cargo-target")
     } else null,
   ) {
-    self.env = Dagger.rustEnvironment(
+    self.rustEnv = Dagger.rustEnvironment(
       cargoRegistryIndexCache: cargoRegistryIndexCache,
       cargoRegistryArchiveCache: cargoRegistryArchiveCache,
       cargoGitDbCache: cargoGitDbCache,
@@ -126,19 +122,21 @@ type WorkerBuild {
       cargoTargetCache: cargoTargetCache,
     )
 
-    if (source != null) {
-      version = version ?? packageVersion(source, cwd, "worker")
-      wasmBindgenVersion = wasmBindgenVersion ?? packageVersion(source, cwd, "wasm-bindgen")
-    }
+    self.buildEnv = Dagger.buildEnvironment(
+      overlay: moduleOverlay(
+        source: source,
+        cwd: cwd,
+        workerBuildVersion: version,
+        wasmBindgenVersion: wasmBindgenVersion,
+        binaryenVersion: binaryenVersion,
+        esbuildVersion: esbuildVersion,
+        overlay: overlay,
+      ),
+      envFile: envFile,
+      sourceDateEpoch: sourceDateEpoch,
+    )
 
     self.baseContainer = container
-    self.overlay = workerBuildOverlay(
-      version: version,
-      wasmBindgenVersion: wasmBindgenVersion,
-      binaryenVersion: binaryenVersion,
-      esbuildVersion: esbuildVersion,
-      overlay: overlay,
-    )
     self.source = source
     self.cwd = cwd
 
@@ -150,20 +148,9 @@ type WorkerBuild {
   """
   container: Container! {
     self
-      .env
-      .applyWorkspace(self.source.asWorkspace(self.cwd), self.baseContainer)
-      .{ self.overlay.apply(_) ?? _ }
-      .{
-        source = self.source
-        if (source != null) {
-          _
-            .withMountedDirectory(self.sourceDir, source)
-            .withWorkdir(self.sourceDir(self.cwd))
-        } else _
-      }
-    # .{ self.withEnvFile(_) }
-    # .{ self.withEpoch(_, source) }
-    # .{ self.withMountedSource(_, source) }
+      .baseContainer
+      .{ self.rustEnv.applyWorkspace(self.source.asWorkspace(self.cwd), _) }
+      .{ self.buildEnv.applySource(_, self.source, self.cwd) }
   }
 
   """
@@ -207,7 +194,7 @@ type WorkerBuild {
     }
 
     buildArgs += ["--out-dir", "/work/out"]
-    buildArgs += [self.sourceDir(self.cwd)]
+    buildArgs += [Path.join(["/work/src", self.cwd])]
     buildArgs += args
 
     self
@@ -215,49 +202,4 @@ type WorkerBuild {
       .withExec(buildArgs)
       .directory("/work/out")
   }
-}
-
-interface Overlay implements OverlaysOverlay {
-  apply(container: Container!): Container!
-}
-
-let workerBuildOverlay(
-  version: String,
-  wasmBindgenVersion: String,
-  binaryenVersion: String,
-  esbuildVersion: String,
-  overlay: Overlay,
-): OverlaysOverlay! {
-  let installArgs: [String!]! = ["cargo", "install", "worker-build", "--locked"]
-  if (version != null and version != "") {
-    installArgs += ["--version", version]
-  }
-
-  Dagger.overlays.combine([
-    Dagger
-      .wasmTools
-      .withTool(WasmToolsTool.WASM_BINDGEN, wasmBindgenVersion)
-      .withTool(WasmToolsTool.BINARYEN, binaryenVersion)
-      .withTool(WasmToolsTool.ESBUILD, esbuildVersion),
-    Dagger.overlays.withEnvVariable("WASM_BINDGEN_BIN", "wasm-bindgen"),
-    Dagger.overlays.withEnvVariable("WASM_OPT_BIN", "wasm-opt"),
-    Dagger.overlays.withEnvVariable("ESBUILD_BIN", "esbuild"),
-    Dagger.overlays.withExec(installArgs),
-    overlay,
-  ])
-}
-
-let packageVersion(source: Directory!, cwd: String!, name: String!): String {
-  let path = source.findUp("Cargo.lock", cwd)
-  if (path == null) {
-    return null
-  }
-
-  let package = Dagger.cargoLock(file: source.file(path)).findOne(name)
-
-  if (package == null) {
-    return null
-  }
-
-  package.version
 }

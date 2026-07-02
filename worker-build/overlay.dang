@@ -1,0 +1,52 @@
+interface Overlay implements OverlaysOverlay {
+  apply(container: Container!): Container!
+}
+
+let moduleOverlay(
+  source: Directory,
+  cwd: String!,
+  workerBuildVersion: String,
+  wasmBindgenVersion: String,
+  binaryenVersion: String,
+  esbuildVersion: String,
+  overlay: Overlay,
+): OverlaysList! {
+  if (source != null) {
+    workerBuildVersion = workerBuildVersion ?? packageVersion(source, cwd, "worker")
+    wasmBindgenVersion = wasmBindgenVersion ?? packageVersion(source, cwd, "wasm-bindgen")
+  }
+
+  let installArgs: [String!]! = ["cargo", "install", "worker-build", "--locked"]
+  if (workerBuildVersion != null and workerBuildVersion != "") {
+    installArgs += ["--version", workerBuildVersion]
+  }
+
+  Dagger.overlays.combine([
+    Dagger
+      .wasmTools
+      .withTool(WasmToolsTool.WASM_BINDGEN, wasmBindgenVersion)
+      .withTool(WasmToolsTool.BINARYEN, binaryenVersion)
+      .withTool(WasmToolsTool.ESBUILD, esbuildVersion),
+
+    Dagger.overlays.withEnvVariable("WASM_BINDGEN_BIN", "wasm-bindgen"),
+    Dagger.overlays.withEnvVariable("WASM_OPT_BIN", "wasm-opt"),
+    Dagger.overlays.withEnvVariable("ESBUILD_BIN", "esbuild"),
+    Dagger.overlays.withExec(installArgs),
+    overlay,
+  ])
+}
+
+let packageVersion(source: Directory!, cwd: String!, name: String!): String {
+  let path = source.findUp("Cargo.lock", cwd)
+  if (path == null) {
+    return null
+  }
+
+  let package = Dagger.cargoLock(file: source.file(path)).findOne(name)
+
+  if (package == null) {
+    return null
+  }
+
+  package.version
+}

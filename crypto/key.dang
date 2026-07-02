@@ -76,7 +76,7 @@ enum FingerprintFormat {
 
 let withFingerprintFormat(cmd: Command!, format: FingerprintFormat): Command! {
   if (format != null) {
-    cmd = cmd.withArgs(["--format", toString(format).trim("\"").toLower.replace("_", "-")])
+    cmd = cmd.withArgs(["--format", toString(format).toLower.replace("_", "-")])
   }
 
   cmd

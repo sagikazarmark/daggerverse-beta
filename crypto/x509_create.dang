@@ -59,7 +59,7 @@ type CreateCertificateKeySelector {
 
   let creator(keyParams: KeyParams!): CertificateCreator! {
     CertificateCreator(
-      keyArgs: ["--kty", toString(keyParams.keyType).trim("\"")] + keyParams.args,
+      keyArgs: ["--kty", toString(keyParams.keyType)] + keyParams.args,
       key: null,
       keyPassword: null,
       template: self.template,

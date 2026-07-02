@@ -44,14 +44,14 @@ type Labctl {
     let binary = Dagger
       .github
       .release(version, "iximiuz/labctl")
-      .asset(`labctl_${toString(Dagger.defaultPlatform).trim("\"").replace("/", "_")}.tar.gz`)
+      .asset(`labctl_${toString(Dagger.defaultPlatform).replace("/", "_")}.tar.gz`)
       .extracted
       .file("labctl")!
 
     let entrypoint = ["labctl"]
 
     # if (logLevel != null) {
-    #   entrypoint + ["--log-level", toString(logLevel).trim("\"").toLower]
+    #   entrypoint + ["--log-level", toString(logLevel).toLower]
     # }
 
     self.container = container

@@ -615,7 +615,7 @@ type DioxusCommand {
     let args = ["dx", "bundle", "--force-sequential", "true", "--out-dir", "/work/out"]
 
     args = packageTypes.reduce(args) { args, packageType =>
-      args += ["--package-types", toString(packageType).trim("\"").toLower]
+      args += ["--package-types", toString(packageType).toLower]
     }
 
     args += self.options(
@@ -626,9 +626,9 @@ type DioxusCommand {
       jsonOutput: jsonOutput,
     )
 
-    if (platform != null) { args += ["--platform", toString(platform).trim("\"").toLower] }
-    if (renderer != null) { args += ["--renderer", toString(renderer).trim("\"").toLower] }
-    if (bundle != null) { args += ["--bundle", toString(bundle).trim("\"").toLower] }
+    if (platform != null) { args += ["--platform", toString(platform).toLower] }
+    if (renderer != null) { args += ["--renderer", toString(renderer).toLower] }
+    if (bundle != null) { args += ["--bundle", toString(bundle).toLower] }
 
     args += self.targetOptions(
       release: release,

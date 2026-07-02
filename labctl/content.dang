@@ -25,7 +25,7 @@ type Content {
       .withMountedDirectory(".", source)
       .withExec([
         "labctl",
-        "content", "push", toString(self.kind).toLower.trim("\""), self.name,
+        "content", "push", toString(self.kind).toLower, self.name,
         "--force", "--dir", ".",
       ])
   }

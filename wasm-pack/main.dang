@@ -136,7 +136,7 @@ type WasmPack {
     case (Dagger.defaultPlatform) {
       "linux/amd64" => "x86_64"
       "linux/arm64" => "aarch64"
-      else => raise "unsupported platform: " + toString(Dagger.defaultPlatform).trim("\"")
+      else => raise "unsupported platform: " + toString(Dagger.defaultPlatform)
     }
   }
 
@@ -162,7 +162,7 @@ type WasmPack {
   ): Container! @check {
     let _args = ["wasm-pack", "test", "--mode", "no-install", "--headless"]
 
-    _args += browsers.uniq.map { browser => "--" + toString(browser).trim("\"").toLower }
+    _args += browsers.uniq.map { browser => "--" + toString(browser).toLower }
 
     _args += ["."]
 

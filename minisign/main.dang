@@ -25,7 +25,7 @@ type Minisign {
   Download the minisign binary for the given platform.
   """
   download(platform: Platform! = Dagger.defaultPlatform): File! {
-    let segments = toString(platform).trim("\"").split("/")
+    let segments = toString(platform).split("/")
 
     let os = case (segments[0]) {
       "linux" => "linux"

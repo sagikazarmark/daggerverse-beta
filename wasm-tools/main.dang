@@ -96,7 +96,7 @@ let installEsbuild(version: String, container: Container!): Container! {
   let arch = case (Dagger.defaultPlatform) {
     "linux/amd64" => "x64"
     "linux/arm64" => "arm64"
-    else => raise "unsupported platform: " + toString(Dagger.defaultPlatform).trim("\"")
+    else => raise "unsupported platform: " + toString(Dagger.defaultPlatform)
   }
   let platform = "linux-" + arch
   let tarball = Dagger.http(
@@ -113,6 +113,6 @@ let arch: String! {
   case (Dagger.defaultPlatform) {
     "linux/amd64" => "x86_64"
     "linux/arm64" => "aarch64"
-    else => raise "unsupported platform: " + toString(Dagger.defaultPlatform).trim("\"")
+    else => raise "unsupported platform: " + toString(Dagger.defaultPlatform)
   }
 }

@@ -51,7 +51,7 @@ type Playground {
     ]
 
     if (asFreeTierUser) { args += ["--as-free-tier-user"] }
-    if (backend != null) { args += ["--backend", toString(backend).trim("\"").toLower] }
+    if (backend != null) { args += ["--backend", toString(backend).toLower] }
     if (manifest != null) { args += ["--file", "manifest.yaml"] }
     if (skipWaitInit) { args += ["--skip-wait-init"] }
     if (withPortForwards) { args += ["--with-port-forwards"] }

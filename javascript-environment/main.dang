@@ -224,7 +224,7 @@ type JavascriptEnvironment {
       Runtime.DENO => self.denoEnv.withRun(task, args: args)
       Runtime.BUN => self.bunEnv.withRun(script: task, args: args)
       Runtime.NODE => self.nodeEnv.withRun(script: task, args: args)
-      else => raise "unsupported JavaScript runtime: " + toString(runtime).trim("\"")
+      else => raise "unsupported JavaScript runtime: " + toString(runtime)
     }
   }
 
@@ -233,7 +233,7 @@ type JavascriptEnvironment {
       Runtime.DENO => self.denoContainer
       Runtime.BUN => self.bunContainer
       Runtime.NODE => self.nodeContainer
-      else => raise "unsupported JavaScript runtime: " + toString(runtime).trim("\"")
+      else => raise "unsupported JavaScript runtime: " + toString(runtime)
     }
   }
 
@@ -285,7 +285,7 @@ let packageCwd(source: Directory, cwd: String!, runtime: Runtime!): String! {
   let file = packageFile(source, cwd, runtime)
 
   if (file == null) {
-    raise "No package file found for JavaScript runtime " + toString(runtime).trim("\"") + " in " + cwd + " (or any parent directory)"
+    raise "No package file found for JavaScript runtime " + toString(runtime) + " in " + cwd + " (or any parent directory)"
   }
 
   packageDir(file)

@@ -233,11 +233,11 @@ type Client {
     let _args = ["restate", "--yes"]
 
     if (self.tableStyle != null) {
-      _args += ["--table-style", toString(self.tableStyle).trim("\"").toLower]
+      _args += ["--table-style", toString(self.tableStyle).toLower]
     }
 
     if (self.timeFormat != null) {
-      _args += ["--time-format", toString(self.timeFormat).trim("\"").toLower]
+      _args += ["--time-format", toString(self.timeFormat).toLower]
     }
 
     if (self.verbose) {

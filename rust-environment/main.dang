@@ -94,7 +94,7 @@ type RustEnvironment {
       .{ self.withTargetCache(_) }
   }
 
-  applySource(container: Container, source: Directory, cwd: String! = "/"): Container! {
+  applySource(container: Container, source: Directory, cwd: String): Container! {
     self.applyWorkspace(source.asWorkspace(cwd), container)
   }
 

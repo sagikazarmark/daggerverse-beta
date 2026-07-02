@@ -1,22 +1,58 @@
 type ContainerTests {
   defaults: Container! @check {
     Dagger
-      .rustEnvironment
-      .container(version: rustVersion)
+      .rustEnvironment(version: rustVersion)
+      .container
       .withExec(["cargo", "version"])
+  }
+
+  cargoHomeDefault: Void @check {
+    let container = Dagger
+      .rustEnvironment(version: rustVersion)
+      .container
+
+    assert { container.envVariable("CARGO_HOME") == "/usr/local/cargo" }
+  }
+
+  cargoHomeCustom: Void @check {
+    let container = Dagger
+      .rustEnvironment(
+        version: rustVersion,
+        container: Dagger
+          .container
+          .from("rust:" + rustVersion)
+          .withEnvVariable("CARGO_HOME", "/custom/cargo"),
+      )
+      .container
+
+    assert { container.envVariable("CARGO_HOME") == "/custom/cargo" }
+  }
+
+  cargoHomeEmpty: Void @check {
+    let container = Dagger
+      .rustEnvironment(
+        version: rustVersion,
+        container: Dagger
+          .container
+          .from("rust:" + rustVersion)
+          .withEnvVariable("CARGO_HOME", ""),
+      )
+      .container
+
+    assert { container.envVariable("CARGO_HOME") == "/usr/local/cargo" }
   }
 
   emptyWorkspace: Container! @check {
     Dagger
-      .rustEnvironment
-      .container(Dagger.directory.asWorkspace, version: rustVersion)
+      .rustEnvironment(version: rustVersion)
+      .container(Dagger.directory.asWorkspace)
       .withExec(["cargo", "version"])
   }
 
   realProjectSource: Container! @check {
     Dagger
-      .rustEnvironment
-      .container(realProject.asWorkspace, version: rustVersion)
+      .rustEnvironment(version: rustVersion)
+      .container(realProject.asWorkspace)
       .withExec(["cargo", "version"])
   }
 }

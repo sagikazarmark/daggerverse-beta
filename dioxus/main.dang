@@ -1,8 +1,8 @@
 type Dioxus {
-  let env: RustEnvironment!
+  let rustEnv: RustEnvironment!
+  let buildEnv: BuildEnvironment!
 
   let baseContainer: Container!
-  let overlay: OverlaysOverlay
   let source: Directory
   let cwd: String!
 
@@ -47,7 +47,7 @@ type Dioxus {
     """
     Ignore paths included in the gitignore file.
     """
-    gitignore: Boolean = true,
+    gitignore: Boolean,
     """
     Include only artifacts that match the given pattern (e.g., ["app/", "package.*"]).
     """
@@ -64,7 +64,7 @@ type Dioxus {
     Current working directory within the source.
     """
     cwd: String! = {
-      Path.mustBeRelativeTo(ws.cwd ?? "/", "/" + path.trimPrefix("/"))
+      Path.mustBeRelativeTo(ws.cwd ?? "/", Path.abs(path))
     },
     """
     Targets to install for cross-compilation.
@@ -120,7 +120,7 @@ type Dioxus {
       Dagger.cacheVolume("cargo-target")
     } else null,
   ) {
-    self.env = Dagger.rustEnvironment(
+    self.rustEnv = Dagger.rustEnvironment(
       cargoRegistryIndexCache: cargoRegistryIndexCache,
       cargoRegistryArchiveCache: cargoRegistryArchiveCache,
       cargoGitDbCache: cargoGitDbCache,
@@ -130,19 +130,20 @@ type Dioxus {
       cargoTargetCache: cargoTargetCache,
     )
 
-    if (source != null) {
-      version = version ?? packageVersion(source, cwd, "dioxus")
-      wasmBindgenVersion = wasmBindgenVersion ?? packageVersion(source, cwd, "wasm-bindgen")
-    }
-
-    self.overlay = dioxusOverlay(
-      dioxusVersion: version,
-      wasmBindgenVersion: wasmBindgenVersion,
-      wasmPackVersion: wasmPackVersion,
-      binaryenVersion: binaryenVersion,
-      esbuildVersion: esbuildVersion,
-      tailwindVersion: tailwindVersion,
-      overlay: overlay,
+    self.buildEnv = Dagger.buildEnvironment(
+      overlay: dioxusOverlay(
+        source: source,
+        cwd: cwd,
+        dioxusVersion: version,
+        wasmBindgenVersion: wasmBindgenVersion,
+        wasmPackVersion: wasmPackVersion,
+        binaryenVersion: binaryenVersion,
+        esbuildVersion: esbuildVersion,
+        tailwindVersion: tailwindVersion,
+        overlay: overlay,
+      ),
+      envFile: envFile,
+      sourceDateEpoch: sourceDateEpoch,
     )
 
     self.baseContainer = container
@@ -157,20 +158,9 @@ type Dioxus {
   """
   container: Container! {
     self
-      .env
-      .applyWorkspace(self.source.asWorkspace(self.cwd), self.baseContainer)
-      .{ self.overlay.apply(_) ?? _ }
-      .{
-        source = self.source
-        if (source != null) {
-          _
-            .withMountedDirectory("/work/src", source)
-            .withWorkdir(Path.join(["/work/src", self.cwd]))
-        } else _
-      }
-    # .{ self.withEnvFile(_) }
-    # .{ self.withEpoch(_, source) }
-    # .{ self.withMountedSource(_, source) }
+      .baseContainer
+      .{ self.rustEnv.applyWorkspace(self.source.asWorkspace(self.cwd), _) }
+      .{ self.buildEnv.applySource(_, self.source, self.cwd) }
   }
 
   """

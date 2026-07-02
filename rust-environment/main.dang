@@ -3,6 +3,7 @@ type RustEnvironment {
   let cargoRegistryArchiveCache: CacheVolume
   let cargoGitDbCache: CacheVolume
 
+  let defaultContainer: Container!
   let overlay: Overlay
 
   let targets: [String!]!
@@ -11,7 +12,15 @@ type RustEnvironment {
 
   new(
     """
-    Overlay to apply to the base container after the initial setup.
+    Version (image tag) to use from the official Rust image repository as the default container.
+    """
+    version: String! = "latest",
+    """
+    Custom container to use as the default container.
+    """
+    container: Container! = Dagger.container.from("rust:" + version),
+    """
+    Overlay to apply to the container after the initial setup.
     """
     overlay: Overlay,
     """
@@ -56,6 +65,7 @@ type RustEnvironment {
     self.cargoRegistryArchiveCache = cargoRegistryArchiveCache
     self.cargoGitDbCache = cargoGitDbCache
 
+    self.defaultContainer = container
     self.overlay = overlay
 
     self.targets = targets
@@ -65,37 +75,33 @@ type RustEnvironment {
     self
   }
 
-  container(
-    ws: Workspace,
-    """
-    Version (image tag) to use from the official Rust image repository as a base container.
-    """
-    version: String! = "latest",
-    """
-    Custom container to use as a base container.
-    """
-    container: Container! = Dagger.container.from("rust:" + version),
-  ): Container! {
-    self.applyWorkspace(ws, container)
+  container(ws: Workspace): Container! {
+    self.applyWorkspace(ws)
   }
 
   apply(container: Container!): Container! {
     self.applyWorkspace(null, container)
   }
 
-  applyWorkspace(workspace: Workspace, container: Container!): Container! {
+  applyWorkspace(workspace: Workspace, container: Container): Container! {
+    let container = container ?? self.defaultContainer
+
     container
       .{ self.withDefaults(_) }
-      .{ self.withCaches(_) }
+      .{ self.withCache(_) }
       .{ self.overlay.apply(_) ?? _ }
       .{ self.rustup(workspace, _) }
       .{ self.withTargetCache(_) }
   }
 
+  applySource(container: Container, source: Directory, cwd: String! = "/"): Container! {
+    self.applyWorkspace(source.asWorkspace(cwd), container)
+  }
+
   let withDefaults(container: Container!): Container! {
     container
       .{
-        if (_.envVariable("CARGO_HOME") == null) {
+        if (_.envVariable("CARGO_HOME") == null or _.envVariable("CARGO_HOME") == "") {
           _.withEnvVariable("CARGO_HOME", "/usr/local/cargo")
         } else _
       }
@@ -103,7 +109,7 @@ type RustEnvironment {
       .withExec(["rustup", "set", "auto-install", "disable"])
   }
 
-  let withCaches(container: Container!): Container! {
+  let withCache(container: Container!): Container! {
     container
       .{
         if (cargoRegistryIndexCache != null) {

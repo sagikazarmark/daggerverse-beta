@@ -20,6 +20,10 @@ name = "cargo-lock"
 source = "../cargo-lock"
 
 [[dependencies]]
+name = "build-environment"
+source = "../build-environment"
+
+[[dependencies]]
 name = "overlays"
 source = "../overlays"
 

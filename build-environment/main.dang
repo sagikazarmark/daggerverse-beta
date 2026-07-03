@@ -1,23 +1,23 @@
 type BuildEnvironment {
-  source: Directory
-  cwd: String!
   mountPath: String!
+
+  let defaultContainer: Container!
 
   let overlay: Overlay
   let envFile: File
   let sourceDateEpoch: String
 
+  let gitignore: Boolean
+  let include: [String!]
+  let exclude: [String!]
+
   new(
     """
-    Source directory to mount.
+    Default container.
     """
-    source: Directory,
+    container: Container! = { Dagger.container },
     """
-    Current working directory within the source.
-    """
-    cwd: String! = "/",
-    """
-    Overlay to apply to the base container.
+    Overlay to apply to the container.
     """
     overlay: Overlay,
     """
@@ -29,49 +29,79 @@ type BuildEnvironment {
     """
     sourceDateEpoch: String,
     """
-    Mount path for the source directory.
+    Ignore paths included in the gitignore file.
+    """
+    gitignore: Boolean,
+    """
+    Include only artifacts that match the given pattern (e.g., ["app/", "package.*"]).
+    """
+    include: [String!],
+    """
+    Exclude artifacts that match the given pattern (e.g., ["node_modules/", ".git*"]).
+    """
+    exclude: [String!],
+    """
+    Path to the mounted source directory.
     """
     mountPath: String! = "/work/src",
   ) {
-    self.source = source
-    self.cwd = cwd
     self.mountPath = mountPath
+
+    self.defaultContainer = container
+
     self.overlay = overlay
     self.envFile = envFile
     self.sourceDateEpoch = sourceDateEpoch
 
+    self.gitignore = gitignore
+    self.include = include
+    self.exclude = exclude
+
     self
   }
 
-  apply(container: Container!): Container! {
-    self.applySource(container)
-  }
-
-  applyWorkspace(
-    workspace: Workspace,
-    container: Container!,
+  """
+  Returns a container with the configured environment.
+  """
+  container(
+    ws: Workspace,
+    """
+    Custom base container to use.
+    """
+    base: Container,
+    """
+    Ignore paths included in the gitignore file.
+    """
     gitignore: Boolean,
+    """
+    Include only artifacts that match the given pattern (e.g., ["app/", "package.*"]).
+    """
     include: [String!],
+    """
+    Exclude artifacts that match the given pattern (e.g., ["node_modules/", ".git*"]).
+    """
     exclude: [String!],
   ): Container! {
-    self.applySource(
-      container,
-      workspace.directory(
-        "/",
-        exclude: exclude,
-        include: include,
-        gitignore: gitignore,
-      ),
-      workspace.cwd,
-    )
+    (base ?? self.defaultContainer)
+      .{ self.withOverlay(_) }
+      .{ self.withEnvFile(_) }
+      .{ self.withEpoch(_) }
+      .{
+        self.withSource(
+          _,
+          ws.directory(
+            "/",
+            exclude: exclude,
+            include: include,
+            gitignore: gitignore,
+          ),
+          ws.cwd,
+        )
+      }
   }
 
-  applySource(container: Container!, source: Directory, cwd: String): Container! {
-    container
-      .{ self.overlay.apply(_) ?? _ }
-      .{ self.withEnvFile(_) }
-      .{ self.withEpoch(_, source) }
-      .{ self.withMountedSource(_, source, cwd) }
+  let withOverlay(container: Container!): Container! {
+    self.overlay.apply(container) ?? container
   }
 
   let withEnvFile(container: Container!): Container! {
@@ -83,14 +113,8 @@ type BuildEnvironment {
     container.withEnvFileVariables(envFile.asEnvFile)
   }
 
-  let withEpoch(container: Container!, source: Directory): Container! {
-    let source = source ?? self.source
+  let withEpoch(container: Container!): Container! {
     let epoch = self.sourceDateEpoch
-    # TODO: this always busts cache for some reason
-    # if (epoch == null and source != null) {
-    #   epoch = commitDate(source)
-    # }
-
     if (epoch == null) {
       return container
     }
@@ -98,11 +122,8 @@ type BuildEnvironment {
     container.withEnvVariable("SOURCE_DATE_EPOCH", epoch)
   }
 
-  let withMountedSource(container: Container!, source: Directory, cwd: String): Container! {
-    let source = source ?? self.source
-    let cwd = cwd ?? self.cwd
-
-    if (source == null) {
+  let withSource(container: Container!, source: Directory, cwd: String): Container! {
+    if (source == null or cwd == null) {
       return container
     }
 

@@ -20,8 +20,8 @@ let envFile: File! {
 type Tests {
   sourceMountAndCwd: Void @check {
     let container = Dagger
-      .buildEnvironment(source: source, cwd: "/app", mountPath: "/workspace")
-      .apply(alpine)
+      .buildEnvironment(mountPath: "/workspace")
+      .container(ws: source.asWorkspace("/app"), base: alpine)
 
     assert { container.mounts.contains("/workspace") or container.mounts.contains("/workspace/") }
     assert { container.file("/workspace/app/marker.txt").contents == "source-ok" }
@@ -36,11 +36,10 @@ type Tests {
   envFileAndEpoch: Void @check {
     let container = Dagger
       .buildEnvironment(
-        source: source,
         envFile: envFile,
         sourceDateEpoch: "1234567890",
       )
-      .apply(alpine)
+      .container(ws: Dagger.directory.asWorkspace, base: alpine)
 
     assert { container.envVariable("BUILD_ENV_TEST") == "from-env-file" }
     assert { container.envVariable("BUILD_ENV_EQUALS") == "a=b" }
@@ -56,7 +55,7 @@ type Tests {
   overlay: Void @check {
     let container = Dagger
       .buildEnvironment(overlay: overlays.withEnvVariable("BUILD_ENV_OVERLAY", "overlay-ok"))
-      .apply(alpine)
+      .container(ws: Dagger.directory.asWorkspace, base: alpine)
 
     assert { container.envVariable("BUILD_ENV_OVERLAY") == "overlay-ok" }
     assert { container.withExec(["printenv", "BUILD_ENV_OVERLAY"]).stdout.trimSpace == "overlay-ok" }
@@ -65,9 +64,9 @@ type Tests {
   workspace: Void @check {
     let container = Dagger
       .buildEnvironment(mountPath: "/src")
-      .applyWorkspace(
-        source.asWorkspace("/app"),
-        alpine,
+      .container(
+        ws: source.asWorkspace("/app"),
+        base: alpine,
         include: ["app/**"],
         exclude: ["app/drop.txt"],
       )

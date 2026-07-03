@@ -1,13 +1,8 @@
 type BunEnvironment {
   let defaultContainer: Container!
 
-  let gitignore: Boolean
-  let include: [String!]
-  let exclude: [String!]
-
   let cache: CacheVolume
-  let envFile: File
-  let sourceDateEpoch: String
+  let buildEnv: BuildEnvironment!
 
   let install: Boolean!
   let locked: Boolean!
@@ -61,13 +56,15 @@ type BunEnvironment {
   ) {
     self.defaultContainer = container
 
-    self.gitignore = gitignore
-    self.include = include
-    self.exclude = exclude
-
     self.cache = cache
-    self.envFile = envFile
-    self.sourceDateEpoch = sourceDateEpoch
+    self.buildEnv = Dagger.buildEnvironment(
+      envFile: envFile,
+      sourceDateEpoch: sourceDateEpoch,
+
+      gitignore: gitignore,
+      include: include,
+      exclude: exclude,
+    )
 
     self.install = install
     self.locked = locked
@@ -76,7 +73,7 @@ type BunEnvironment {
   }
 
   """
-  Returns a container with the Bun environment configured.
+  Returns a container with the configured Bun environment.
   """
   container(
     ws: Workspace,
@@ -87,45 +84,20 @@ type BunEnvironment {
     """
     Ignore paths included in the gitignore file.
     """
-    gitignore: Boolean = self.gitignore,
+    gitignore: Boolean,
     """
     Include only artifacts that match the given pattern (e.g., ["app/", "package.*"]).
     """
-    include: [String!] = self.include,
+    include: [String!],
     """
     Exclude artifacts that match the given pattern (e.g., ["node_modules/", ".git*"]).
     """
-    exclude: [String!] = self.exclude,
+    exclude: [String!],
   ): Container! {
     let base = (base ?? self.defaultContainer).{ self.withCache(_) }
 
     base
-      .{
-        let envFile = self.envFile
-        if (envFile != null) {
-          _.withEnvFileVariables(envFile.asEnvFile)
-        } else _
-      }
-      .{
-        let epoch = self.sourceDateEpoch
-        if (epoch != null) {
-          _.withEnvVariable("SOURCE_DATE_EPOCH", epoch)
-        } else _
-      }
-      .{
-        if (ws != null) {
-          let source = ws.directory(
-            "/",
-            exclude: exclude,
-            include: include,
-            gitignore: gitignore,
-          )
-
-          _
-            .withMountedDirectory("/work/src", source)
-            .withWorkdir(Path.join(["/work/src", ws.cwd]))
-        } else _
-      }
+      .{ self.buildEnv.container(ws, base, gitignore, include, exclude) }
       .{ self.withDependencies(ws, _, base) }
   }
 
@@ -167,8 +139,7 @@ type BunEnvironment {
         ".npmrc",
         ".bunfig.toml",
         "bunfig.toml",
-      ].map { packageFilePath(root, _) },
-      gitignore: true,
+      ].map { Path.clean(Path.join([root, _])).trimPrefix("/") },
     )
 
     let dependencies = installContainer
@@ -188,10 +159,6 @@ type BunEnvironment {
       Path.join(["/work/src", root, "node_modules"]),
       dependencies,
     )
-  }
-
-  let packageFilePath(root: String!, name: String!): String! {
-    Path.clean(Path.join([root, name])).trimPrefix("/")
   }
 
   let findPackageRoot(workspace: Workspace!): String {

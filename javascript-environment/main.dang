@@ -1,34 +1,45 @@
 type JavascriptEnvironment {
   let runtime: Runtime
-  let source: Directory
-  let cwd: String!
 
-  let nodeEnv: NodeEnvironment!
+  let gitignore: Boolean
+  let include: [String!]
+  let exclude: [String!]
+
+  let envFile: File
+  let sourceDateEpoch: String
+
+  let install: Boolean!
+  let locked: Boolean!
+
+  let nodeVersion: String!
   let nodeContainer: Container!
+  let nodeCache: CacheVolume
 
-  let bunEnv: BunEnvironment!
+  let bunVersion: String!
   let bunContainer: Container!
+  let bunCache: CacheVolume
 
-  let denoEnv: DenoEnvironment!
+  let denoVersion: String!
   let denoContainer: Container!
+  let denoCache: CacheVolume
 
   new(
     """
-    Runtime to use. If unset, the runtime is detected from package files starting at the source cwd.
+    Runtime to use. If unset, the runtime is detected from package files starting at the workspace cwd.
     """
     runtime: Runtime,
     """
-    Source directory to mount into source-backed containers.
+    Ignore paths included in the gitignore file.
     """
-    source: Directory,
+    gitignore: Boolean,
     """
-    Current working directory within the source.
+    Include only artifacts that match the given pattern (e.g., ["app/", "package.*"]).
     """
-    cwd: String! = "/",
+    include: [String!],
     """
-    Overlay to apply to the selected runtime container after the initial setup.
+    Exclude artifacts that match the given pattern (e.g., ["node_modules/", ".git*"]).
     """
-    overlay: Overlay,
+    exclude: [String!],
     """
     Environment file to load into selected runtime containers.
     """
@@ -60,9 +71,7 @@ type JavascriptEnvironment {
     """
     Cache volume for npm's package cache.
     """
-    nodeCache: CacheVolume = if (!noCache) {
-      Dagger.cacheVolume("node-npm")
-    } else null,
+    nodeCache: CacheVolume = if (!noCache) { Dagger.cacheVolume("npm") } else null,
     """
     Version (image tag) to use from the official Bun image repository.
     """
@@ -74,9 +83,7 @@ type JavascriptEnvironment {
     """
     Cache volume for Bun's package cache.
     """
-    bunCache: CacheVolume = if (!noCache) {
-      Dagger.cacheVolume("bun-install")
-    } else null,
+    bunCache: CacheVolume = if (!noCache) { Dagger.cacheVolume("bun") } else null,
     """
     Version (image tag) to use from the official Deno image repository.
     """
@@ -88,71 +95,31 @@ type JavascriptEnvironment {
     """
     Cache volume for Deno's dependency cache.
     """
-    denoCache: CacheVolume = if (!noCache) {
-      Dagger.cacheVolume("deno")
-    } else null,
+    denoCache: CacheVolume = if (!noCache) { Dagger.cacheVolume("deno") } else null,
   ) {
     self.runtime = runtime
-    self.source = source
-    self.cwd = cwd
 
+    self.gitignore = gitignore
+    self.include = include
+    self.exclude = exclude
+
+    self.envFile = envFile
+    self.sourceDateEpoch = sourceDateEpoch
+
+    self.install = install
+    self.locked = locked
+
+    self.nodeVersion = nodeVersion
     self.nodeContainer = nodeContainer
-    self.nodeEnv = Dagger.nodeEnvironment(
-      container: nodeContainer,
-      source: source,
-      cwd: packageCwdOrDefault(source, cwd, Runtime.NODE),
-      overlay: overlay,
-      envFile: envFile,
-      sourceDateEpoch: sourceDateEpoch,
-      install: install,
-      locked: locked,
-      noCache: noCache,
-      cache: nodeCache,
-    )
+    self.nodeCache = nodeCache
 
+    self.bunVersion = bunVersion
     self.bunContainer = bunContainer
-    self.bunEnv = Dagger.bunEnvironment(
-      container: bunContainer,
-      source: source,
-      cwd: packageCwdOrDefault(source, cwd, Runtime.BUN),
-      overlay: overlay,
-      envFile: envFile,
-      sourceDateEpoch: sourceDateEpoch,
-      install: install,
-      locked: locked,
-      noCache: noCache,
-      cache: bunCache,
-    )
+    self.bunCache = bunCache
 
+    self.denoVersion = denoVersion
     self.denoContainer = denoContainer
-    self.denoEnv = Dagger.denoEnvironment(
-      container: denoContainer,
-      source: source,
-      cwd: packageCwdOrDefault(source, cwd, Runtime.DENO),
-      overlay: overlay,
-      envFile: envFile,
-      sourceDateEpoch: sourceDateEpoch,
-      install: install,
-      locked: locked,
-      noCache: noCache,
-      cache: denoCache,
-    )
-
-    self
-  }
-
-  """
-  Configure this environment to install dependencies when the selected runtime container is retrieved.
-  """
-  withInstall(
-    """
-    Install dependencies from the lockfile without updating it.
-    """
-    locked: Boolean! = false,
-  ): JavascriptEnvironment! {
-    self.nodeEnv = self.nodeEnv.withInstall(locked: locked)
-    self.bunEnv = self.bunEnv.withInstall(locked: locked)
-    self.denoEnv = self.denoEnv.withInstall(locked: locked)
+    self.denoCache = denoCache
 
     self
   }
@@ -160,44 +127,51 @@ type JavascriptEnvironment {
   """
   Container for the detected or configured JavaScript runtime.
   """
-  container: Container! {
-    self.applySource
-  }
-
-  apply(container: Container!): Container! {
-    self.applySource(container)
-  }
-
-  applyWorkspace(
-    workspace: Workspace,
-    container: Container,
+  container(
+    ws: Workspace,
+    """
+    Custom base container to use.
+    """
+    base: Container,
+    """
+    Ignore paths included in the gitignore file.
+    """
     gitignore: Boolean,
+    """
+    Include only artifacts that match the given pattern (e.g., ["app/", "package.*"]).
+    """
     include: [String!],
+    """
+    Exclude artifacts that match the given pattern (e.g., ["node_modules/", ".git*"]).
+    """
     exclude: [String!],
   ): Container! {
-    self.applySource(
-      container,
-      workspace.directory(
-        "/",
-        exclude: exclude,
-        include: include,
-        gitignore: gitignore,
-      ),
-      cwd: workspace.cwd,
-    )
-  }
-
-  applySource(container: Container, source: Directory, cwd: String): Container! {
-    let source = source ?? self.source
-    let cwd = cwd ?? self.cwd
-    let runtime = self.selectedRuntime(source, cwd)
-    let packageCwd = packageCwd(source, cwd, runtime)
-    let container = container ?? self.defaultContainer(runtime)
+    let runtime = self.resolveRuntime(ws)
 
     case (runtime) {
-      Runtime.DENO => self.denoEnv.applySource(container, source, packageCwd)
-      Runtime.BUN => self.bunEnv.applySource(container, source, packageCwd)
-      Runtime.NODE => self.nodeEnv.applySource(container, source, packageCwd)
+      Runtime.DENO => self.denoEnv.container(
+        ws: ws,
+        base: base,
+        gitignore: gitignore ?? self.gitignore,
+        include: include ?? self.include,
+        exclude: exclude ?? self.exclude,
+      )
+
+      Runtime.BUN => self.bunEnv.container(
+        ws: ws,
+        base: base,
+        gitignore: gitignore ?? self.gitignore,
+        include: include ?? self.include,
+        exclude: exclude ?? self.exclude,
+      )
+
+      Runtime.NODE => self.nodeEnv.container(
+        ws: ws,
+        base: base,
+        gitignore: gitignore ?? self.gitignore,
+        include: include ?? self.include,
+        exclude: exclude ?? self.exclude,
+      )
 
       else => raise "unsupported JavaScript runtime: " + toString(runtime)
     }
@@ -207,6 +181,7 @@ type JavascriptEnvironment {
   Run a task with the selected JavaScript runtime.
   """
   withRun(
+    ws: Workspace!,
     """
     Runtime task or package script to run.
     """
@@ -216,39 +191,66 @@ type JavascriptEnvironment {
     """
     args: [String!]! = [],
   ): Container! {
-    let source = self.source
-    let cwd = self.cwd
-    let runtime = self.selectedRuntime(source, cwd)
+    let runtime = self.resolveRuntime(ws)
 
     case (runtime) {
-      Runtime.DENO => self.denoEnv.withRun(task, args: args)
-      Runtime.BUN => self.bunEnv.withRun(script: task, args: args)
-      Runtime.NODE => self.nodeEnv.withRun(script: task, args: args)
+      Runtime.DENO => self.denoEnv.withRun(ws: ws, task: task, args: args)
+      Runtime.BUN => self.bunEnv.withRun(ws: ws, script: task, args: args)
+      Runtime.NODE => self.nodeEnv.withRun(ws: ws, script: task, args: args)
+
       else => raise "unsupported JavaScript runtime: " + toString(runtime)
     }
   }
 
-  let defaultContainer(runtime: Runtime!): Container! {
-    case (runtime) {
-      Runtime.DENO => self.denoContainer
-      Runtime.BUN => self.bunContainer
-      Runtime.NODE => self.nodeContainer
-      else => raise "unsupported JavaScript runtime: " + toString(runtime)
-    }
+  let nodeEnv: NodeEnvironment! {
+    Dagger.nodeEnvironment(
+      container: self.nodeContainer,
+      envFile: self.envFile,
+      sourceDateEpoch: self.sourceDateEpoch,
+      install: self.install,
+      locked: self.locked,
+      cache: self.nodeCache,
+    )
   }
 
-  let selectedRuntime(source: Directory, cwd: String!): Runtime! {
+  let bunEnv: BunEnvironment! {
+    Dagger.bunEnvironment(
+      container: self.bunContainer,
+      envFile: self.envFile,
+      sourceDateEpoch: self.sourceDateEpoch,
+      install: self.install,
+      locked: self.locked,
+      cache: self.bunCache,
+    )
+  }
+
+  let denoEnv: DenoEnvironment! {
+    Dagger.denoEnvironment(
+      container: self.denoContainer,
+      envFile: self.envFile,
+      sourceDateEpoch: self.sourceDateEpoch,
+      install: self.install,
+      locked: self.locked,
+      cache: self.denoCache,
+    )
+  }
+
+  let resolveRuntime(ws: Workspace): Runtime! {
     let runtime = self.runtime
     if (runtime != null) {
       return runtime
     }
 
-    if (source == null) {
-      raise "No Deno, Bun, or npm package file found: no source directory was provided"
+    if (ws == null) {
+      raise "No Deno, Bun, or npm package file found: no workspace was provided"
     }
 
-    detectRuntime(source, cwd)
+    detectRuntime(ws)
   }
+}
+
+interface Overlay {
+  apply(container: Container!): Container!
 }
 
 enum Runtime {
@@ -257,98 +259,42 @@ enum Runtime {
   NODE
 }
 
-interface Overlay implements NodeEnvironmentOverlay & BunEnvironmentOverlay & DenoEnvironmentOverlay {
-  apply(container: Container!): Container!
-}
-
-let detectRuntime(source: Directory!, cwd: String!): Runtime! {
-  if (denoPackageFile(source, cwd) != null) {
+let detectRuntime(ws: Workspace!): Runtime! {
+  let file = firstFindUp(ws, [
+    "deno.json",
+    "deno.jsonc",
+  ])
+  if (file != null) {
     return Runtime.DENO
   }
 
-  if (bunPackageFile(source, cwd) != null) {
+  file = firstFindUp(ws, [
+    "bun.lock",
+    "bun.lockb",
+  ])
+  if (file != null) {
     return Runtime.BUN
   }
 
-  if (nodePackageFile(source, cwd) != null) {
+  file = firstFindUp(ws, [
+    "package-lock.json",
+    "npm-shrinkwrap.json",
+    "package.json",
+  ])
+  if (file != null) {
     return Runtime.NODE
   }
 
-  raise "No Deno, Bun, or npm package file found in " + cwd + " (or any parent directory)"
+  raise "No Deno, Bun, or npm package file found in " + ws.cwd + " (or any parent directory)"
 }
 
-let packageCwd(source: Directory, cwd: String!, runtime: Runtime!): String! {
-  if (source == null) {
-    return cwd
+let firstFindUp(ws: Workspace!, names: [String!]!): String {
+  names.each { name =>
+    let file = ws.findUp(name)
+    if (file != null) {
+      return file
+    }
   }
 
-  let file = packageFile(source, cwd, runtime)
-
-  if (file == null) {
-    raise "No package file found for JavaScript runtime " + toString(runtime) + " in " + cwd + " (or any parent directory)"
-  }
-
-  packageDir(file)
-}
-
-let packageCwdOrDefault(source: Directory, cwd: String!, runtime: Runtime!): String! {
-  if (source == null) {
-    return cwd
-  }
-
-  let file = packageFile(source, cwd, runtime)
-  if (file == null) {
-    return cwd
-  }
-
-  packageDir(file)
-}
-
-let packageFile(source: Directory!, cwd: String!, runtime: Runtime!): String {
-  case (runtime) {
-    Runtime.DENO => denoPackageFile(source, cwd)
-    Runtime.BUN => bunPackageFile(source, cwd)
-    Runtime.NODE => nodePackageFile(source, cwd)
-    else => null
-  }
-}
-
-let denoPackageFile(source: Directory!, cwd: String!): String {
-  let path: String = findUp(source, cwd, "deno.json")
-  if (path == null) {
-    path = findUp(source, cwd, "deno.jsonc")
-  }
-
-  path
-}
-
-let bunPackageFile(source: Directory!, cwd: String!): String {
-  let path: String = findUp(source, cwd, "bun.lock")
-  if (path == null) {
-    path = findUp(source, cwd, "bun.lockb")
-  }
-
-  path
-}
-
-let nodePackageFile(source: Directory!, cwd: String!): String {
-  let path: String = findUp(source, cwd, "package-lock.json")
-  if (path == null) {
-    path = findUp(source, cwd, "package.json")
-  }
-
-  path
-}
-
-let findUp(source: Directory!, cwd: String!, name: String!): String {
-  source.asWorkspace(cwd).findUp(name)
-}
-
-let packageDir(path: String!): String! {
-  let parts = path.split("/")
-  if (parts.length == 1) {
-    return ""
-  }
-
-  parts.dropLast.join("/")
+  null
 }

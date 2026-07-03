@@ -1,0 +1,8 @@
+{
+  "imports": {
+    "dep": "./dep.ts"
+  },
+  "tasks": {
+    "check": "deno eval \"import value from \\\"dep\\\"; console.log(value)\""
+  }
+}

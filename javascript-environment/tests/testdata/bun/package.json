@@ -1,0 +1,10 @@
+{
+  "name": "bun-test",
+  "version": "1.0.0",
+  "scripts": {
+    "check": "bun check.js"
+  },
+  "dependencies": {
+    "is-number": "^7.0.0"
+  }
+}

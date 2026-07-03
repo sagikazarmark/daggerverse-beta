@@ -1,79 +1,22 @@
 let nodeVersion: String! = "22.20.0-bookworm-slim"
 
 let nodeProject: Directory! {
-  Dagger
-    .directory
-    .withNewFile("package.json", """{
-  "scripts": {
-    "check": "node check.js"
-  },
-  "dependencies": {
-    "dep": "file:dep"
-  }
-}
-""")
-    .withNewFile("check.js", """console.log(require("dep"));
-""")
-    .withNewFile("dep/package.json", """{
-  "name": "dep",
-  "version": "1.0.0",
-  "main": "index.js"
-}
-""")
-    .withNewFile("dep/index.js", """module.exports = "node-ok";
-""")
+  Dagger.currentModule.source.directory("testdata/basic")
 }
 
 let nodeLockedProject: Directory! {
-  nodeProject
-    .withNewFile("package.json", """{
-  "name": "app",
-  "version": "1.0.0",
-  "scripts": {
-    "check": "node check.js"
-  },
-  "dependencies": {
-    "dep": "file:dep"
-  }
-}
-""")
-    .withNewFile("package-lock.json", """{
-  "name": "app",
-  "version": "1.0.0",
-  "lockfileVersion": 3,
-  "requires": true,
-  "packages": {
-    "": {
-      "name": "app",
-      "version": "1.0.0",
-      "dependencies": {
-        "dep": "file:dep"
-      }
-    },
-    "dep": {
-      "version": "1.0.0"
-    },
-    "node_modules/dep": {
-      "resolved": "dep",
-      "link": true
-    }
-  }
-}
-""")
+  Dagger.currentModule.source.directory("testdata/locked")
 }
 
 let envFile: File! {
-  Dagger
-    .directory
-    .withNewFile(".env", "NODE_ENV_TEST=from-env-file\n")
-    .file(".env")
+  Dagger.currentModule.source.file("testdata/env/.env")
 }
 
 type Tests {
   container: Void @check {
     let container = Dagger
-      .nodeEnvironment(version: nodeVersion, source: Dagger.directory)
-      .container
+      .nodeEnvironment(version: nodeVersion)
+      .container(ws: null)
 
     assert { container.mounts.contains("/root/.npm") }
     assert { container.withExec(["node", "--version"]).stdout.contains("v22.") }
@@ -81,8 +24,8 @@ type Tests {
 
   noCache: Void @check {
     let container = Dagger
-      .nodeEnvironment(version: nodeVersion, source: Dagger.directory, noCache: true)
-      .container
+      .nodeEnvironment(version: nodeVersion, noCache: true)
+      .container(ws: null)
 
     assert { !container.mounts.contains("/root/.npm") }
   }
@@ -91,11 +34,10 @@ type Tests {
     let container = Dagger
       .nodeEnvironment(
         version: nodeVersion,
-        source: Dagger.directory,
         envFile: envFile,
         sourceDateEpoch: "1234567890",
       )
-      .container
+      .container(ws: null)
 
     assert { container.envVariable("NODE_ENV_TEST") == "from-env-file" }
     assert { container.envVariable("SOURCE_DATE_EPOCH") == "1234567890" }
@@ -103,26 +45,36 @@ type Tests {
 
   withRun: Void @check {
     let output = Dagger
-      .nodeEnvironment(version: nodeVersion, source: nodeProject, install: true)
-      .withRun("check")
+      .nodeEnvironment(version: nodeVersion, install: true)
+      .withRun(nodeProject.asWorkspace, "check")
       .stdout
 
     assert { output.contains("node-ok") }
   }
 
-  sourceWithRun: Void @check {
+  withRunNamedArgs: Void @check {
     let output = Dagger
-      .nodeEnvironment(version: nodeVersion, source: nodeProject, install: true)
-      .withRun(script: "check")
+      .nodeEnvironment(version: nodeVersion, install: true)
+      .withRun(ws: nodeProject.asWorkspace, script: "check")
       .stdout
 
     assert { output.contains("node-ok") }
+  }
+
+  withRunScriptArgs: Void @check {
+    let output = Dagger
+      .nodeEnvironment(version: nodeVersion, install: true)
+      .withRun(ws: nodeProject.asWorkspace, script: "args", args: ["one", "two"])
+      .stdout
+
+    assert { output.contains("one,two") }
+    assert { !output.contains("npm run args") }
   }
 
   lockedWithRun: Void @check {
     let output = Dagger
-      .nodeEnvironment(version: nodeVersion, source: nodeLockedProject, install: true, locked: true)
-      .withRun("check")
+      .nodeEnvironment(version: nodeVersion, install: true, locked: true)
+      .withRun(ws: nodeLockedProject.asWorkspace, script: "check")
       .stdout
 
     assert { output.contains("node-ok") }

@@ -180,9 +180,6 @@ type BunEnvironment {
   Run a Bun package script in the source.
   """
   withRun(
-    """
-    Workspace containing the package script to run.
-    """
     ws: Workspace!,
     """
     Package script to run.
@@ -193,8 +190,6 @@ type BunEnvironment {
     """
     args: [String!]! = [],
   ): Container! {
-    self
-      .container(ws: ws)
-      .withExec(["bun", "run", script] + args)
+    self.container(ws).withExec(["bun", "run", script] + args)
   }
 }

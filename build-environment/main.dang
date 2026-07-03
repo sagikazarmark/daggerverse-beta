@@ -15,7 +15,7 @@ type BuildEnvironment {
     """
     Default container.
     """
-    container: Container! = { Dagger.container },
+    container: Container! = Dagger.container,
     """
     Overlay to apply to the container.
     """

@@ -3,18 +3,29 @@ interface Overlay implements OverlaysOverlay {
 }
 
 let moduleOverlay(
-  source: Directory,
-  cwd: String!,
-  workerBuildVersion: String,
-  wasmBindgenVersion: String,
   binaryenVersion: String,
   esbuildVersion: String,
   overlay: Overlay,
 ): OverlaysList! {
-  if (source != null) {
-    workerBuildVersion = workerBuildVersion ?? packageVersion(source, cwd, "worker")
-    wasmBindgenVersion = wasmBindgenVersion ?? packageVersion(source, cwd, "wasm-bindgen")
-  }
+  Dagger.overlays.combine([
+    Dagger
+      .wasmTools
+      .withTool(WasmToolsTool.BINARYEN, binaryenVersion)
+      .withTool(WasmToolsTool.ESBUILD, esbuildVersion),
+
+    Dagger.overlays.withEnvVariable("WASM_OPT_BIN", "wasm-opt"),
+    Dagger.overlays.withEnvVariable("ESBUILD_BIN", "esbuild"),
+    overlay,
+  ])
+}
+
+let moduleSourceOverlay(
+  ws: Workspace,
+  workerBuildVersion: String,
+  wasmBindgenVersion: String,
+): OverlaysList! {
+  workerBuildVersion = workerBuildVersion ?? packageVersion(ws, "worker")
+  wasmBindgenVersion = wasmBindgenVersion ?? packageVersion(ws, "wasm-bindgen")
 
   let installArgs: [String!]! = ["cargo", "install", "worker-build", "--locked"]
   if (workerBuildVersion != null and workerBuildVersion != "") {
@@ -22,31 +33,20 @@ let moduleOverlay(
   }
 
   Dagger.overlays.combine([
-    Dagger
-      .wasmTools
-      .withTool(WasmToolsTool.WASM_BINDGEN, wasmBindgenVersion)
-      .withTool(WasmToolsTool.BINARYEN, binaryenVersion)
-      .withTool(WasmToolsTool.ESBUILD, esbuildVersion),
-
+    Dagger.wasmTools.withTool(WasmToolsTool.WASM_BINDGEN, wasmBindgenVersion),
     Dagger.overlays.withEnvVariable("WASM_BINDGEN_BIN", "wasm-bindgen"),
-    Dagger.overlays.withEnvVariable("WASM_OPT_BIN", "wasm-opt"),
-    Dagger.overlays.withEnvVariable("ESBUILD_BIN", "esbuild"),
     Dagger.overlays.withExec(installArgs),
-    overlay,
   ])
 }
 
-let packageVersion(source: Directory!, cwd: String!, name: String!): String {
-  let path = source.findUp("Cargo.lock", cwd)
+let packageVersion(ws: Workspace, name: String!): String {
+  let path = ws.findUp("Cargo.lock")
   if (path == null) {
     return null
   }
 
-  let package = Dagger.cargoLock(file: source.file(path)).findOne(name)
-
-  if (package == null) {
-    return null
-  }
-
-  package.version
+  Dagger
+    .cargoLock(file: ws.file(path))
+    .findOne(name)
+    .version
 }

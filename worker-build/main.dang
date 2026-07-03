@@ -2,12 +2,10 @@ type WorkerBuild {
   let rustEnv: RustEnvironment!
   let buildEnv: BuildEnvironment!
 
-  let baseContainer: Container!
-  let source: Directory
-  let cwd: String!
+  let workerBuildVersion: String
+  let wasmBindgenVersion: String
 
   new(
-    ws: Workspace,
     """
     worker-build version to install (default: auto-detect from Cargo.lock worker crate, then latest).
     """
@@ -33,10 +31,6 @@ type WorkerBuild {
     """
     container: Container! = Dagger.container.from("rust:" + rustVersion),
     """
-    Path to the source directory within the workspace.
-    """
-    path: String! = "/",
-    """
     Ignore paths included in the gitignore file.
     """
     gitignore: Boolean,
@@ -49,15 +43,9 @@ type WorkerBuild {
     """
     exclude: [String!],
     """
-    Source directory. Defaults to the workspace directory at the given path.
+    Overlay to apply to the base container before the Rust toolchain is installed.
     """
-    source: Directory = { ws.directory(path, exclude, include, gitignore ?? true) },
-    """
-    Current working directory within the source.
-    """
-    cwd: String! = {
-      Path.mustBeRelativeTo(ws.cwd ?? "/", Path.abs(path))
-    },
+    rustOverlay: Overlay,
     """
     Targets to install for cross-compilation.
     """
@@ -113,10 +101,12 @@ type WorkerBuild {
     } else null,
   ) {
     self.rustEnv = Dagger.rustEnvironment(
+      container: container,
       cargoRegistryIndexCache: cargoRegistryIndexCache,
       cargoRegistryArchiveCache: cargoRegistryArchiveCache,
       cargoGitDbCache: cargoGitDbCache,
 
+      overlay: rustOverlay,
       targets: ["wasm32-unknown-unknown"] + targets,
       components: ["rust-std"] + components,
       cargoTargetCache: cargoTargetCache,
@@ -124,21 +114,19 @@ type WorkerBuild {
 
     self.buildEnv = Dagger.buildEnvironment(
       overlay: moduleOverlay(
-        source: source,
-        cwd: cwd,
-        workerBuildVersion: version,
-        wasmBindgenVersion: wasmBindgenVersion,
-        binaryenVersion: binaryenVersion,
-        esbuildVersion: esbuildVersion,
-        overlay: overlay,
+        binaryenVersion,
+        esbuildVersion,
+        overlay,
       ),
       envFile: envFile,
       sourceDateEpoch: sourceDateEpoch,
+      gitignore: gitignore,
+      include: include,
+      exclude: exclude,
     )
 
-    self.baseContainer = container
-    self.source = source
-    self.cwd = cwd
+    self.workerBuildVersion = version
+    self.wasmBindgenVersion = wasmBindgenVersion
 
     self
   }
@@ -146,17 +134,45 @@ type WorkerBuild {
   """
   Container with the Rust toolchain and worker-build installed.
   """
-  container: Container! {
+  container(
+    ws: Workspace,
+    """
+    Custom base container to use.
+    """
+    base: Container,
+    """
+    Ignore paths included in the gitignore file.
+    """
+    gitignore: Boolean,
+    """
+    Include only artifacts that match the given pattern (e.g., ["app/", "Cargo.*"]).
+    """
+    include: [String!],
+    """
+    Exclude artifacts that match the given pattern (e.g., ["target/", ".git*"]).
+    """
+    exclude: [String!],
+  ): Container! {
     self
-      .baseContainer
-      .{ self.rustEnv.applyWorkspace(self.source.asWorkspace(self.cwd), _) }
-      .{ self.buildEnv.applySource(_, self.source, self.cwd) }
+      .rustEnv
+      .container(ws, base)
+      .{
+        self.buildEnv.container(
+          ws,
+          _,
+          moduleSourceOverlay(ws, self.workerBuildVersion, self.wasmBindgenVersion),
+          gitignore,
+          include,
+          exclude,
+        )
+      }
   }
 
   """
   Run worker-build and return the generated Worker output directory.
   """
   build(
+    ws: Workspace!,
     """
     Build in release mode.
     """
@@ -194,11 +210,11 @@ type WorkerBuild {
     }
 
     buildArgs += ["--out-dir", "/work/out"]
-    buildArgs += [Path.join(["/work/src", self.cwd])]
+    buildArgs += [Path.join(["/work/src", ws.cwd])]
     buildArgs += args
 
     self
-      .container
+      .container(ws)
       .withExec(buildArgs)
       .directory("/work/out")
   }

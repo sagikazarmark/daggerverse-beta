@@ -2,12 +2,10 @@ type Dioxus {
   let rustEnv: RustEnvironment!
   let buildEnv: BuildEnvironment!
 
-  let baseContainer: Container!
-  let source: Directory
-  let cwd: String!
+  let dioxusVersion: String
+  let wasmBindgenVersion: String
 
   new(
-    ws: Workspace,
     """
     Dioxus CLI version to use (default: auto-detect from Cargo.lock).
     """
@@ -41,10 +39,6 @@ type Dioxus {
     """
     container: Container! = Dagger.container.from("rust:" + rustVersion),
     """
-    Path to the source directory within the workspace.
-    """
-    path: String! = "/",
-    """
     Ignore paths included in the gitignore file.
     """
     gitignore: Boolean,
@@ -57,15 +51,9 @@ type Dioxus {
     """
     exclude: [String!],
     """
-    Source directory. Defaults to the workspace directory at the given path.
+    Overlay to apply to the base container before the Rust toolchain is installed.
     """
-    source: Directory = { ws.directory(path, exclude, include, gitignore) },
-    """
-    Current working directory within the source.
-    """
-    cwd: String! = {
-      Path.mustBeRelativeTo(ws.cwd ?? "/", Path.abs(path))
-    },
+    rustOverlay: Overlay,
     """
     Targets to install for cross-compilation.
     """
@@ -121,10 +109,12 @@ type Dioxus {
     } else null,
   ) {
     self.rustEnv = Dagger.rustEnvironment(
+      container: container,
       cargoRegistryIndexCache: cargoRegistryIndexCache,
       cargoRegistryArchiveCache: cargoRegistryArchiveCache,
       cargoGitDbCache: cargoGitDbCache,
 
+      overlay: rustOverlay,
       targets: ["wasm32-unknown-unknown"] + targets,
       components: ["rust-std"] + components,
       cargoTargetCache: cargoTargetCache,
@@ -132,23 +122,21 @@ type Dioxus {
 
     self.buildEnv = Dagger.buildEnvironment(
       overlay: moduleOverlay(
-        source: source,
-        cwd: cwd,
-        dioxusVersion: version,
-        wasmBindgenVersion: wasmBindgenVersion,
-        wasmPackVersion: wasmPackVersion,
-        binaryenVersion: binaryenVersion,
-        esbuildVersion: esbuildVersion,
-        tailwindVersion: tailwindVersion,
-        overlay: overlay,
+        wasmPackVersion,
+        binaryenVersion,
+        esbuildVersion,
+        tailwindVersion,
+        overlay,
       ),
       envFile: envFile,
       sourceDateEpoch: sourceDateEpoch,
+      gitignore: gitignore,
+      include: include,
+      exclude: exclude,
     )
 
-    self.baseContainer = container
-    self.source = source
-    self.cwd = cwd
+    self.dioxusVersion = version
+    self.wasmBindgenVersion = wasmBindgenVersion
 
     self
   }
@@ -156,17 +144,45 @@ type Dioxus {
   """
   Container with the Rust and Dioxus toolchains installed.
   """
-  container: Container! {
+  container(
+    ws: Workspace,
+    """
+    Custom base container to use.
+    """
+    base: Container,
+    """
+    Ignore paths included in the gitignore file.
+    """
+    gitignore: Boolean,
+    """
+    Include only artifacts that match the given pattern (e.g., ["app/", "Cargo.*"]).
+    """
+    include: [String!],
+    """
+    Exclude artifacts that match the given pattern (e.g., ["target/", ".git*"]).
+    """
+    exclude: [String!],
+  ): Container! {
     self
-      .baseContainer
-      .{ self.rustEnv.applyWorkspace(self.source.asWorkspace(self.cwd), _) }
-      .{ self.buildEnv.applySource(_, self.source, self.cwd) }
+      .rustEnv
+      .container(ws, base)
+      .{
+        self.buildEnv.container(
+          ws,
+          _,
+          moduleSourceOverlay(ws, self.dioxusVersion, self.wasmBindgenVersion),
+          gitignore,
+          include,
+          exclude,
+        )
+      }
   }
 
   """
   Bundle the Dioxus app into a shippable object.
   """
   bundle(
+    ws: Workspace!,
     """
     Package types to bundle.
     """
@@ -346,7 +362,7 @@ type Dioxus {
     )
 
     self
-      .container
+      .container(ws)
       .withExec(args)
       .directory("/work/out")
   }
@@ -355,6 +371,7 @@ type Dioxus {
   Build and serve the Dioxus app.
   """
   serve(
+    ws: Workspace!,
     """
     The port the server will run on.
     """
@@ -498,7 +515,7 @@ type Dioxus {
     )
 
     self
-      .container
+      .container(ws)
       .withExposedPort(port)
       .asService(args: args)
   }
@@ -526,7 +543,7 @@ type Dioxus {
       name: name,
       template: template,
       subtemplate: subtemplate,
-      container: self.container,
+      container: self.container(ws: null),
     )
   }
 }

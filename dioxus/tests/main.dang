@@ -22,20 +22,18 @@ type Tests {
     `dioxus = { version = "${self.dioxusVersion}", features = ["web"] }` + "\n" + `wasm-bindgen = "=${self.wasmBindgenVersion}"`
   }
 
-  let dioxus(source: Directory, cwd: String! = "/"): Dioxus! {
+  let dioxus: Dioxus! {
     Dagger.dioxus(
       version: self.dioxusVersion,
       wasmBindgenVersion: self.wasmBindgenVersion,
       rustVersion: rustVersion,
-      source: source,
-      cwd: cwd,
     )
   }
 
   let buildExample(source: Directory!): Directory! {
     let output = self
-      .dioxus(source)
-      .bundle(platform: DioxusPlatform.WEB)
+      .dioxus
+      .bundle(ws: source.asWorkspace, platform: DioxusPlatform.WEB)
       .directory("public")
 
     assert { output.file("index.html").contents.contains("main") }
@@ -56,8 +54,8 @@ type Tests {
 
   build: Container! @check {
     Dagger
-      .dioxus(rustVersion: rustVersion, source: init)
-      .container
+      .dioxus(rustVersion: rustVersion)
+      .container(ws: init.asWorkspace)
       .withExec(["dx", "build"])
   }
 
@@ -119,8 +117,8 @@ type Tests {
 
   serve: Void @check {
     let service = Dagger
-      .dioxus(rustVersion: rustVersion, source: init)
-      .serve
+      .dioxus(rustVersion: rustVersion)
+      .serve(ws: init.asWorkspace)
 
     let response = Dagger.http(service.endpoint(scheme: "http"), experimentalServiceHost: service)
 

@@ -70,6 +70,10 @@ type BuildEnvironment {
     """
     base: Container,
     """
+    Additional overlay to apply to the container.
+    """
+    overlay: Overlay,
+    """
     Ignore paths included in the gitignore file.
     """
     gitignore: Boolean,
@@ -83,7 +87,7 @@ type BuildEnvironment {
     exclude: [String!],
   ): Container! {
     (base ?? self.defaultContainer)
-      .{ self.withOverlay(_) }
+      .{ self.withOverlay(_, overlay) }
       .{ self.withEnvFile(_) }
       .{ self.withEpoch(_) }
       .{
@@ -100,8 +104,10 @@ type BuildEnvironment {
       }
   }
 
-  let withOverlay(container: Container!): Container! {
-    self.overlay.apply(container) ?? container
+  let withOverlay(container: Container!, overlay: Overlay): Container! {
+    container
+      .{ self.overlay.apply(_) ?? _ }
+      .{ overlay.apply(_) ?? _ }
   }
 
   let withEnvFile(container: Container!): Container! {

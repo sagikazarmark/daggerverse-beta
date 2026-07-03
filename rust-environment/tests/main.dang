@@ -19,7 +19,7 @@ type Tests {
 
     container = Dagger
       .rustEnvironment(overlay: overlays.withEnvVariable("FOO", "bar"))
-      .apply(container)
+      .container(ws: null, base: container)
 
     assert { container.envVariable("FOO") == "bar" }
   }

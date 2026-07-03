@@ -26,19 +26,17 @@ type Tests {
     self
   }
 
-  let workerBuild(source: Directory! = self.source, cwd: String! = "/"): WorkerBuild! {
+  let workerBuild: WorkerBuild! {
     Dagger.workerBuild(
       rustVersion: rustVersion,
       container: self.container,
-      source: source,
-      cwd: cwd,
     )
   }
 
   let buildExample(source: Directory! = self.source, name: String!): Directory! {
     let output = self
-      .workerBuild(source: source, cwd: "examples/" + name)
-      .build
+      .workerBuild
+      .build(ws: source.asWorkspace("examples/" + name))
       .withFile(
         "wrangler.toml",
         Dagger

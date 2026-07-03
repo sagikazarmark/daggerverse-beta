@@ -12,11 +12,10 @@ type Tests {
     let output = Dagger
       .rust(
         version: rustVersion,
-        source: Dagger.currentModule.source,
         envFile: Dagger.currentModule.source.file(".env.build"),
         sourceDateEpoch: "1234567890",
       )
-      .container
+      .container(ws: Dagger.currentModule.source.asWorkspace)
       .withExec(["sh", "-c", "printf '%s|%s|%s|%s|%s' \"$BUILD_ONLY\" \"$EXPORTED\" \"$QUOTED\" \"$EQUALS\" \"$SOURCE_DATE_EPOCH\""])
       .stdout
 
@@ -24,14 +23,14 @@ type Tests {
   }
 
   build: Directory! @check {
-    Dagger.rust(version: rustVersion, source: realProject).build
+    Dagger.rust(version: rustVersion).build(ws: realProject.asWorkspace)
   }
 
   test: String! @check {
-    Dagger.rust(version: rustVersion, source: realProject).test
+    Dagger.rust(version: rustVersion).test(ws: realProject.asWorkspace)
   }
 
   clippy: String! @check {
-    Dagger.rust(version: rustVersion, source: realProject).clippy
+    Dagger.rust(version: rustVersion).clippy(ws: realProject.asWorkspace)
   }
 }

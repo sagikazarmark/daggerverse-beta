@@ -3,10 +3,10 @@ type Fix {
 
   let exec(workspace: Workspace!, args: [String!]!): Changeset! {
     parent
-      .container
+      .container(workspace)
       .withExec(args)
-      .directory(parent.sourceDir)
-      .changes(parent.source!)
+      .directory("/work/src")
+      .changes(workspace.directory("/"))
   }
 
   """

@@ -1,12 +1,14 @@
 type ToolchainTests {
-  let workspace = Dagger
-    .directory
-    .withFile("rust-toolchain.toml", Dagger.currentModule.source.file("toolchain.toml"))
-    .withDirectory("path/to/project", Dagger.directory)
-    .asWorkspace("path/to/project")
+  let workspace: Workspace! {
+    Dagger
+      .directory
+      .withFile("rust-toolchain.toml", Dagger.currentModule.source.file("toolchain.toml"))
+      .withDirectory("path/to/project", Dagger.directory)
+      .asWorkspace("path/to/project")
+  }
 
   defaults: Void @check {
-    let container = Dagger.rustEnvironment(version: rustVersion).container
+    let container = Dagger.rustEnvironment(version: rustVersion).container(ws: null)
 
     assert { !targets(container).contains("wasm32-unknown-unknown") }
     assert { !components(container).contains("rust-src") }
@@ -19,7 +21,7 @@ type ToolchainTests {
         targets: ["wasm32-unknown-unknown"],
         components: ["rust-src"],
       )
-      .container
+      .container(ws: null)
 
     assert { targets(container).contains("wasm32-unknown-unknown") }
     assert { components(container).contains("rust-src") }

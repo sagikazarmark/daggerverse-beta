@@ -1,11 +1,10 @@
 type RustEnvironment {
+  let defaultContainer: Container!
+
   let cargoRegistryIndexCache: CacheVolume
   let cargoRegistryArchiveCache: CacheVolume
   let cargoGitDbCache: CacheVolume
-
-  let defaultContainer: Container!
   let overlay: Overlay
-
   let targets: [String!]!
   let components: [String!]!
   let cargoTargetCache: CacheVolume
@@ -61,13 +60,12 @@ type RustEnvironment {
       Dagger.cacheVolume("cargo-target")
     } else null,
   ) {
+    self.defaultContainer = container
+
     self.cargoRegistryIndexCache = cargoRegistryIndexCache
     self.cargoRegistryArchiveCache = cargoRegistryArchiveCache
     self.cargoGitDbCache = cargoGitDbCache
-
-    self.defaultContainer = container
     self.overlay = overlay
-
     self.targets = targets
     self.components = components
     self.cargoTargetCache = cargoTargetCache
@@ -75,27 +73,22 @@ type RustEnvironment {
     self
   }
 
-  container(ws: Workspace): Container! {
-    self.applyWorkspace(ws)
-  }
-
-  apply(container: Container!): Container! {
-    self.applyWorkspace(null, container)
-  }
-
-  applyWorkspace(workspace: Workspace, container: Container): Container! {
-    let container = container ?? self.defaultContainer
-
-    container
+  """
+  Returns a container with the configured Rust environment.
+  """
+  container(
+    ws: Workspace,
+    """
+    Custom base container to use.
+    """
+    base: Container,
+  ): Container! {
+    (base ?? self.defaultContainer)
       .{ self.withDefaults(_) }
       .{ self.withCache(_) }
-      .{ self.overlay.apply(_) ?? _ }
-      .{ self.rustup(workspace, _) }
+      .{ self.rustup(ws, _) }
       .{ self.withTargetCache(_) }
-  }
-
-  applySource(container: Container, source: Directory, cwd: String): Container! {
-    self.applyWorkspace(source.asWorkspace(cwd), container)
+      .{ self.withOverlay(_) }
   }
 
   let withDefaults(container: Container!): Container! {
@@ -140,23 +133,24 @@ type RustEnvironment {
       }
   }
 
-  let rustup(workspace: Workspace, container: Container!): Container! {
-    let toolchainFile = workspace.findUp("rust-toolchain.toml")
+  let rustup(ws: Workspace, container: Container!): Container! {
+    let toolchainFile = ws.findUp("rust-toolchain.toml")
+
     let sourceDir = "/tmp/rust-environment/src"
 
     container
       .{
-        if (workspace != null and toolchainFile != null) {
+        if (ws != null and toolchainFile != null) {
           _
-            .withWorkdir(sourceDir + workspace.cwd)
-            .withMountedFile(sourceDir + toolchainFile, workspace.file(toolchainFile))
+            .withWorkdir(sourceDir + ws.cwd)
+            .withMountedFile(sourceDir + toolchainFile, ws.file(toolchainFile))
             .withExec(["rustup", "toolchain", "install", "--no-self-update"])
         } else _
       }
       .{ self.withTargets(_) }
       .{ self.withComponents(_) }
       .{
-        if (workspace != null and toolchainFile != null) {
+        if (ws != null and toolchainFile != null) {
           _
             .withoutMount(sourceDir + toolchainFile)
             .withoutWorkdir
@@ -189,6 +183,10 @@ type RustEnvironment {
     container
       .withEnvVariable("CARGO_TARGET_DIR", "/target")
       .withMountedCache("/target", cargoTargetCache)
+  }
+
+  let withOverlay(container: Container!): Container! {
+    self.overlay.apply(container) ?? container
   }
 }
 

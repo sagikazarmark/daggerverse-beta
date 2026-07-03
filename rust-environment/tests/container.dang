@@ -2,14 +2,14 @@ type ContainerTests {
   defaults: Container! @check {
     Dagger
       .rustEnvironment(version: rustVersion)
-      .container
+      .container(ws: null)
       .withExec(["cargo", "version"])
   }
 
   cargoHomeDefault: Void @check {
     let container = Dagger
       .rustEnvironment(version: rustVersion)
-      .container
+      .container(ws: null)
 
     assert { container.envVariable("CARGO_HOME") == "/usr/local/cargo" }
   }
@@ -23,7 +23,7 @@ type ContainerTests {
           .from("rust:" + rustVersion)
           .withEnvVariable("CARGO_HOME", "/custom/cargo"),
       )
-      .container
+      .container(ws: null)
 
     assert { container.envVariable("CARGO_HOME") == "/custom/cargo" }
   }
@@ -37,7 +37,7 @@ type ContainerTests {
           .from("rust:" + rustVersion)
           .withEnvVariable("CARGO_HOME", ""),
       )
-      .container
+      .container(ws: null)
 
     assert { container.envVariable("CARGO_HOME") == "/usr/local/cargo" }
   }

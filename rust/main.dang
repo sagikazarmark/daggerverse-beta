@@ -2,16 +2,11 @@ type Rust {
   let env: RustEnvironment!
   let buildEnv: BuildEnvironment!
 
-  let baseContainer: Container!
-  let source: Directory
-  let cwd: String!
-
-  let sourceDir(cwd: String): String! {
-    Path.join(["/work/src", cwd ?? ""])
-  }
+  let gitignore: Boolean
+  let include: [String!]
+  let exclude: [String!]
 
   new(
-    ws: Workspace,
     """
     Version (image tag) to use from the official Rust image repository as a base container.
     """
@@ -21,13 +16,9 @@ type Rust {
     """
     container: Container! = Dagger.container.from("rust:" + version),
     """
-    Path to the source directory within the workspace.
-    """
-    path: String! = "/",
-    """
     Ignore paths included in the gitignore file.
     """
-    gitignore: Boolean,
+    gitignore: Boolean = true,
     """
     Include only artifacts that match the given pattern (e.g., ["app/", "package.*"]).
     """
@@ -36,16 +27,6 @@ type Rust {
     Exclude artifacts that match the given pattern (e.g., ["node_modules/", ".git*"]).
     """
     exclude: [String!],
-    """
-    Source directory. Defaults to the workspace directory at the given path.
-    """
-    source: Directory = { ws.directory(path, exclude, include, gitignore ?? true) },
-    """
-    Current working directory within the source.
-    """
-    cwd: String! = {
-      Path.mustBeRelativeTo(ws.cwd ?? "/", Path.abs(path))
-    },
     """
     Targets to install for cross-compilation.
     """
@@ -101,6 +82,8 @@ type Rust {
     } else null,
   ) {
     self.env = Dagger.rustEnvironment(
+      container: container,
+
       cargoRegistryIndexCache: cargoRegistryIndexCache,
       cargoRegistryArchiveCache: cargoRegistryArchiveCache,
       cargoGitDbCache: cargoGitDbCache,
@@ -116,13 +99,16 @@ type Rust {
         cargoAuditVersion: "0.22.0",
         overlay: overlay,
       ),
+      gitignore: gitignore,
+      include: include,
+      exclude: exclude,
       envFile: envFile,
       sourceDateEpoch: sourceDateEpoch,
     )
 
-    self.baseContainer = container
-    self.source = source
-    self.cwd = cwd
+    self.gitignore = gitignore
+    self.include = include
+    self.exclude = exclude
 
     self
   }
@@ -130,17 +116,40 @@ type Rust {
   """
   Container with the Rust toolchain and common components installed.
   """
-  container: Container! {
+  container(
+    ws: Workspace,
+    """
+    Custom base container to use.
+    """
+    base: Container,
+    """
+    Ignore paths included in the gitignore file.
+    """
+    gitignore: Boolean,
+    """
+    Include only artifacts that match the given pattern (e.g., ["app/", "Cargo.*"]).
+    """
+    include: [String!],
+    """
+    Exclude artifacts that match the given pattern (e.g., ["target/", ".git*"]).
+    """
+    exclude: [String!],
+  ): Container! {
+    let gitignore = gitignore ?? self.gitignore
+    let include = include ?? self.include
+    let exclude = exclude ?? self.exclude
+
     self
-      .baseContainer
-      .{ self.env.applyWorkspace(self.source.asWorkspace(self.cwd), _) }
-      .{ self.buildEnv.applySource(_, self.source, self.cwd) }
+      .env
+      .container(ws, base)
+      .{ self.buildEnv.container(ws, _, gitignore, include, exclude) }
   }
 
   """
   Audit Cargo.lock files for vulnerable crates.
   """
   audit(
+    ws: Workspace!,
     """
     Exit with an error on any violation.
     """
@@ -170,7 +179,7 @@ type Rust {
     }
 
     self
-      .container
+      .container(ws)
       .withMountedDirectory(DB_PATH, db)
       .withExec(args)
       .stdout
@@ -180,6 +189,7 @@ type Rust {
   Compile a local package and all of its dependencies.
   """
   build(
+    ws: Workspace!,
     """
     Package to build.
     """
@@ -290,7 +300,7 @@ type Rust {
     }
 
     self
-      .container
+      .container(ws)
       .withExec(
         args,
         expand: true,
@@ -305,6 +315,7 @@ type Rust {
   Execute all unit and integration tests and build examples of a local package.
   """
   test(
+    ws: Workspace!,
     """
     If specified, only run tests containing this string in their names.
     """
@@ -424,18 +435,18 @@ type Rust {
       profile,
     )
 
-    self.container.withExec(args).combinedOutput
+    self.container(ws).withExec(args).combinedOutput
   }
 
   """
   Format the codebase using rustfmt.
   """
-  fmt: Changeset! @generate {
+  fmt(ws: Workspace!): Changeset! @generate {
     self
-      .container
+      .container(ws)
       .withExec(["cargo", "fmt", "--", "--check"])
-      .directory("")
-      .changes(self.source!)
+      .directory("/work/src")
+      .changes(ws.directory("/"))
   }
 
   """
@@ -476,7 +487,7 @@ type Rust {
     deny.each { d => args += ["--deny", d] }
     forbid.each { f => args += ["--forbid", f] }
 
-    self.container.withExec(args).stdout
+    self.container(ws).withExec(args).stdout
   }
 
   """
@@ -559,7 +570,7 @@ type Rust {
     )
 
     self
-      .container
+      .container(ws)
       .withEnvVariable("RUSTDOCFLAGS", "-D warnings")
       .withExec(args)
       .stdout

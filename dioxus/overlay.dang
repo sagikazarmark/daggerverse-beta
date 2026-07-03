@@ -3,27 +3,15 @@ interface Overlay implements OverlaysOverlay {
 }
 
 let moduleOverlay(
-  source: Directory,
-  cwd: String!,
-  dioxusVersion: String,
-  wasmBindgenVersion: String,
   wasmPackVersion: String,
   binaryenVersion: String,
   esbuildVersion: String,
   tailwindVersion: String,
   overlay: Overlay,
 ): OverlaysList! {
-  if (source != null) {
-    dioxusVersion = dioxusVersion ?? packageVersion(source, cwd, "dioxus")
-    wasmBindgenVersion = wasmBindgenVersion ?? packageVersion(source, cwd, "wasm-bindgen")
-  }
-
   Dagger.overlays.combine([
-    Dagger.overlays.withEnvVariable("NO_DOWNLOADS", "1"), # Prevent dioxus CLI from downloading tool dependencies
-    withDioxus(dioxusVersion),
     Dagger
       .wasmTools
-      .withTool(WasmToolsTool.WASM_BINDGEN, wasmBindgenVersion)
       .withTool(WasmToolsTool.WASM_PACK, wasmPackVersion)
       .withTool(WasmToolsTool.BINARYEN, binaryenVersion)
       .withTool(WasmToolsTool.ESBUILD, esbuildVersion),
@@ -33,19 +21,31 @@ let moduleOverlay(
   ])
 }
 
-let packageVersion(source: Directory!, cwd: String!, name: String!): String {
-  let path = source.findUp("Cargo.lock", cwd)
+let moduleSourceOverlay(
+  ws: Workspace,
+  dioxusVersion: String,
+  wasmBindgenVersion: String,
+): OverlaysList! {
+  dioxusVersion = dioxusVersion ?? packageVersion(ws, "dioxus")
+  wasmBindgenVersion = wasmBindgenVersion ?? packageVersion(ws, "wasm-bindgen")
+
+  Dagger.overlays.combine([
+    Dagger.overlays.withEnvVariable("NO_DOWNLOADS", "1"), # Prevent dioxus CLI from downloading tool dependencies
+    withDioxus(dioxusVersion),
+    Dagger.wasmTools.withTool(WasmToolsTool.WASM_BINDGEN, wasmBindgenVersion),
+  ])
+}
+
+let packageVersion(ws: Workspace, name: String!): String {
+  let path = ws.findUp("Cargo.lock")
   if (path == null) {
     return null
   }
 
-  let package = Dagger.cargoLock(file: source.file(path)).findOne(name)
-
-  if (package == null) {
-    return null
-  }
-
-  package.version
+  Dagger
+    .cargoLock(file: ws.file(path))
+    .findOne(name)
+    .version
 }
 
 let withDioxus(version: String): OverlaysOverlay! {

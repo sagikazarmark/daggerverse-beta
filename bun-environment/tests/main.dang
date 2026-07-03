@@ -1,57 +1,22 @@
 let bunVersion: String! = "1.2.22"
 
 let bunProject: Directory! {
-  Dagger
-    .directory
-    .withNewFile("bun.lock", """{
-  "lockfileVersion": 1,
-  "workspaces": {
-    "": {
-      "dependencies": {
-        "dep": "file:dep",
-      },
-    },
-  },
-  "packages": {
-    "dep": ["dep@file:dep", {}],
-  }
+  Dagger.currentModule.source.directory("testdata/basic")
 }
-""")
-    .withNewFile("package.json", """{
-  "scripts": {
-    "check": "bun check.js"
-  },
-  "dependencies": {
-    "dep": "file:dep"
-  }
-}
-""")
-    .withNewFile("check.js", """import dep from "dep";
-console.log(dep);
-""")
-    .withNewFile("dep/package.json", """{
-  "name": "dep",
-  "version": "1.0.0",
-  "type": "module",
-  "exports": "./index.js"
-}
-""")
-    .withNewFile("dep/index.js", """export default "bun-ok";
-""")
+
+let bunLockedProject: Directory! {
+  Dagger.currentModule.source.directory("testdata/locked")
 }
 
 let envFile: File! {
-  Dagger
-    .directory
-    .withNewFile(".env", "BUN_ENV_TEST=from-env-file\n")
-    .file(".env")
+  Dagger.currentModule.source.file("testdata/env/.env")
 }
 
 type Tests {
   container: Void @check {
     let container = Dagger
-      .bunEnvironment(version: bunVersion, source: Dagger.directory)
-      .container
+      .bunEnvironment(version: bunVersion)
+      .container(ws: null)
 
     assert { container.mounts.contains("/root/.bun/install/cache") }
     assert { container.withExec(["bun", "--version"]).stdout.trimSpace == bunVersion }
@@ -59,8 +24,8 @@ type Tests {
 
   noCache: Void @check {
     let container = Dagger
-      .bunEnvironment(version: bunVersion, source: Dagger.directory, noCache: true)
-      .container
+      .bunEnvironment(version: bunVersion, noCache: true)
+      .container(ws: null)
 
     assert { !container.mounts.contains("/root/.bun/install/cache") }
   }
@@ -69,11 +34,10 @@ type Tests {
     let container = Dagger
       .bunEnvironment(
         version: bunVersion,
-        source: Dagger.directory,
         envFile: envFile,
         sourceDateEpoch: "1234567890",
       )
-      .container
+      .container(ws: null)
 
     assert { container.envVariable("BUN_ENV_TEST") == "from-env-file" }
     assert { container.envVariable("SOURCE_DATE_EPOCH") == "1234567890" }
@@ -81,17 +45,17 @@ type Tests {
 
   withRun: Void @check {
     let output = Dagger
-      .bunEnvironment(version: bunVersion, source: bunProject, install: true)
-      .withRun("check")
+      .bunEnvironment(version: bunVersion, install: true)
+      .withRun(bunProject.asWorkspace, "check")
       .stdout
 
     assert { output.contains("bun-ok") }
   }
 
-  sourceWithRun: Void @check {
+  withRunNamedArgs: Void @check {
     let output = Dagger
-      .bunEnvironment(version: bunVersion, source: bunProject, install: true)
-      .withRun(script: "check")
+      .bunEnvironment(version: bunVersion, install: true)
+      .withRun(ws: bunProject.asWorkspace, script: "check")
       .stdout
 
     assert { output.contains("bun-ok") }
@@ -99,9 +63,8 @@ type Tests {
 
   lockedWithRun: Void @check {
     let output = Dagger
-      .bunEnvironment(version: bunVersion, source: bunProject)
-      .withInstall(locked: true)
-      .withRun("check")
+      .bunEnvironment(version: bunVersion, install: true, locked: true)
+      .withRun(ws: bunLockedProject.asWorkspace, script: "check")
       .stdout
 
     assert { output.contains("bun-ok") }

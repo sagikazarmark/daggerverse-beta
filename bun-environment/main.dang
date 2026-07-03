@@ -1,8 +1,13 @@
 type BunEnvironment {
-  let buildEnv: BuildEnvironment!
-
   let defaultContainer: Container!
+
+  let gitignore: Boolean
+  let include: [String!]
+  let exclude: [String!]
+
   let cache: CacheVolume
+  let envFile: File
+  let sourceDateEpoch: String
 
   let install: Boolean!
   let locked: Boolean!
@@ -17,27 +22,27 @@ type BunEnvironment {
     """
     container: Container! = Dagger.container.from("oven/bun:" + version),
     """
-    Source directory to mount into source-backed containers.
+    Ignore paths included in the gitignore file.
     """
-    source: Directory,
+    gitignore: Boolean,
     """
-    Current working directory within the source.
+    Include only artifacts that match the given pattern (e.g., ["app/", "package.*"]).
     """
-    cwd: String! = "/",
+    include: [String!],
     """
-    Overlay to apply to the container after the initial setup.
+    Exclude artifacts that match the given pattern (e.g., ["node_modules/", ".git*"]).
     """
-    overlay: Overlay,
+    exclude: [String!],
     """
-    Environment file to load into the containers.
+    Environment file to load into the container.
     """
     envFile: File,
     """
-    Source date epoch to set in the containers.
+    Source date epoch to set in the container.
     """
     sourceDateEpoch: String,
     """
-    Install dependencies when a source-backed container is retrieved.
+    Automatically install dependencies.
     """
     install: Boolean! = false,
     """
@@ -52,20 +57,17 @@ type BunEnvironment {
     """
     Cache volume for Bun's package cache.
     """
-    cache: CacheVolume = if (!noCache) {
-      Dagger.cacheVolume("bun-install")
-    } else null,
+    cache: CacheVolume = if (!noCache) { Dagger.cacheVolume("bun") } else null,
   ) {
-    self.buildEnv = Dagger.buildEnvironment(
-      source: source,
-      cwd: cwd,
-      overlay: overlay,
-      envFile: envFile,
-      sourceDateEpoch: sourceDateEpoch,
-    )
-
     self.defaultContainer = container
+
+    self.gitignore = gitignore
+    self.include = include
+    self.exclude = exclude
+
     self.cache = cache
+    self.envFile = envFile
+    self.sourceDateEpoch = sourceDateEpoch
 
     self.install = install
     self.locked = locked
@@ -74,61 +76,147 @@ type BunEnvironment {
   }
 
   """
-  Configure this environment to install dependencies when a source-backed container is retrieved.
+  Returns a container with the Bun environment configured.
   """
-  withInstall(
+  container(
+    ws: Workspace,
     """
-    Install dependencies from the lockfile without updating it.
+    Custom base container to use.
     """
-    locked: Boolean! = false,
-  ): BunEnvironment! {
-    self.install = true
-    self.locked = locked
-
-    self
-  }
-
-  container: Container! {
-    self.applySource
-  }
-
-  apply(container: Container!): Container! {
-    self.applySource(container)
-  }
-
-  applyWorkspace(
-    workspace: Workspace,
-    container: Container,
-    gitignore: Boolean,
-    include: [String!],
-    exclude: [String!],
+    base: Container,
+    """
+    Ignore paths included in the gitignore file.
+    """
+    gitignore: Boolean = self.gitignore,
+    """
+    Include only artifacts that match the given pattern (e.g., ["app/", "package.*"]).
+    """
+    include: [String!] = self.include,
+    """
+    Exclude artifacts that match the given pattern (e.g., ["node_modules/", ".git*"]).
+    """
+    exclude: [String!] = self.exclude,
   ): Container! {
-    self.applySource(
-      container,
-      workspace.directory(
-        "/",
-        exclude: exclude,
-        include: include,
-        gitignore: gitignore,
-      ),
-      workspace.cwd,
+    let base = (base ?? self.defaultContainer).{ self.withCache(_) }
+
+    base
+      .{
+        let envFile = self.envFile
+        if (envFile != null) {
+          _.withEnvFileVariables(envFile.asEnvFile)
+        } else _
+      }
+      .{
+        let epoch = self.sourceDateEpoch
+        if (epoch != null) {
+          _.withEnvVariable("SOURCE_DATE_EPOCH", epoch)
+        } else _
+      }
+      .{
+        if (ws != null) {
+          let source = ws.directory(
+            "/",
+            exclude: exclude,
+            include: include,
+            gitignore: gitignore,
+          )
+
+          _
+            .withMountedDirectory("/work/src", source)
+            .withWorkdir(Path.join(["/work/src", ws.cwd]))
+        } else _
+      }
+      .{ self.withDependencies(ws, _, base) }
+  }
+
+  let withCache(container: Container!): Container! {
+    let cache = self.cache
+    if (cache == null) {
+      return container
+    }
+
+    container
+      .{
+        if (_.envVariable("BUN_INSTALL_CACHE_DIR") == null) {
+          _.withEnvVariable("BUN_INSTALL_CACHE_DIR", "/root/.bun/install/cache")
+        } else _
+      }
+      .withMountedCache("${BUN_INSTALL_CACHE_DIR}", cache, expand: true)
+  }
+
+  let withDependencies(
+    ws: Workspace,
+    container: Container!,
+    installContainer: Container!,
+  ): Container! {
+    if (!self.install or ws == null) {
+      return container
+    }
+
+    let root = findPackageRoot(ws)
+    if (root == null) {
+      return container
+    }
+
+    let source = ws.directory(
+      "/",
+      include: [
+        "package.json",
+        "bun.lock",
+        "bun.lockb",
+        ".npmrc",
+        ".bunfig.toml",
+        "bunfig.toml",
+      ].map { packageFilePath(root, _) },
+      gitignore: true,
+    )
+
+    let dependencies = installContainer
+      .withMountedDirectory("/work/src", source)
+      .withWorkdir(Path.join(["/work/src", root]))
+      .{
+        let args = ["bun", "install"]
+        if (self.locked) {
+          args += ["--frozen-lockfile"]
+        }
+
+        _.withExec(args)
+      }
+      .directory("node_modules")
+
+    container.withMountedDirectory(
+      Path.join(["/work/src", root, "node_modules"]),
+      dependencies,
     )
   }
 
-  applySource(container: Container, source: Directory, cwd: String): Container! {
-    let container = container ?? self.defaultContainer
+  let packageFilePath(root: String!, name: String!): String! {
+    Path.clean(Path.join([root, name])).trimPrefix("/")
+  }
 
-    container
-      .{ self.withDefaults(_) }
-      .{ self.withCache(_) }
-      .{ self.buildEnv.applySource(_, source, cwd) }
-      .{ self.installDependencies(_) }
+  let findPackageRoot(workspace: Workspace!): String {
+    [
+      "bun.lock",
+      "bun.lockb",
+      "package.json",
+    ].each { name =>
+      let file = workspace.findUp(name)
+      if (file != null) {
+        return Path.dir(file)
+      }
+    }
+
+    null
   }
 
   """
   Run a Bun package script in the source.
   """
   withRun(
+    """
+    Workspace containing the package script to run.
+    """
+    ws: Workspace!,
     """
     Package script to run.
     """
@@ -139,42 +227,7 @@ type BunEnvironment {
     args: [String!]! = [],
   ): Container! {
     self
-      .container
+      .container(ws: ws)
       .withExec(["bun", "run", script] + args)
   }
-
-  let withDefaults(container: Container!): Container! {
-    container
-      .{
-        if (_.envVariable("BUN_INSTALL_CACHE_DIR") == null) {
-          _.withEnvVariable("BUN_INSTALL_CACHE_DIR", "/root/.bun/install/cache")
-        } else _
-      }
-  }
-
-  let withCache(container: Container!): Container! {
-    let cache = self.cache
-    if (cache == null) {
-      return container
-    }
-
-    container.withMountedCache("${BUN_INSTALL_CACHE_DIR}", cache, expand: true)
-  }
-
-  let installDependencies(container: Container!): Container! {
-    if (!self.install) {
-      return container
-    }
-
-    let args = ["bun", "install"]
-    if (self.locked) {
-      args += ["--frozen-lockfile"]
-    }
-
-    container.withExec(args)
-  }
-}
-
-interface Overlay implements BuildEnvironmentOverlay {
-  apply(container: Container!): Container!
 }

@@ -7,5 +7,9 @@ name = "k3s"
 source = ".."
 
 [[dependencies]]
+name = "kubectl"
+source = "../../kubectl"
+
+[[dependencies]]
 name = "olareg"
 source = "../../olareg"

@@ -1,7 +1,11 @@
 name = "kube-api-server"
-engineVersion = "v0.21.7-20260612013754-dev-d87b131f0507"
+engineVersion = "v1.0.0"
 runtime.source = "dang"
 include = ["!tests"]
+
+[[dependencies]]
+name = "kubectl"
+source = "../kubectl"
 
 [[dependencies]]
 name = "crypto"

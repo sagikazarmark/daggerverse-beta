@@ -1,4 +1,4 @@
-type K3s {
+type K3s implements KubectlCluster {
   let baseContainer: Container!
   let clientContainer: Container!
 
@@ -164,7 +164,7 @@ type K3s {
     It must contain a dot or a port so that it is treated as a registry rather
     than a Docker Hub namespace.
     """
-    registry: String! = service.endpoint(scheme: "http", port: port).trimPrefix("http://"),
+    registry: String! = service.endpoint(port: port),
     """
     Optional image path rewrite rules in REGEX=REPLACEMENT form.
     """
@@ -204,10 +204,43 @@ type K3s {
   """
   A kubectl client preconfigured to access the cluster.
   """
-  kubectl: Kubectl! {
-    # Binding the K3s service stays lazy: kubeconfig execs run unbound (and
-    # cache), and the service only starts when a container actually runs.
-    Kubectl(self.clientContainer, self.service, self.tlsCerts)
+  let kubectl: Kubectl! {
+    Dagger.kubectl(self.clientContainer).fromCluster(self)
+  }
+
+  """
+  Kubernetes API server service port.
+  """
+  port: Int! {
+    6443
+  }
+
+  """
+  CA certificate that signed the API server serving certificate.
+  """
+  serverCa: File {
+    self.tlsCerts.file("server-ca.crt")
+  }
+
+  """
+  TLS server name to set in kubeconfig.
+  """
+  serverName: String {
+    self.name
+  }
+
+  """
+  Admin client certificate for the cluster.
+  """
+  clientCertificate: File! {
+    self.tlsCerts.file("client-admin.crt")
+  }
+
+  """
+  Admin client key for the cluster.
+  """
+  clientKey: File! {
+    self.tlsCerts.file("client-admin.key")
   }
 
   """
@@ -243,7 +276,7 @@ type K3s {
         "default",
         `https://localhost:${toString(port)}`,
         ca: self.tlsCerts.file("server-ca.crt"),
-        tlsServerName: self.name,
+        serverName: self.name,
       )
       .withCredentials(
         "default",
@@ -286,8 +319,8 @@ type K3s {
   let tlsCerts: Directory! {
     let owner = self.certsOwner
 
-    if (owner != null and owner! != self.name) {
-      raise `these certificates were generated for cluster "${owner!}", but this cluster is named "${self.name}"; pass the matching --certs or change --name`
+    if (owner != null and owner != self.name) {
+      raise `these certificates were generated for cluster "${owner}", but this cluster is named "${self.name}"; pass the matching --certs or change --name`
     }
 
     self.certs.withoutFile(".cluster-name")
@@ -298,8 +331,6 @@ type K3s {
   let certsOwner: String {
     if (self.certs.entries.contains(".cluster-name")) {
       self.certs.file(".cluster-name").contents
-    } else {
-      null
     }
   }
 
@@ -307,55 +338,47 @@ type K3s {
   let serverContainer: Container! {
     # Mount the cluster certs here (not in baseContainer) so the cluster-name
     # guard in tlsCerts runs lazily, only when the server is actually built.
-    let container = self.baseContainer.withDirectory(
-      "/var/lib/rancher/k3s/server/tls",
-      self.tlsCerts,
-    )
-
-    container = ([6443] + self.nodePorts).uniq.reduce(container) { container, port =>
-      if (port == 6443) {
-        container.withExposedPort(port)
-      } else {
-        container.withExposedPort(port, experimentalSkipHealthcheck: true)
-      }
-    }
-
-    let manifests = self.manifests
-    let mirrors = self.mirrors
-
-    if (!manifests.entries.isEmpty) {
-      container = container.withDirectory(
-        "/var/lib/rancher/k3s/server/manifests",
-        manifests,
+    self
+      .baseContainer
+      .withDirectory(
+        "/var/lib/rancher/k3s/server/tls",
+        self.tlsCerts,
       )
-    }
-
-    # K3s needs /etc/rancher/k3s writable for the runtime-generated kubeconfig.
-    # Without registries it is a throwaway temp mount; with registries it is a
-    # writable directory mount that also carries registries.yaml (a file nested
-    # inside a temp mount is not delivered to the container).
-    container = mirrors.keys.reduce(container) { container, registry =>
-      let mirror = mirrors.get(registry)!
-
-      if (mirror.service != null) {
-        container = container.withServiceBinding(mirror.service!.hostname, mirror.service!)
+      .{
+        ([6443] + self.nodePorts).uniq.reduce(_) { container, port =>
+          container.withExposedPort(port, experimentalSkipHealthcheck: port != 6443)
+        }
       }
+      .{
+        let manifests = self.manifests
+        if (!manifests.entries.isEmpty) {
+          _.withDirectory("/var/lib/rancher/k3s/server/manifests", manifests)
+        } else _
+      }
+      .{
+        # K3s needs /etc/rancher/k3s writable for the runtime-generated kubeconfig.
+        # Without registries it is a throwaway temp mount; with registries it is a
+        # writable directory mount that also carries registries.yaml (a file nested
+        # inside a temp mount is not delivered to the container).
+        self.mirrors.keys.reduce(_) { container, registry =>
+          let mirror = self.mirrors.get(registry)!
 
-      container
-    }
-
-    if (mirrors.keys.isEmpty) {
-      container = container.withMountedTemp("/etc/rancher/k3s")
-    } else {
-      let registriesFile = self.registriesFile
-
-      container = container.withMountedDirectory(
-        "/etc/rancher/k3s",
-        Dagger.directory.withFile("registries.yaml", registriesFile),
-      )
-    }
-
-    container
+          let service = mirror.service
+          if (service != null) {
+            container.withServiceBinding(service.hostname, service)
+          } else container
+        }
+      }
+      .{
+        if (self.mirrors.keys.isEmpty) {
+          _.withMountedTemp("/etc/rancher/k3s")
+        } else {
+          _.withMountedDirectory(
+            "/etc/rancher/k3s",
+            Dagger.directory.withFile("", self.registriesFile),
+          )
+        }
+      }
   }
 
   # The rendered /etc/rancher/k3s/registries.yaml mirror configuration.

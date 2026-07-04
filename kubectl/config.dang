@@ -1,0 +1,71 @@
+type ClusterEntry {
+  let server: String!
+  let ca: File
+  let serverName: String
+  let service: Service
+
+  let apply(name: String!, container: Container!): Container! {
+    let args = [
+      "kubectl",
+      "config", "set-cluster", name,
+      "--server", self.server,
+    ]
+
+    if (self.serverName != null) {
+      args += ["--tls-server-name", self.serverName!]
+    }
+
+    let ca = self.ca
+    if (ca != null) {
+      let caPath = `/kube/certs/servers/${name}/ca.crt`
+
+      container = container.withMountedFile(caPath, ca)
+      args += ["--certificate-authority", caPath]
+    } else {
+      args += ["--insecure-skip-tls-verify"]
+    }
+
+    container.withExec(args)
+  }
+}
+
+type UserEntry {
+  let certificate: File!
+  let key: File!
+
+  let apply(name: String!, container: Container!): Container! {
+    let path = `/kube/certs/users/${name}/`
+    let certPath = path + "client.crt"
+    let keyPath = path + "client.key"
+
+    container
+      .withMountedFile(certPath, self.certificate)
+      .withMountedFile(keyPath, self.key)
+      .withExec([
+        "kubectl",
+        "config", "set-credentials", name,
+        "--client-certificate", certPath, "--client-key", keyPath,
+        "--embed-certs",
+      ])
+  }
+}
+
+type ContextEntry {
+  let cluster: String!
+  let user: String!
+  let namespace: String
+
+  let apply(name: String!, container: Container!): Container! {
+    let args = [
+      "kubectl",
+      "config", "set-context", name,
+      "--cluster", self.cluster, "--user", self.user,
+    ]
+
+    if (self.namespace != null) {
+      args += ["--namespace", self.namespace!]
+    }
+
+    container.withExec(args)
+  }
+}

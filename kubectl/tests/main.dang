@@ -51,12 +51,32 @@ type Tests {
 
     let config = Dagger
       .kubectl
-      .withClusterService("lazy", service, servicePort: 6443)
+      .withClusterService("lazy", service, port: 6443)
       .config
       .contents
 
     assert { config.contains("name: lazy") }
     assert { config.contains("server: https://do-not-start:6443") }
+  }
+
+  """
+  Kubectl config can be applied to another container.
+  """
+  applyToContainer: String! @check {
+    let output = Dagger
+      .kubectl
+      .withCluster("external", "https://external.example")
+      .apply(
+        Dagger
+          .container
+          .from("busybox:1.37.0@sha256:9532d8c39891ca2ecde4d30d7710e01fb739c87a8b9299685c63704296b16028"),
+      )
+      .withExec(["sh", "-c", "test \"$KUBECONFIG\" = /kube/config && grep 'external.example' /kube/config"])
+      .stdout
+
+    assert { output.contains("external.example") }
+
+    output
   }
 
   """
@@ -72,7 +92,7 @@ type Tests {
 
     let output = Dagger
       .kubectl
-      .withClusterService("removed", service, servicePort: 6443)
+      .withClusterService("removed", service, port: 6443)
       .withoutCluster("removed")
       .withExec(["version", "--client"])
       .stdout

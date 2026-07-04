@@ -3,7 +3,7 @@ type Tests {
   kubectl can reach the generated K3s cluster.
   """
   clusterInfo: String! @check @cache(policy: FunctionCachePolicy.Never) {
-    let kubectl = Dagger.k3S(name: "k3s-test").kubectl
+    let kubectl = Dagger.kubectl.fromCluster(Dagger.k3S(name: "k3s-test"))
 
     # Wait for the API server to come up. Unused lets are never evaluated,
     # so the assert below forces this exec before the one under test.
@@ -29,11 +29,75 @@ type Tests {
   The kubeconfig of the K3s kubectl client points at the default context.
   """
   kubeconfig: String! @check {
-    let output = Dagger.k3S(name: "k3s-kubeconfig-test").kubectl.config.contents
+    let output = Dagger.kubectl.fromCluster(Dagger.k3S(name: "k3s-test")).config.contents
 
     assert { output.contains("current-context: default") }
 
     output
+  }
+
+  """
+  K3s can be passed directly to kubectl.fromCluster.
+  """
+  fromCluster: String! @check {
+    let output = Dagger
+      .kubectl
+      .fromCluster(Dagger.k3S(name: "k3s-from-cluster-test"))
+      .config
+      .contents
+
+    assert { output.contains("server: https://k3s-from-cluster-test:6443") }
+    assert { output.contains("tls-server-name: k3s-from-cluster-test") }
+    assert { output.contains("current-context: default") }
+
+    output
+  }
+
+  """
+  kubectl.fromCluster can register a named K3s cluster without clearing existing entries.
+  """
+  fromClusterNamed: [String!]! @check {
+    let kubectl = Dagger
+      .kubectl
+      .withCluster("existing", "https://existing.example")
+      .fromCluster(Dagger.k3S(name: "k3s-from-cluster-named-test"), name: "named")
+
+    assert { kubectl.clusters.contains("existing") }
+    assert { kubectl.clusters.contains("named") }
+    assert { kubectl.users.contains("named") }
+    assert { kubectl.contexts.contains("named") }
+    assert { kubectl.currentContext == "named" }
+
+    kubectl.clusters
+  }
+
+  """
+  kubectl.fromCluster can reset existing kubeconfig entries before registering K3s.
+  """
+  fromClusterReset: [String!]! @check {
+    let cluster = Dagger.k3S(name: "k3s-from-cluster-reset-test")
+
+    let kubectl = Dagger
+      .kubectl
+      .withCluster("stale-cluster", "https://stale.example")
+      .withCredentials("stale-user", cluster.clientCertificate, cluster.clientKey)
+      .withContext(
+        "stale-context",
+        cluster: "stale-cluster",
+        user: "stale-user",
+        use: true,
+      )
+      .fromCluster(cluster, true)
+
+    assert { kubectl.clusters.contains("default") }
+    assert { !kubectl.clusters.contains("stale-cluster") }
+    assert { kubectl.users.contains("default") }
+    assert { !kubectl.users.contains("stale-user") }
+    assert { kubectl.contexts.contains("default") }
+    assert { !kubectl.contexts.contains("stale-context") }
+    assert { kubectl.currentContext == "default" }
+
+    kubectl.clusters
   }
 
   """
@@ -89,10 +153,13 @@ type Tests {
   """
   podNodePort: String! @check @cache(policy: FunctionCachePolicy.Never) {
     let output = Dagger
-      .k3S(name: "k3s-pod-test")
-      .withNodePort(30080)
-      .withNodePort(30080)
       .kubectl
+      .fromCluster(
+        Dagger
+          .k3S(name: "k3s-pod-test")
+          .withNodePort(30080)
+          .withNodePort(30080),
+      )
       .container
       .withExec(["sh", "-c", self.podNodePortScript])
       .stdout
@@ -107,8 +174,8 @@ type Tests {
   """
   kubectlExpect: Int! @check @cache(policy: FunctionCachePolicy.Never) {
     let result = Dagger
-      .k3S(name: "k3s-kubectl-expect-test")
       .kubectl
+      .fromCluster(Dagger.k3S(name: "k3s-kubectl-expect-test"))
       .withExec(["get", "pods"], context: "missing", expect: ReturnType.FAILURE)
 
     assert { result.exitCode > 0 }
@@ -128,10 +195,12 @@ type Tests {
     let directory = Dagger.directory.withNewFile("namespace.yaml", self.manifestDirYaml)
 
     let kubectl = Dagger
-      .k3S(name: "k3s-manifest-test")
-      .withManifestFile("file-namespace.yaml", file)
-      .withManifestDirectory(directory)
       .kubectl
+      .fromCluster(
+        k3S(name: "k3s-manifest-test")
+          .withManifestFile("file-namespace.yaml", file)
+          .withManifestDirectory(directory),
+      )
 
     # K3s applies server manifests asynchronously once the API server is up,
     # so poll for the namespaces the manifests create.
@@ -176,10 +245,11 @@ metadata:
 
     let registry = olareg.endpoint(scheme: "http", port: 5050).trimPrefix("http://")
 
-    let kubectl = Dagger
-      .k3S(name: "k3s-registry-test")
-      .withRegistryService(olareg, port: 5050, rewrites: rewrites)
-      .kubectl
+    let kubectl = Dagger.kubectl.fromCluster(
+      Dagger
+        .k3S(name: "k3s-registry-test")
+        .withRegistryService(olareg, port: 5050, rewrites: rewrites),
+    )
 
     let output = kubectl
       .container
@@ -195,26 +265,26 @@ metadata:
 
   let registryScript: String! = """set -eu
 
-for i in $(seq 1 60); do
-  kubectl cluster-info >/dev/null 2>&1 && break
-  sleep 1
-done
-kubectl cluster-info >/dev/null
+  for i in $(seq 1 60); do
+    kubectl cluster-info >/dev/null 2>&1 && break
+    sleep 1
+  done
+  kubectl cluster-info >/dev/null
 
-for i in $(seq 1 60); do
-  kubectl get serviceaccount default >/dev/null 2>&1 && break
-  sleep 1
-done
-kubectl get serviceaccount default >/dev/null
+  for i in $(seq 1 60); do
+    kubectl get serviceaccount default >/dev/null 2>&1 && break
+    sleep 1
+  done
+  kubectl get serviceaccount default >/dev/null
 
-# The image path only exists after the mirror rewrite, so a successful pull proves
-# the configured mirror (the olareg service) served it.
-: "${REGISTRY:?}"
-kubectl run web --image="$REGISTRY/library/nginx:test" --port=80 --restart=Never
-kubectl wait --for=condition=Ready pod/web --timeout=180s
+  # The image path only exists after the mirror rewrite, so a successful pull proves
+  # the configured mirror (the olareg service) served it.
+  : "${REGISTRY:?}"
+  kubectl run web --image="$REGISTRY/library/nginx:test" --port=80 --restart=Never
+  kubectl wait --for=condition=Ready pod/web --timeout=180s
 
-printf 'phase=%s\n' "$(kubectl get pod web -o=jsonpath='{.status.phase}')"
-"""
+  printf 'phase=%s\n' "$(kubectl get pod web -o=jsonpath='{.status.phase}')"
+  """
 
   # NOTE: """ strings keep leading whitespace, so the script must stay at column 0
   # (the heredoc terminator is only recognized unindented).

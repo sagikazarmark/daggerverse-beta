@@ -1,13 +1,25 @@
-type KubeApiServer {
+type KubeApiServer implements KubectlCluster {
   """
   The Kubernetes API server service (exposed on port 6443).
   """
   service: Service!
 
   """
+  Kubernetes API server service port.
+  """
+  port: Int! {
+    6443
+  }
+
+  """
   The CA certificate that signed the API server's serving certificate.
   """
   ca: File!
+
+  """
+  TLS server name to set in kubeconfig.
+  """
+  serverName: String
 
   """
   Client certificate in the system:masters group.
@@ -18,6 +30,13 @@ type KubeApiServer {
   Client key in the system:masters group.
   """
   clientKey: File!
+
+  """
+  CA certificate that signed the API server serving certificate.
+  """
+  serverCa: File {
+    self.ca
+  }
 
   new(
     name: String! = "kube-api-server",
@@ -86,6 +105,7 @@ type KubeApiServer {
       ])
       .withHostname(hostname)
     self.ca = serverCa.certificate.file
+    self.serverName = hostname
     self.clientCertificate = client.certificate.file
     self.clientKey = client.key.file
 

@@ -97,7 +97,15 @@ type BunEnvironment {
     let base = (base ?? self.defaultContainer).{ self.withCache(_) }
 
     base
-      .{ self.buildEnv.container(ws, base, gitignore, include, exclude) }
+      .{
+        self.buildEnv.container(
+          ws,
+          base,
+          gitignore: gitignore,
+          include: include,
+          exclude: exclude,
+        )
+      }
       .{ self.withDependencies(ws, _, base) }
   }
 

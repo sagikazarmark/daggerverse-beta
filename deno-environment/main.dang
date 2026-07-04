@@ -73,21 +73,6 @@ type DenoEnvironment {
   }
 
   """
-  Configure this environment to install dependencies when a source-backed container is retrieved.
-  """
-  withInstall(
-    """
-    Install dependencies from the lockfile without updating it.
-    """
-    locked: Boolean! = false,
-  ): DenoEnvironment! {
-    self.install = true
-    self.locked = locked
-
-    self
-  }
-
-  """
   Returns a container with the configured Deno environment.
   """
   container(
@@ -112,7 +97,15 @@ type DenoEnvironment {
     (base ?? self.defaultContainer)
       .{ self.withCache(_) }
       .{ self.withDependencies(ws, _) }
-      .{ self.buildEnv.container(ws, _, gitignore, include, exclude) }
+      .{
+        self.buildEnv.container(
+          ws,
+          _,
+          gitignore: gitignore,
+          include: include,
+          exclude: exclude,
+        )
+      }
   }
 
   let withCache(container: Container!): Container! {
@@ -130,10 +123,7 @@ type DenoEnvironment {
       .withMountedCache("${DENO_DIR}", cache, expand: true)
   }
 
-  let withDependencies(
-    ws: Workspace,
-    container: Container!,
-  ): Container! {
+  let withDependencies(ws: Workspace, container: Container!): Container! {
     if (!self.install or ws == null) {
       return container
     }

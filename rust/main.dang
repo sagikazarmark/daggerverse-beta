@@ -2,10 +2,6 @@ type Rust {
   let env: RustEnvironment!
   let buildEnv: BuildEnvironment!
 
-  let gitignore: Boolean
-  let include: [String!]
-  let exclude: [String!]
-
   new(
     """
     Version (image tag) to use from the official Rust image repository as a base container.
@@ -106,10 +102,6 @@ type Rust {
       sourceDateEpoch: sourceDateEpoch,
     )
 
-    self.gitignore = gitignore
-    self.include = include
-    self.exclude = exclude
-
     self
   }
 
@@ -135,14 +127,16 @@ type Rust {
     """
     exclude: [String!],
   ): Container! {
-    let gitignore = gitignore ?? self.gitignore
-    let include = include ?? self.include
-    let exclude = exclude ?? self.exclude
-
     self
       .env
       .container(ws, base)
-      .{ self.buildEnv.container(ws, _, gitignore, include, exclude) }
+      .{ self.buildEnv.container(
+        ws,
+        _,
+        gitignore: gitignore,
+        include: include,
+        exclude: exclude,
+      ) }
   }
 
   """

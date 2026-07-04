@@ -25,18 +25,20 @@ type Minisign {
   Download the minisign binary for the given platform.
   """
   download(platform: Platform! = Dagger.defaultPlatform): File! {
-    let segments = toString(platform).split("/")
-
-    let os = case (segments[0]) {
-      "linux" => "linux"
-      "darwin" => "macos"
-      else => raise "unsupported os: " + (segments[0] ?? "")
+    let os = case (platform) {
+      "linux/amd64" => "linux"
+      "linux/arm64" => "linux"
+      "darwin/amd64" => "macos"
+      "darwin/arm64" => "macos"
+      else => raise "unsupported platform: " + toString(platform)
     }
 
-    let arch = case (segments[1]) {
-      "amd64" => "x86_64"
-      "arm64" => "aarch64"
-      else => raise "unsupported arch: " + (segments[1] ?? "")
+    let arch = case (platform) {
+      "linux/amd64" => "x86_64"
+      "linux/arm64" => "aarch64"
+      "darwin/amd64" => "x86_64"
+      "darwin/arm64" => "aarch64"
+      else => raise "unsupported platform: " + toString(platform)
     }
 
     let fileName = `minisign-${self.version}-${os}.tar.gz`
@@ -45,7 +47,7 @@ type Minisign {
       .release
       .asset(fileName)
       .extracted(true)
-      .file(arch + "/minisign")!
+      .file(arch + "/minisign")
   }
 
   """

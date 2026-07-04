@@ -33,7 +33,7 @@ type WorkerBuild {
     """
     Ignore paths included in the gitignore file.
     """
-    gitignore: Boolean,
+    gitignore: Boolean = true,
     """
     Include only artifacts that match the given pattern (e.g., ["app/", "package.*"]).
     """

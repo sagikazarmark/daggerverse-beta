@@ -1,0 +1,58 @@
+interface Overlay implements OverlaysOverlay {
+  apply(container: Container!): Container!
+}
+
+let moduleOverlay(
+  wasmPackVersion: String,
+  browsers: [Browser!]!,
+  overlay: Overlay,
+): OverlaysList! {
+  Dagger.overlays.combine([
+    Dagger.wasmTools.withTool(WasmToolsTool.WASM_PACK, wasmPackVersion),
+    browserPackages(browsers),
+    overlay,
+  ])
+}
+
+let moduleSourceOverlay(ws: Workspace, wasmBindgenVersion: String): OverlaysList! {
+  wasmBindgenVersion = wasmBindgenVersion ?? packageVersion(ws, "wasm-bindgen")
+
+  Dagger.overlays.combine([
+    Dagger.wasmTools.withTool(WasmToolsTool.WASM_BINDGEN, wasmBindgenVersion),
+  ])
+}
+
+let packageVersion(ws: Workspace, name: String!): String {
+  let path = ws.findUp("Cargo.lock")
+  if (path == null) {
+    return null
+  }
+
+  Dagger
+    .cargoLock(file: ws.file(path))
+    .findOne(name)
+    .version
+}
+
+let browserPackages(browsers: [Browser!]!): DistroPackages! {
+  let apk = []
+  let apt = []
+
+  browsers.uniq.each { browser =>
+    case (browser) {
+      Browser.CHROME => {
+        apk += ["chromium", "chromium-chromedriver"]
+        apt += ["chromium", "chromium-driver"]
+      }
+
+      Browser.FIREFOX => {
+        apk += ["firefox-esr", "geckodriver"]
+        apt += ["firefox-esr"]
+      }
+    }
+
+    null
+  }
+
+  Dagger.distro.packages(apk: apk, apt: apt)
+}

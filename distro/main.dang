@@ -2,7 +2,7 @@ type Distro {
   """
   Install packages in a container.
   """
-  pub packages(
+  packages(
     """
     Packages to install on Alpine distros.
     """
@@ -20,51 +20,47 @@ type Distro {
     """
     cache: Boolean! = true,
   ): Packages! {
-    Packages(parent: self, apk: apk, apt: apt, update: update, cache: cache)
+    Packages(apk: apk, apt: apt, update: update, cache: cache)
   }
 
   """
   Detect the kind of distro.
   """
-  pub kind(container: Container!): Kind! {
-    if (container.exists("/etc/alpine-release", expectedType: ExistsType.REGULAR_TYPE)) {
-      Kind.ALPINE
-    } else if (container.exists("/etc/debian_version", expectedType: ExistsType.REGULAR_TYPE)) {
-      Kind.DEBIAN
-    } else {
-      Kind.UNKNOWN
-    }
+  kind(container: Container!): Kind! {
+    detectKind(container)
   }
 }
 
-type Packages {
-  let parent: Distro!
-
+type Packages implements OverlaysOverlay {
   """
   Packages to install on Alpine distros.
   """
-  pub apk: [String!]! = []
+  apk: [String!]! = []
 
   """
   Packages to install on Debian distros.
   """
-  pub apt: [String!]! = []
+  apt: [String!]! = []
 
   """
   Run package manager updates before installing packages.
   """
-  pub update: Boolean! = true
+  update: Boolean! = true
 
   """
   Mount the package manager cache volume before installing packages.
   """
-  pub cache: Boolean! = true
+  cache: Boolean! = true
 
   """
   Install the packages in the container.
   """
-  pub install(container: Container!): Container! {
-    case (parent.kind(container)) {
+  install(container: Container!): Container! {
+    self.apply(container)
+  }
+
+  apply(container: Container!): Container! {
+    case (detectKind(container)) {
       Kind.ALPINE => {
         if (self.apk.isEmpty) {
           return container
@@ -105,10 +101,18 @@ type Packages {
         container.withExec(["apt-get", "install", "-y", "--no-install-recommends"] + self.apt)
       }
 
-      Kind.UNKNOWN => {
-        raise "unsupported distro"
-      }
+      else => raise "unsupported distro"
     }
+  }
+}
+
+let detectKind(container: Container!): Kind! {
+  if (container.exists("/etc/alpine-release", expectedType: ExistsType.REGULAR_TYPE)) {
+    Kind.ALPINE
+  } else if (container.exists("/etc/debian_version", expectedType: ExistsType.REGULAR_TYPE)) {
+    Kind.DEBIAN
+  } else {
+    Kind.UNKNOWN
   }
 }
 

@@ -45,4 +45,18 @@ type PackagesTests {
 
     assert { container.exists("/usr/bin/chromedriver", expectedType: ExistsType.REGULAR_TYPE) }
   }
+
+  """
+  Packages can be applied through the overlays module.
+  """
+  pub overlay: Void @check {
+    let packages = Dagger.distro.packages(apt: ["file"])
+
+    let container = Dagger
+      .overlays
+      .combine([packages])
+      .apply(Dagger.container.from("debian"))
+
+    assert { container.exists("/usr/bin/file", expectedType: ExistsType.REGULAR_TYPE) }
+  }
 }

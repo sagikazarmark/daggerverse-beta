@@ -1,12 +1,8 @@
 type WasmPack {
   let rustEnv: RustEnvironment!
   let buildEnv: BuildEnvironment!
-  let workspace: Workspace!
-  let wasmBindgenVersion: String
 
-  let gitignore: Boolean
-  let include: [String!]
-  let exclude: [String!]
+  let wasmBindgenVersion: String
 
   """
   Default browsers to use for testing.
@@ -19,7 +15,6 @@ type WasmPack {
   defaultTestArgs: [String!]!
 
   new(
-    workspace: Workspace!,
     """
     wasm-pack version to use (default: latest).
     """
@@ -137,12 +132,7 @@ type WasmPack {
       exclude: exclude,
     )
 
-    self.workspace = workspace
     self.wasmBindgenVersion = wasmBindgenVersion
-
-    self.gitignore = gitignore
-    self.include = include
-    self.exclude = exclude
 
     self.defaultBrowsers = defaultBrowsers
     self.defaultTestArgs = defaultTestArgs

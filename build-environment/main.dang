@@ -104,6 +104,32 @@ type BuildEnvironment {
       }
   }
 
+  """
+  Returns the source.
+  """
+  source(
+    ws: Workspace!,
+    """
+    Ignore paths included in the gitignore file.
+    """
+    gitignore: Boolean,
+    """
+    Include only artifacts that match the given pattern (e.g., ["app/", "package.*"]).
+    """
+    include: [String!],
+    """
+    Exclude artifacts that match the given pattern (e.g., ["node_modules/", ".git*"]).
+    """
+    exclude: [String!],
+  ): Directory! {
+    ws.directory(
+      "/",
+      exclude: exclude ?? self.exclude,
+      include: include ?? self.include,
+      gitignore: gitignore ?? self.gitignore,
+    )
+  }
+
   let withOverlay(container: Container!, overlay: Overlay): Container! {
     container
       .{ self.overlay.apply(_) ?? _ }

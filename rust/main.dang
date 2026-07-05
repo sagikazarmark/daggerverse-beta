@@ -130,13 +130,15 @@ type Rust {
     self
       .env
       .container(ws, base)
-      .{ self.buildEnv.container(
-        ws,
-        _,
-        gitignore: gitignore,
-        include: include,
-        exclude: exclude,
-      ) }
+      .{
+        self.buildEnv.container(
+          ws,
+          _,
+          gitignore: gitignore,
+          include: include,
+          exclude: exclude,
+        )
+      }
   }
 
   """
@@ -440,7 +442,7 @@ type Rust {
       .container(ws)
       .withExec(["cargo", "fmt", "--", "--check"])
       .directory("/work/src")
-      .changes(ws.directory("/"))
+      .changes(self.buildEnv.source(ws))
   }
 
   """

@@ -1,12 +1,12 @@
 type Fix {
   let parent: Rust!
 
-  let exec(workspace: Workspace!, args: [String!]!): Changeset! {
+  let exec(ws: Workspace!, args: [String!]!): Changeset! {
     parent
-      .container(workspace)
+      .container(ws)
       .withExec(args)
       .directory("/work/src")
-      .changes(workspace.directory("/"))
+      .changes(parent.buildEnv.source(ws))
   }
 
   """

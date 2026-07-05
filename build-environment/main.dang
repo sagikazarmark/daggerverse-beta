@@ -95,9 +95,9 @@ type BuildEnvironment {
           _,
           ws.directory(
             "/",
-            exclude: exclude,
-            include: include,
-            gitignore: gitignore,
+            exclude: exclude ?? self.exclude,
+            include: include ?? self.include,
+            gitignore: gitignore ?? self.gitignore,
           ),
           ws.cwd,
         )

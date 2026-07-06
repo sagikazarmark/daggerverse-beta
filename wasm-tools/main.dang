@@ -55,10 +55,11 @@ let install(request: ToolRequest!, container: Container!): Container! {
 }
 
 let installWasmBindgen(version: String, container: Container!): Container! {
+  let platform = wasmBindgenPlatform(container.platform)
   let binaries = Dagger
     .github
     .release(version, "wasm-bindgen/wasm-bindgen")
-    .{ _.asset(`wasm-bindgen-${_.tagName}-${arch}-unknown-linux-gnu.tar.gz`) }
+    .{ _.asset(`wasm-bindgen-${_.tagName}-${platform}.tar.gz`) }
     .extracted(true)
     .filter(include: ["wasm-bindgen-test-runner", "wasm2es6js", "wasm-bindgen"])!
 
@@ -66,6 +67,7 @@ let installWasmBindgen(version: String, container: Container!): Container! {
 }
 
 let installWasmPack(version: String, container: Container!): Container! {
+  let arch = arch(container.platform)
   let binary = Dagger
     .github
     .release(version, "wasm-bindgen/wasm-pack")
@@ -77,6 +79,7 @@ let installWasmPack(version: String, container: Container!): Container! {
 }
 
 let installBinaryen(version: String, container: Container!): Container! {
+  let arch = arch(container.platform)
   let dir = Dagger
     .github
     .release(version, "WebAssembly/binaryen")
@@ -93,10 +96,10 @@ let installEsbuild(version: String, container: Container!): Container! {
     version!.trimPrefix("v")
   }
 
-  let arch = case (Dagger.defaultPlatform) {
+  let arch = case (container.platform) {
     "linux/amd64" => "x64"
     "linux/arm64" => "arm64"
-    else => raise "unsupported platform: " + toString(Dagger.defaultPlatform)
+    else => raise "unsupported platform: " + toString(container.platform)
   }
   let platform = "linux-" + arch
   let tarball = Dagger.http(
@@ -109,10 +112,18 @@ let installEsbuild(version: String, container: Container!): Container! {
   container.withFile("/usr/local/bin/esbuild", binary)
 }
 
-let arch: String! {
-  case (Dagger.defaultPlatform) {
+let arch(platform: Platform!): String! {
+  case (platform) {
     "linux/amd64" => "x86_64"
     "linux/arm64" => "aarch64"
-    else => raise "unsupported platform: " + toString(Dagger.defaultPlatform)
+    else => raise "unsupported platform: " + toString(platform)
+  }
+}
+
+let wasmBindgenPlatform(platform: Platform!): String! {
+  case (platform) {
+    "linux/amd64" => "x86_64-unknown-linux-musl"
+    "linux/arm64" => "aarch64-unknown-linux-gnu"
+    else => raise "unsupported platform: " + toString(platform)
   }
 }

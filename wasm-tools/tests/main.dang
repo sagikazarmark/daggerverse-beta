@@ -3,6 +3,10 @@ type Tests {
     Dagger.container.from("debian:trixie-slim")
   }
 
+  let baseAmd64: Container! {
+    Dagger.container(platform: "linux/amd64").from("debian:trixie-slim")
+  }
+
   """
   The default overlay does not install any tools.
   """
@@ -49,6 +53,18 @@ type Tests {
       .apply(self.base)
 
     assert { container.withExec(["/usr/local/bin/wasm-bindgen", "--version"]).stdout.contains("0.2.126") }
+  }
+
+  """
+  wasm-bindgen runs after installation on amd64.
+  """
+  wasmBindgenAmd64Version: Void @check {
+    let container = Dagger
+      .wasmTools
+      .withTool(WasmToolsTool.WASM_BINDGEN, "0.2.122")
+      .apply(self.baseAmd64)
+
+    assert { container.withExec(["/usr/local/bin/wasm-bindgen", "--version"]).stdout.contains("0.2.122") }
   }
 
   """

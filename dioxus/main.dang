@@ -142,6 +142,29 @@ type Dioxus {
   }
 
   """
+  Set an environment variable in the build container.
+  """
+  withEnvVariable(
+    """
+    Name of the environment variable (e.g., "RUSTFLAGS").
+    """
+    name: String!,
+    """
+    Value of the environment variable (e.g., "-C target-cpu=native").
+    """
+    value: String!,
+    """
+    Replace `${VAR}` or `$VAR` in the value according to the current environment
+    variables defined in the container (e.g., "/opt/bin:$PATH").
+    """
+    expand: Boolean,
+  ): Dioxus! {
+    self.buildEnv = self.buildEnv.withEnvVariable(name, value, expand)
+
+    self
+  }
+
+  """
   Container with the Rust and Dioxus toolchains installed.
   """
   container(

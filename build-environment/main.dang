@@ -5,6 +5,7 @@ type BuildEnvironment {
 
   let overlay: Overlay
   let envFile: File
+  let envVariables: [EnvVariable!]! = []
   let sourceDateEpoch: String
 
   let gitignore: Boolean
@@ -61,6 +62,29 @@ type BuildEnvironment {
   }
 
   """
+  Set an environment variable in the container.
+  """
+  withEnvVariable(
+    """
+    Name of the environment variable (e.g., "HOST").
+    """
+    name: String!,
+    """
+    Value of the environment variable (e.g., "localhost").
+    """
+    value: String!,
+    """
+    Replace `${VAR}` or `$VAR` in the value according to the current environment
+    variables defined in the container (e.g., "/opt/bin:$PATH").
+    """
+    expand: Boolean,
+  ): BuildEnvironment! {
+    self.envVariables += [EnvVariable(name: name, value: value, expand: expand)]
+
+    self
+  }
+
+  """
   Returns a container with the configured environment.
   """
   container(
@@ -90,6 +114,7 @@ type BuildEnvironment {
       .{ self.withOverlay(_, overlay) }
       .{ self.withEnvFile(_) }
       .{ self.withEpoch(_) }
+      .{ self.withEnv(_) }
       .{
         self.withSource(
           _,
@@ -145,6 +170,10 @@ type BuildEnvironment {
     container.withEnvFileVariables(envFile.asEnvFile)
   }
 
+  let withEnv(container: Container!): Container! {
+    self.envVariables.reduce(container) { container, env => env.apply(container) }
+  }
+
   let withEpoch(container: Container!): Container! {
     let epoch = self.sourceDateEpoch
     if (epoch == null) {
@@ -167,4 +196,14 @@ type BuildEnvironment {
 
 interface Overlay {
   apply(container: Container!): Container!
+}
+
+type EnvVariable {
+  let name: String!
+  let value: String!
+  let expand: Boolean
+
+  let apply(container: Container!): Container! {
+    container.withEnvVariable(name: self.name, value: self.value, expand: self.expand)
+  }
 }

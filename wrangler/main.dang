@@ -230,6 +230,238 @@ type Wrangler {
       .withDirectory(".", source)
       .withExec(args)
   }
+
+  """
+  Manage versions of a Worker.
+  """
+  versions(
+    """
+    Name of the Worker.
+    """
+    name: String,
+    """
+    Environment to use for operations, and for selecting .env and .dev.vars files.
+    """
+    environment: String,
+    """
+    Account ID for the Cloudflare account.
+    """
+    accountId: String,
+    """
+    API token for your Cloudflare account.
+    """
+    apiToken: Secret,
+    """
+    Log level to use for Wrangler operations.
+    """
+    logLevel: LogLevel,
+  ): Versions! {
+    Versions(self.container(environment, accountId, apiToken, logLevel), name)
+  }
+}
+
+"""
+Manage versions of a Cloudflare Worker.
+"""
+type Versions {
+  let container: Container!
+
+  let name: String
+
+  new(
+    """
+    Wrangler container with Cloudflare credentials configured.
+    """
+    container: Container!,
+    """
+    Name of the Worker.
+    """
+    name: String,
+  ) {
+    self.container = container
+    self.name = name
+
+    self
+  }
+
+  """
+  Lists the 10 most recent versions of the Worker.
+  """
+  list(
+    """
+    Worker source, used to resolve the Worker name and configuration.
+    """
+    source: Directory,
+  ): [Version!]!
+    @cache(policy: FunctionCachePolicy.Never) {
+    let args = ["wrangler", "versions", "list", "--json"]
+
+    let name = self.name
+    if (name != null and name != "") {
+      args + ["--name", name]
+    }
+
+    JSON.decode(self.run(source, args).stdout) :: [Version!]!
+  }
+
+  """
+  Views the details of a specific version of the Worker.
+  """
+  view(
+    """
+    The Worker Version ID to view.
+    """
+    versionId: String!,
+    """
+    Worker source, used to resolve the Worker name and configuration.
+    """
+    source: Directory,
+  ): Version! @cache(policy: FunctionCachePolicy.Never) {
+    let args = ["wrangler", "versions", "view", versionId, "--json"]
+
+    let name = self.name
+    if (name != null and name != "") {
+      args + ["--name", name]
+    }
+
+    JSON.decode(self.run(source, args).stdout) :: Version!
+  }
+
+  """
+  Uploads Worker code and config as a new version.
+
+  The uploaded version is not deployed to production; use deploy to roll it out.
+  """
+  upload(
+    """
+    Worker source to upload.
+    """
+    source: Directory!,
+    """
+    A tag for this Worker version.
+    """
+    tag: String,
+    """
+    A descriptive message for this Worker version.
+    """
+    message: String,
+    """
+    Skip internal build steps and directly upload Worker.
+    """
+    noBundle: Boolean! = false,
+    """
+    Date to use for compatibility checks.
+    """
+    compatibilityDate: String,
+    """
+    Name of an alias for this Worker version.
+    """
+    previewAlias: String,
+  ): Container! @cache(policy: FunctionCachePolicy.Never) {
+    let args = ["wrangler", "versions", "upload"]
+
+    let name = self.name
+    if (name != null and name != "") {
+      args + ["--name", name]
+    }
+
+    if (tag != null and tag != "") {
+      args += ["--tag", tag]
+    }
+
+    if (message != null and message != "") {
+      args += ["--message", message]
+    }
+
+    if (noBundle) {
+      args += ["--no-bundle"]
+    }
+
+    if (compatibilityDate != null and compatibilityDate != "") {
+      args += ["--compatibility-date", compatibilityDate]
+    }
+
+    if (previewAlias != null and previewAlias != "") {
+      args += ["--preview-alias", previewAlias]
+    }
+
+    self.run(source, args)
+  }
+
+  let run(source: Directory, args: [String!]!): Container! {
+    self
+      .container
+      .withWorkdir("/work")
+      .{ if (source != null) _.withDirectory(".", source) else _ }
+      .withExec(args)
+  }
+}
+
+"""
+A version of a Cloudflare Worker.
+"""
+type Version {
+  """
+  The Worker Version ID.
+  """
+  versionId: String! @JSON.field(name: "id")
+
+  """
+  The version number.
+  """
+  number: Int
+
+  let metadata: VersionMetadata!
+
+  let annotations: VersionAnnotations
+
+  """
+  The date the version was created.
+  """
+  createdOn: String! { self.metadata.createdOn }
+
+  """
+  The date the version was last modified.
+  """
+  modifiedOn: String { self.metadata.modifiedOn }
+
+  """
+  The source of the version (e.g. the tool used to create it).
+  """
+  source: String { self.metadata.source }
+
+  """
+  The email of the author who created the version.
+  """
+  author: String { self.metadata.authorEmail }
+
+  """
+  The tag associated with the version.
+  """
+  tag: String {
+    if (self.annotations != null) self.annotations!.tag else null
+  }
+
+  """
+  The descriptive message associated with the version.
+  """
+  message: String {
+    if (self.annotations != null) self.annotations!.message else null
+  }
+}
+
+type VersionMetadata {
+  createdOn: String! @JSON.field(name: "created_on")
+  modifiedOn: String @JSON.field(name: "modified_on")
+  source: String
+  authorId: String @JSON.field(name: "author_id")
+  authorEmail: String @JSON.field(name: "author_email")
+}
+
+type VersionAnnotations {
+  tag: String @JSON.field(name: "workers/tag")
+  message: String @JSON.field(name: "workers/message")
+  triggeredBy: String @JSON.field(name: "workers/triggered_by")
 }
 
 enum LogLevel {

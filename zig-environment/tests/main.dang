@@ -4,20 +4,20 @@ type Tests {
   """
   Download tests.
   """
-  pub download: DownloadTests! { DownloadTests }
+  download: DownloadTests! { DownloadTests }
 
   """
   Install tests.
   """
-  pub install: InstallTests! { InstallTests }
+  install: InstallTests! { InstallTests }
 }
 
 type DownloadTests {
   """
   Verifies that the default-platform Zig archive can be downloaded and extracted.
   """
-  pub defaultPlatform: Void @check {
-    let directory = zigDist(VERSION).download
+  defaultPlatform: Void @check {
+    let directory = zigEnvironment(VERSION).download
 
     assert { directory.exists("/zig") }
   }
@@ -27,18 +27,28 @@ type InstallTests {
   """
   Verifies that Zig can be installed into a container and executed through the symlink.
   """
-  pub default: Container! @check {
-    zigDist(VERSION)
-      .install
+  default: Container! @check {
+    zigEnvironment(VERSION)
+      .container
       .withExec(["zig", "version"])
   }
 
   """
   Verifies that Zig can be installed into a container and executed through the symlink.
   """
-  pub container: Container! @check {
-    zigDist(VERSION)
+  container: Container! @check {
+    zigEnvironment(VERSION)
       .install(Dagger.container.from("debian:trixie-slim"))
+      .withExec(["zig", "version"])
+  }
+
+  """
+  Verifies that Zig can be installed through the shared overlay API.
+  """
+  overlay: Container! @check {
+    overlays
+      .combine([zigEnvironment(VERSION).overlay])
+      .apply(Dagger.container.from("debian:trixie-slim"))
       .withExec(["zig", "version"])
   }
 }

@@ -1,0 +1,131 @@
+let ZIG_MINISIGN_PUBLIC_KEY = "RWSGOq2NVecA2UPNdBUZykf1CCb147pkmdtYxgb3Ti+JO/wCYvhbAb/U"
+
+let MINISIGN_VERSION = "0.12"
+
+type ZigEnvironment {
+  """
+  Zig version from https://ziglang.org/download/index.json, for example "0.16.0" or "master".
+  """
+  version: String!
+
+  new(
+    """
+    Zig version from https://ziglang.org/download/index.json, for example "0.16.0" or "master".
+    """
+    version: String!,
+  ) {
+    self.version = version
+
+    self
+  }
+
+  """
+  Downloads and verifies a Zig release for the requested platform.
+  """
+  download(
+    """
+    Dagger platform to download Zig for.
+    """
+    platform: Platform! = Dagger.defaultPlatform,
+  ): Directory! {
+    let index = Dagger.http("https://ziglang.org/download/index.json").asJSON
+    let platform = case (platform) {
+      "linux/amd64" => "x86_64-linux"
+      "linux/arm64" => "aarch64-linux"
+      "darwin/amd64" => "x86_64-macos"
+      "darwin/arm64" => "aarch64-macos"
+      else => raise "unsupported platform: " + toString(platform)
+    }
+
+    let url = index.field([version, platform, "tarball"]).asString
+    let checksum = index.field([version, platform, "shasum"]).asString
+
+    let archive = Dagger.http(url, checksum: "sha256:" + checksum)
+
+    archive = minisign(MINISIGN_VERSION).verify(
+      archive,
+      Dagger.http(url + ".minisig"),
+      key: ZIG_MINISIGN_PUBLIC_KEY,
+    )
+
+    Archive.extract(archive, stripComponents: 1)
+  }
+
+  """
+  Installs Zig into the given container.
+  """
+  install(
+    """
+    Container to install Zig into.
+    """
+    container: Container!,
+  ): Container! {
+    self.overlay.apply(container)
+  }
+
+  """
+  Implements the overlay interface.
+  """
+  apply(container: Container!): Container! {
+    self.overlay.apply(container)
+  }
+
+  """
+  Returns a container with Zig installed.
+  """
+  container: Container! {
+    self.install(alpine)
+  }
+
+  """
+  An overlay that installs Zig into a container.
+  """
+  overlay(
+    """
+    Path to install Zig into.
+    """
+    installPath: String! = "/opt/zig",
+    """
+    Directory to add the `zig` symlink to.
+    """
+    binDir: String! = "/usr/local/bin",
+    """
+    Whether to set the ZIG_ROOT environment variable.
+    """
+    setZigRoot: Boolean! = true,
+  ): Overlay! {
+    Overlay(
+      parent: self,
+      installPath: installPath,
+      binDir: binDir,
+      setZigRoot: setZigRoot,
+    )
+  }
+}
+
+type Overlay implements OverlaysOverlay {
+  let parent: ZigEnvironment!
+  let installPath: String!
+  let binDir: String!
+  let setZigRoot: Boolean!
+
+  apply(container: Container!): Container! {
+    let installPath = self.installPath.trimSuffix("/")
+    let binDir = self.binDir.trimSuffix("/")
+
+    container
+      .withExec(["mkdir", "-p", binDir])
+      .withExec(["rm", "-rf", installPath, binDir + "/zig"])
+      .withDirectory(installPath, self.parent.download(container.platform))
+      .withSymlink(installPath + "/zig", binDir + "/zig")
+      .{ self.withZigRoot(_) }
+  }
+
+  let withZigRoot(container: Container!): Container! {
+    if (!self.setZigRoot) {
+      return container
+    }
+
+    container.withEnvVariable("ZIG_ROOT", self.installPath.trimSuffix("/"))
+  }
+}

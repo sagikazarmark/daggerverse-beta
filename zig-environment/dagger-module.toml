@@ -1,11 +1,11 @@
-name = "macos-sdk"
+name = "zig-environment"
 engineVersion = "v1.0.0"
 runtime.source = "dang"
 include = ["!tests"]
 
 [[dependencies]]
-name = "github"
-source = "../github"
+name = "minisign"
+source = "../minisign"
 
 [[dependencies]]
 name = "overlays"

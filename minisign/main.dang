@@ -14,9 +14,7 @@ type Minisign {
     """
     version: String,
   ) {
-    self.release = Dagger
-      .github
-      .release(version, "jedisct1/minisign")
+    self.release = Dagger.github.release(version, "jedisct1/minisign")
 
     self
   }
@@ -24,48 +22,41 @@ type Minisign {
   """
   Download the minisign binary for the given platform.
   """
-  download(platform: Platform! = Dagger.defaultPlatform): File! {
-    let os = case (platform) {
-      "linux/amd64" => "linux"
-      "linux/arm64" => "linux"
-      "darwin/amd64" => "macos"
-      "darwin/arm64" => "macos"
+  binary(platform: Dagger.Platform! = Dagger.defaultPlatform): File! {
+    let platform = case (platform) {
+      "linux/amd64" => Platform("linux", "x86_64")
+      "linux/arm64" => Platform("linux", "aarch64")
+      "darwin/amd64" => Platform("macos", "x86_64")
+      "darwin/arm64" => Platform("macos", "aarch64")
       else => raise "unsupported platform: " + toString(platform)
     }
-
-    let arch = case (platform) {
-      "linux/amd64" => "x86_64"
-      "linux/arm64" => "aarch64"
-      "darwin/amd64" => "x86_64"
-      "darwin/arm64" => "aarch64"
-      else => raise "unsupported platform: " + toString(platform)
-    }
-
-    let fileName = `minisign-${self.version}-${os}.tar.gz`
 
     self
       .release
-      .asset(fileName)
+      .{ _.asset(`minisign-${_.tagName}-${platform.os}.tar.gz`) }
       .extracted(true)
-      .file(arch + "/minisign")
+      .file(platform.arch + "/minisign")
   }
 
   """
   Install the minisign binary into the given container.
   """
   install(container: Container!): Container! {
-    container.withFile("/usr/local/bin/minisign", self.download(container.platform))
+    container.withFile("/usr/local/bin/minisign", self.binary(container.platform))
   }
 
   """
-  Return a container with the minisign binary installed.
+  Implements the overlay interface.
+  """
+  apply(container: Container!): Container! {
+    self.install(container)
+  }
+
+  """
+  Returns a container with the minisign binary installed.
   """
   container: Container! {
-    self.install(
-      Dagger
-        .container
-        .from("alpine:3.24.1@sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b"),
-    )
+    self.install(alpine)
   }
 
   """
@@ -108,4 +99,9 @@ type Minisign {
       .withExec(args)
       .file(file.name)
   }
+}
+
+type Platform {
+  os: String!
+  arch: String!
 }

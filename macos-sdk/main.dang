@@ -1,6 +1,6 @@
 type MacosSdk {
-  let versions: [String!]!
-  let defaultVersion: String!
+  let sdkVersions: [String!]!
+  let defaultVersion: String
   let installRoot: String!
 
   new(
@@ -25,11 +25,11 @@ type MacosSdk {
       raise "install root must be an absolute path"
     }
 
-    if (defaultVersion != null and !versions.contains(defaultVersion)) {
+    if (defaultVersion != null and !versions.contains(defaultVersion!)) {
       raise "default version must be one of the specified versions"
     }
 
-    self.versions = versions
+    self.sdkVersions = versions
     self.defaultVersion = defaultVersion
     self.installRoot = installRoot
 
@@ -40,8 +40,10 @@ type MacosSdk {
   Download and extract the selected MacOS SDK versions into a directory.
   """
   directory: Directory! {
-    self.versions.reduce(Dagger.directory) { dir, version =>
-      dir.withDirectory(version.sdkName, version.directory)
+    self.sdkVersions.reduce(Dagger.directory) { dir, version =>
+      let sdk = Version(version, self.installRoot)
+
+      dir.withDirectory(sdk.sdkName, sdk.directory)
     }
   }
 
@@ -156,7 +158,7 @@ type Versions {
   }
 }
 
-type Overlay {
+type Overlay implements OverlaysOverlay {
   let path: String!
   let directory: Directory!
 

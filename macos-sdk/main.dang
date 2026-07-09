@@ -11,7 +11,7 @@ type MacosSdk {
     """
     Version to use as the default SDK.
     """
-    defaultVersion: String = null,
+    defaultVersion: String,
     """
     Path to install MacOS SDKs into.
     """
@@ -119,7 +119,7 @@ type Version {
     default: Boolean! = true,
   ): Overlay! {
     let installPath = installRoot.trimSuffix("/") + "/" + self.sdkName
-    let defaultPath = if (default) { installPath } else { null }
+    let defaultPath = if (default) installPath else null
 
     Overlay(installPath, self.directory, defaultPath)
   }
@@ -152,7 +152,7 @@ type Versions {
     """
     default: Boolean! = true,
   ): Overlay! {
-    let defaultPath = if (default) { installRoot } else { null }
+    let defaultPath = if (default) installRoot else null
 
     Overlay(installRoot, self.directory, defaultPath)
   }

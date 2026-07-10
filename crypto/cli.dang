@@ -70,7 +70,7 @@ type Command {
   }
 
   let withKeyParams(params: KeyParams!): Command! {
-    self.args += ["--kty", toString(params.keyType)] + params.args
+    self.args += params.args
 
     self
   }

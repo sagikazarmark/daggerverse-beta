@@ -223,14 +223,7 @@ type KeyPair {
   }
 }
 
-enum KeyType {
-  EC
-  OKP
-  RSA
-}
-
 interface KeyParams {
-  keyType: KeyType!
   args: [String!]!
   defaultName: String!
 }
@@ -238,12 +231,8 @@ interface KeyParams {
 type RsaKeyParams implements KeyParams {
   size: Int
 
-  keyType: KeyType! {
-    KeyType.RSA
-  }
-
   args: [String!]! {
-    let args = []
+    let args = ["--kty", "RSA"]
 
     let size = self.size
     if (size != null) {
@@ -267,12 +256,8 @@ enum EcCurve {
 type EcKeyParams implements KeyParams {
   curve: EcCurve
 
-  keyType: KeyType! {
-    KeyType.EC
-  }
-
   args: [String!]! {
-    let args = []
+    let args = ["--kty", "EC"]
 
     let curve = self.curve
     if (curve != null) {
@@ -303,12 +288,8 @@ type EcKeyParams implements KeyParams {
 }
 
 type Ed25519KeyParams implements KeyParams {
-  keyType: KeyType! {
-    KeyType.OKP
-  }
-
   args: [String!]! {
-    ["--curve", "Ed25519"]
+    ["--kty", "OKP", "--curve", "Ed25519"]
   }
 
   defaultName: String! {

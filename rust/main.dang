@@ -200,6 +200,7 @@ type Rust {
     self
       .container(ws)
       .withMountedDirectory(DB_PATH, db)
+      .withExec(["cargo", "fetch", "--locked"]) # This is necessary, because --no-fetch also skips fetching cargo index
       .withExec(args)
       .stdout
   }

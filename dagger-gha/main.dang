@@ -1,3 +1,11 @@
+"""
+How the actions used in the workflow are pinned.
+"""
+enum ActionPin {
+  VERSION
+  COMMIT
+}
+
 type DaggerGha {
   let include: [String!]!
   let skip: [String!]!
@@ -6,6 +14,10 @@ type DaggerGha {
   let expand: Boolean!
   let groupLevel: Int
   let workspace: String
+  let daggerVersion: String
+  let daggerCommit: String
+  let pin: ActionPin!
+  let concurrency: Int
 
   new(
     """
@@ -46,9 +58,34 @@ type DaggerGha {
     for the root workspace, "helm" for a workspace at helm/dagger.toml.
     """
     workspace: String = null,
+    """
+    Dagger version to use in the workflow. Detected from the workspace when omitted.
+    """
+    daggerVersion: String,
+    """
+    Dagger dev commit to use in the workflow instead of a version. Mutually exclusive with daggerVersion.
+    """
+    daggerCommit: String,
+    """
+    Pin the actions used in the workflow to the latest release version or its commit hash.
+    """
+    pin: ActionPin! = ActionPin.VERSION,
+    """
+    Maximum number of matrix checks running concurrently in the expanded
+    workflow. No limit when omitted.
+    """
+    concurrency: Int,
   ) {
     if (noGenerate and onlyGenerate) {
       raise "noGenerate and onlyGenerate cannot both be true"
+    }
+
+    if (daggerVersion != null and daggerCommit != null) {
+      raise "daggerVersion and daggerCommit cannot both be set"
+    }
+
+    if (concurrency != null and concurrency! < 1) {
+      raise "concurrency must be at least 1"
     }
 
     self.include = include
@@ -58,6 +95,10 @@ type DaggerGha {
     self.expand = expand
     self.groupLevel = groupLevel
     self.workspace = workspace
+    self.daggerVersion = daggerVersion
+    self.daggerCommit = daggerCommit
+    self.pin = pin
+    self.concurrency = concurrency
 
     self
   }
@@ -125,7 +166,7 @@ type DaggerGha {
   }
 
   let workflowConfig(ws: Workspace!, checks: [String!]): GhaWorkflow! {
-    validateWorkflowOptions(expand, self.groupLevel, self.noGenerate, self.onlyGenerate)
+    validateWorkflowOptions(expand, self.groupLevel, self.concurrency, self.noGenerate, self.onlyGenerate)
 
     if (checks != null and !expand) {
       raise "checks can only be provided when expand is true"
@@ -148,7 +189,7 @@ type DaggerGha {
   }
 
   let normalCheckJob(workspaceDir: String!): GhaJob! {
-    checkJob("Check", checkArgs(
+    self.checkJob("Check", checkArgs(
       workspaceDir,
       self.include,
       self.skip,
@@ -158,7 +199,7 @@ type DaggerGha {
   }
 
   let expandedCheckJob(ws: Workspace!, checks: [String!], workspaceDir: String!): GhaJob! {
-    checkJob("${{ matrix.check }}", checkArgs(
+    self.checkJob("${{ matrix.check }}", checkArgs(
       workspaceDir,
       ["${{ matrix.check }}"],
       self.skip,
@@ -167,6 +208,76 @@ type DaggerGha {
     ))
       .withMatrix("check", checks ?? self.checks(ws))
       .withFailFast(false)
+      .{
+        let concurrency = self.concurrency
+
+        if (concurrency != null) {
+          _.withMaxParallel(concurrency!)
+        } else _
+      }
+  }
+
+  let checkJob(name: String!, args: String!): GhaJob! {
+    Dagger.gha.job
+      .withName(name)
+      .withStep(
+        Dagger.gha.step("Checkout repository")
+          .withUses("actions/checkout@" + actionRef("actions/checkout", self.pin)),
+      )
+      .withStep(self.daggerStep("Check", "check", args))
+  }
+
+  let daggerStep(name: String!, verb: String!, args: String!): GhaStep! {
+    Dagger.gha.step(name)
+      .withUses("dagger/dagger-for-github@" + actionRef("dagger/dagger-for-github", self.pin))
+      .withInput("verb", verb)
+      .{
+        if (args != "") {
+          _.withInput("args", args)
+        } else _
+      }
+      .{
+        let version = self.actionVersion
+
+        if (version != null) {
+          _.withInput("version", version!)
+        } else _
+      }
+      .{
+        let commit = self.actionCommit
+
+        if (commit != null) {
+          _.withInput("commit", commit!)
+        } else _
+      }
+  }
+
+  let resolvedDaggerVersion: String! {
+    if (self.daggerVersion != null) {
+      self.daggerVersion!
+    } else {
+      Dagger.version
+    }
+  }
+
+  # Exactly one of the action's version and commit inputs is rendered: an
+  # explicit daggerCommit is used verbatim, otherwise both derive from the
+  # (explicit or detected) version: release tags pin the action version, dev
+  # builds pin the commit.
+  let actionVersion: String {
+    if (self.daggerCommit != null) {
+      null
+    } else {
+      daggerActionVersion(self.resolvedDaggerVersion)
+    }
+  }
+
+  let actionCommit: String {
+    if (self.daggerCommit != null) {
+      self.daggerCommit
+    } else {
+      daggerActionCommit(self.resolvedDaggerVersion)
+    }
   }
 }
 
@@ -286,6 +397,7 @@ let checkMatchesPrefix(check: String!, prefix: String!): Boolean! {
 let validateWorkflowOptions(
   expand: Boolean!,
   groupLevel: Int,
+  concurrency: Int,
   noGenerate: Boolean!,
   onlyGenerate: Boolean!,
 ): Void {
@@ -293,6 +405,10 @@ let validateWorkflowOptions(
 
   if (!expand and groupLevel != null) {
     raise "groupLevel can only be used when expand is true"
+  }
+
+  if (!expand and concurrency != null) {
+    raise "concurrency can only be used when expand is true"
   }
 }
 
@@ -326,44 +442,6 @@ let checkArgs(
   (args + patterns).join(" ")
 }
 
-let checkJob(name: String!, args: String!): GhaJob! {
-  Dagger.gha.job
-    .withName(name)
-    .withStep(
-      Dagger.gha.step("Checkout repository")
-        .withUses("actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd"), # v6.0.2
-    )
-    .withStep(daggerStep("Check", "check", args))
-}
-
-# Exactly one of the action's version and commit inputs is set, derived from
-# the engine version: release tags pin the action version, dev builds pin the
-# commit.
-let daggerStep(name: String!, verb: String!, args: String!): GhaStep! {
-  Dagger.gha.step(name)
-    .withUses("dagger/dagger-for-github@27b130bf0f79a7f6fbbbe0fbca6760dc9bb40a77") # v8.4.1
-    .withInput("verb", verb)
-    .{
-      if (args != "") {
-        _.withInput("args", args)
-      } else _
-    }
-    .{
-      let version = daggerActionVersion(Dagger.version)
-
-      if (version != null) {
-        _.withInput("version", version!)
-      } else _
-    }
-    .{
-      let commit = daggerActionCommit(Dagger.version)
-
-      if (commit != null) {
-        _.withInput("commit", commit!)
-      } else _
-    }
-}
-
 let daggerActionVersion(version: String!): String {
   if (isDaggerVersionTag(version)) {
     version
@@ -386,4 +464,22 @@ let daggerActionCommit(version: String!): String {
 
 let isDaggerVersionTag(version: String!): Boolean! {
   version.hasPrefix("v") and !version.contains("-dev-")
+}
+
+let latestReleaseTag(repository: String!): String! {
+  Dagger.github.release(repository: repository).tagName
+}
+
+"""
+Reference for the latest release of an action: the release tag itself, or the
+commit hash it points to.
+"""
+let actionRef(repository: String!, pin: ActionPin!): String! {
+  let tag = latestReleaseTag(repository)
+
+  if (pin == ActionPin.COMMIT) {
+    Dagger.github.commit(tag, repository)
+  } else {
+    tag
+  }
 }

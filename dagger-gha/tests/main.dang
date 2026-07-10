@@ -37,8 +37,10 @@ type Tests {
     assert { wf.jobs.check.runsOn == "ubuntu-latest" }
     assert { wf.jobs.check.strategy == null }
     assert { wf.jobs.check.steps.length == 2 }
-    assert { wf.jobs.check.steps[0].uses.hasPrefix("actions/checkout@") }
-    assert { wf.jobs.check.steps[1].uses.hasPrefix("dagger/dagger-for-github@") }
+
+    # The steps are pinned to the latest release tag of each action.
+    assert { wf.jobs.check.steps[0].uses.hasPrefix("actions/checkout@v") }
+    assert { wf.jobs.check.steps[1].uses.hasPrefix("dagger/dagger-for-github@v") }
 
     let inputs = wf.jobs.check.steps[1].inputs!
 
@@ -80,11 +82,91 @@ type Tests {
     )
   }
 
-  engineRef: Void @check {
-    let inputs = decodeWorkflow(Dagger.daggerGha.workflow(ws).contents).jobs.check.steps[1].inputs!
+  daggerVersionOverride: Void @check {
+    # Release tags pin the action version, dev builds and bare refs pin the
+    # commit, mirroring the detection applied to the engine version.
+    let release = stepInputs(Dagger.daggerGha(daggerVersion: "v1.2.3").workflow(ws).contents)
 
-    # Exactly one of version and commit is rendered, derived from the engine
-    # version: release tags pin the action version, dev builds pin the commit.
+    assert { release.version == "v1.2.3" }
+    assert { release.commit == null }
+
+    let dev = stepInputs(Dagger.daggerGha(daggerVersion: "v1.0.0-dev-abc123def").workflow(ws).contents)
+
+    assert { dev.version == null }
+    assert { dev.commit == "abc123def" }
+
+    let ref = stepInputs(Dagger.daggerGha(daggerVersion: "0123abc").workflow(ws).contents)
+
+    assert { ref.version == null }
+    assert { ref.commit == "0123abc" }
+  }
+
+  daggerCommitOverride: Void @check {
+    # An explicit daggerCommit pins the action's commit input verbatim.
+    let inputs = stepInputs(Dagger.daggerGha(daggerCommit: "abc123def").workflow(ws).contents)
+
+    assert { inputs.version == null }
+    assert { inputs.commit == "abc123def" }
+
+    # daggerVersion and daggerCommit are mutually exclusive.
+    let failed = try {
+      Dagger.daggerGha(daggerVersion: "v1.2.3", daggerCommit: "abc123def").workflow(ws).contents
+
+      false
+    } catch {
+      err => true
+    }
+
+    assert { failed }
+  }
+
+  concurrency: Void @check {
+    # By default there is no limit, so no max-parallel is rendered.
+    let unlimited = decodeWorkflow(Dagger.daggerGha(expand: true).workflow(ws, allChecks).contents)
+
+    assert { unlimited.jobs.check.strategy!.maxParallel == null }
+
+    let limited = decodeWorkflow(Dagger.daggerGha(expand: true, concurrency: 2).workflow(ws, allChecks).contents)
+
+    assert { limited.jobs.check.strategy!.maxParallel == 2 }
+
+    # The limit applies to the expanded matrix, so it requires expand.
+    let withoutExpand = try {
+      Dagger.daggerGha(concurrency: 2).workflow(ws).contents
+
+      false
+    } catch {
+      err => true
+    }
+
+    assert { withoutExpand }
+
+    let invalid = try {
+      Dagger.daggerGha(expand: true, concurrency: 0).workflow(ws, allChecks).contents
+
+      false
+    } catch {
+      err => true
+    }
+
+    assert { invalid }
+  }
+
+  actionPin: Void @check {
+    # Commit pinning replaces each action's release tag with the commit hash
+    # the tag points to.
+    let wf = decodeWorkflow(Dagger.daggerGha(pin: DaggerGhaActionPin.COMMIT).workflow(ws).contents)
+
+    assert { wf.jobs.check.steps[0].uses.containsMatch(`^actions/checkout@[0-9a-f]{40}$`) }
+    assert { wf.jobs.check.steps[1].uses.containsMatch(`^dagger/dagger-for-github@[0-9a-f]{40}$`) }
+  }
+
+  engineRef: Void @check {
+    let inputs = stepInputs(Dagger.daggerGha.workflow(ws).contents)
+
+    # Without an explicit daggerVersion, exactly one of version and commit is
+    # rendered, derived from the engine version: release tags pin the action
+    # version, dev builds pin the commit.
     if (Dagger.version.hasPrefix("v") and !Dagger.version.contains("-dev-")) {
       assert { inputs.version == Dagger.version }
       assert { inputs.commit == null }
@@ -325,16 +407,20 @@ type Tests {
   # Temporary helpers to (re)generate the golden files:
   #   dagger -m dagger-gha/tests call golden-default export --path dagger-gha/tests/fixtures/golden/default.yaml
   goldenDefault: File! {
-    Dagger.file("default.yaml", stripEngineRef(Dagger.daggerGha.workflow(ws).contents))
+    Dagger.file("default.yaml", stripVolatileRefs(Dagger.daggerGha.workflow(ws).contents))
   }
 
   goldenExpanded: File! {
-    Dagger.file("expanded.yaml", stripEngineRef(Dagger.daggerGha(expand: true).workflow(ws, allChecks).contents))
+    Dagger.file("expanded.yaml", stripVolatileRefs(Dagger.daggerGha(expand: true).workflow(ws, allChecks).contents))
   }
 }
 
 let workflowArgs(contents: String!): String! {
-  decodeWorkflow(contents).jobs.check.steps[1].inputs!.args ?? ""
+  stepInputs(contents).args ?? ""
+}
+
+let stepInputs(contents: String!): TestStepInputs! {
+  decodeWorkflow(contents).jobs.check.steps[1].inputs!
 }
 
 let decodeWorkflow(contents: String!): TestWorkflow! {
@@ -342,22 +428,25 @@ let decodeWorkflow(contents: String!): TestWorkflow! {
 }
 
 """
-Drop the engine-version-derived action pin so golden files stay stable across
-engine builds: release engines render a version line, dev engines a commit
-line, and the two sort differently in the encoded output.
+Drop the volatile lines so the golden file stays stable: version/commit derive
+from the engine build (release engines render a version line, dev engines a
+commit line, and the two sort differently in the encoded output), and the uses
+pins track the latest release of each action.
 """
-let stripEngineRef(contents: String!): String! {
+let stripVolatileRefs(contents: String!): String! {
   contents
     .split("\n")
-    .filter { line => !line.contains("version: ") and !line.contains("commit: ") }
+    .filter { line =>
+      !line.contains("version: ") and !line.contains("commit: ") and !line.contains("uses: ")
+    }
     .join("\n")
 }
 
 let assertGolden(actual: String!, expected: String!): Void {
-  let normalized = stripEngineRef(actual)
+  let normalized = stripVolatileRefs(actual)
 
   if (normalized != expected) {
-    raise "generated workflow does not match golden file\n--- expected ---\n" + expected + "\n--- actual (engine ref stripped) ---\n" + normalized
+    raise "generated workflow does not match golden file\n--- expected ---\n" + expected + "\n--- actual (volatile refs stripped) ---\n" + normalized
   }
 }
 
@@ -410,6 +499,7 @@ type TestJob {
 
 type TestStrategy {
   failFast: Boolean! @YAML.field(name: "fail-fast")
+  maxParallel: Int @YAML.field(name: "max-parallel")
   matrix: TestMatrix!
 }
 

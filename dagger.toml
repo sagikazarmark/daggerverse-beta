@@ -10,14 +10,10 @@ check.skip = ["generate-all"]
 # Marker filename that skips generate when found at or above a Go SDK module root.
 # settings.skipGenerateFilename = ""
 
-# [modules.gha]
-# source = "gha"
-
 [modules.daggerverse]
 source = "daggerverse"
 
 [modules.daggerverse.settings]
-
 daggerCommit = "86d1d2f5791bcf3213d56903cfa81a3ba0abe54a"
 concurrency = 5
 exclude = "crates,distro,php-ext-rs"
@@ -44,6 +40,9 @@ settings.accessToken = "cmd://yq .access_token ~/.iximiuz/labctl/config.yaml | t
 
 # [modules.distro-tests]
 # source = "distro/tests"
+
+# [modules.dagger-gha-tests]
+# source = "dagger-gha/tests"
 
 # [modules.gha-tests]
 # source = "gha/tests"

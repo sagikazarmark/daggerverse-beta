@@ -153,7 +153,7 @@ type DaggerGha {
   When checks is provided, it is used verbatim as the expanded matrix instead
   of discovering checks from the workspace.
   """
-  generate(ws: Workspace!, checks: [String!] = null): Changeset! {
+  generate(ws: Workspace!, checks: [String!]): Changeset! @generate {
     let source = ws.directory("/", gitignore: true)
     let workflowFile = self.workflow(ws, checks)
 

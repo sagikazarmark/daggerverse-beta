@@ -70,6 +70,12 @@ type Tests {
     assertEqual(workflowArgs(Dagger.daggerGha(skip: ["alpha:fmt"]).workflow(ws).contents), "--skip alpha:fmt")
     assertEqual(workflowArgs(Dagger.daggerGha(noGenerate: true).workflow(ws).contents), "--no-generate")
     assertEqual(workflowArgs(Dagger.daggerGha(onlyGenerate: true).workflow(ws).contents), "--generate")
+    assertEqual(workflowArgs(Dagger.daggerGha(env: "ci").workflow(ws).contents), "--env ci")
+    # The env flag follows the workspace flag and leads the other arguments.
+    assertEqual(
+      workflowArgs(Dagger.daggerGha(workspace: "helm", env: "ci", skip: ["alpha:fmt"]).workflow(ws).contents),
+      "-W helm --env ci --skip alpha:fmt",
+    )
     assertEqual(
       workflowArgs(Dagger.daggerGha(include: ["alpha:**"], skip: ["beta:**"], noGenerate: true).workflow(ws).contents),
       "--skip beta:** --no-generate alpha:**",

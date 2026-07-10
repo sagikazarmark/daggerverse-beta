@@ -14,6 +14,7 @@ type DaggerGha {
   let expand: Boolean!
   let groupLevel: Int
   let workspace: String
+  let env: String
   let daggerVersion: String
   let daggerCommit: String
   let pin: ActionPin!
@@ -59,6 +60,11 @@ type DaggerGha {
     """
     workspace: String = null,
     """
+    Dagger environment to use in the workflow, passed to the generated check
+    command as --env. No environment is passed when omitted.
+    """
+    env: String,
+    """
     Dagger version to use in the workflow. Detected from the workspace when omitted.
     """
     daggerVersion: String,
@@ -95,6 +101,7 @@ type DaggerGha {
     self.expand = expand
     self.groupLevel = groupLevel
     self.workspace = workspace
+    self.env = env
     self.daggerVersion = daggerVersion
     self.daggerCommit = daggerCommit
     self.pin = pin
@@ -191,6 +198,7 @@ type DaggerGha {
   let normalCheckJob(workspaceDir: String!): GhaJob! {
     self.checkJob("Check", checkArgs(
       workspaceDir,
+      self.env,
       self.include,
       self.skip,
       self.noGenerate,
@@ -201,6 +209,7 @@ type DaggerGha {
   let expandedCheckJob(ws: Workspace!, checks: [String!], workspaceDir: String!): GhaJob! {
     self.checkJob("${{ matrix.check }}", checkArgs(
       workspaceDir,
+      self.env,
       ["${{ matrix.check }}"],
       self.skip,
       self.noGenerate,
@@ -420,6 +429,7 @@ let validateCheckOptions(noGenerate: Boolean!, onlyGenerate: Boolean!): Void {
 
 let checkArgs(
   workspaceDir: String!,
+  env: String,
   patterns: [String!]!,
   skip: [String!]!,
   noGenerate: Boolean!,
@@ -433,6 +443,10 @@ let checkArgs(
 
   if (onlyGenerate) {
     args += ["--generate"]
+  }
+
+  if (env != null) {
+    args = ["--env", env!] + args
   }
 
   if (workspaceDir != "") {

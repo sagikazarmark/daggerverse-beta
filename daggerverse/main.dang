@@ -15,6 +15,7 @@ type Daggerverse {
   let daggerVersion: String
   let daggerCommit: String
   let pin: ActionPin!
+  let concurrency: Int
 
   new(
     """
@@ -41,11 +42,19 @@ type Daggerverse {
     Pin the actions used in the workflow to the latest release version or its commit hash.
     """
     pin: ActionPin! = ActionPin.VERSION,
+    """
+    Maximum number of module checks running concurrently in the CI workflow. No limit when omitted.
+    """
+    concurrency: Int,
   ) {
     validatePrefix(prefix)
 
     if (daggerVersion != null and daggerCommit != null) {
       raise "daggerVersion and daggerCommit cannot both be set"
+    }
+
+    if (concurrency != null and concurrency! < 1) {
+      raise "concurrency must be at least 1"
     }
 
     self.exclude = exclude
@@ -54,6 +63,7 @@ type Daggerverse {
     self.daggerVersion = daggerVersion
     self.daggerCommit = daggerCommit
     self.pin = pin
+    self.concurrency = concurrency
 
     self
   }
@@ -193,6 +203,7 @@ type Daggerverse {
       runsOn: "ubuntu-latest",
       strategy: Strategy(
         failFast: false,
+        maxParallel: self.concurrency,
         matrix: Matrix(
           module: self.modules(ws),
         ),
@@ -344,6 +355,7 @@ type CheckJob {
 
 type Strategy {
   failFast: Boolean! @YAML.field(name: "fail-fast")
+  maxParallel: Int @YAML.field(name: "max-parallel", omitEmpty: true)
   matrix: Matrix!
 }
 

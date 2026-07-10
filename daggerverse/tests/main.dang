@@ -166,6 +166,25 @@ type Tests {
     assert { failed }
   }
 
+  concurrency: Void @check {
+    # By default there is no limit, so no max-parallel is rendered.
+    assert { decodeWorkflow(Dagger.daggerverse.workflow(ws).contents).jobs.check.strategy!.maxParallel == null }
+
+    let limited = decodeWorkflow(Dagger.daggerverse(concurrency: 2).workflow(ws).contents)
+
+    assert { limited.jobs.check.strategy!.maxParallel == 2 }
+
+    let invalid = try {
+      Dagger.daggerverse(concurrency: 0).workflow(ws).contents
+
+      false
+    } catch {
+      err => true
+    }
+
+    assert { invalid }
+  }
+
   actionPin: Void @check {
     # Commit pinning replaces each action's release tag with the commit hash
     # the tag points to, in both workflows.
@@ -360,6 +379,7 @@ type TestJob {
 
 type TestStrategy {
   failFast: Boolean! @YAML.field(name: "fail-fast")
+  maxParallel: Int @YAML.field(name: "max-parallel")
   matrix: TestMatrix!
 }
 

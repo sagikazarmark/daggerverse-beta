@@ -48,6 +48,7 @@ jobs:
                     - worker-build
                     - wrangler
                     - zig-environment
+            max-parallel: 5
 name: Daggerverse
 "on":
     pull_request: {}

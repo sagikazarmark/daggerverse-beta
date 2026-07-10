@@ -1,0 +1,154 @@
+let HELM_VERSION = "3.17.0"
+
+type Tests {
+  let helm: Helm! {
+    Dagger.helm(version: HELM_VERSION)
+  }
+
+  let chart: Directory! {
+    Dagger
+      .directory
+      .withNewFile("Chart.yaml", self.chartYaml)
+      .withNewFile("templates/configmap.yaml", self.configMapYaml)
+  }
+
+  """
+  helm create returns a chart directory.
+  """
+  create: [String!]! @check {
+    let entries = self.helm.create("foo").directory.entries
+
+    assert { entries.contains("Chart.yaml") }
+    assert { entries.contains("templates/") }
+
+    entries
+  }
+
+  """
+  helm lint accepts a valid chart directory.
+  """
+  lint: String! @check {
+    let output = self.helm.lint(self.chart).stdout
+
+    assert { output.contains("1 chart(s) linted") }
+
+    output
+  }
+
+  """
+  helm package creates the expected archive.
+  """
+  package: String! @check {
+    let output = Dagger
+      .container
+      .from("alpine:3.24.0@sha256:a2d49ea686c2adfe3c992e47dc3b5e7fa6e6b5055609400dc2acaeb241c829f4")
+      .withMountedFile("/chart.tgz", self.helm.package(self.chart, version: "0.2.0"))
+      .withExec(["tar", "-tzf", "/chart.tgz"])
+      .stdout
+
+    assert { output.contains("helm-test/Chart.yaml") }
+
+    output
+  }
+
+  """
+  Chart.package returns a Package wrapper that can publish using registry-config credentials.
+  """
+  registryAuthPush: String! @check @cache(policy: FunctionCachePolicy.Never) {
+    let registry = self.registryService
+    let password = Dagger.setSecret("helm-registry-password", "password")
+    let helm = Dagger.helm(
+      container: Dagger
+        .container
+        .from("alpine/helm:" + HELM_VERSION)
+        .withServiceBinding("zot", registry),
+    )
+
+    let result = helm
+      .chart(self.chart)
+      .package
+      .withRegistryAuth("zot:8080", "username", password)
+      .publish("oci://zot:8080/helm-charts", plainHttp: true)
+    let output = result.stderr
+
+    assert { output.contains("Pushed") }
+
+    output
+  }
+
+  """
+  Helm registry login details are applied lazily when a registry operation runs.
+  """
+  loginPush: String! @check @cache(policy: FunctionCachePolicy.Never) {
+    let registry = self.registryService
+    let password = Dagger.setSecret("helm-login-password", "password")
+    let pkg = self.helm.package(self.chart)
+    let helm = Dagger.helm(
+      container: Dagger
+        .container
+        .from("alpine/helm:" + HELM_VERSION)
+        .withServiceBinding("zot", registry),
+    )
+
+    let result = helm
+      .login("zot:8080", "username", password, insecure: true)
+      .push(pkg, "oci://zot:8080/helm-charts", plainHttp: true)
+    let output = result.stderr
+
+    assert { output.contains("Pushed") }
+
+    output
+  }
+
+  """
+  Helm can be configured directly from a KubectlCluster and install into it.
+  """
+  withClusterInstall: String! @check @cache(policy: FunctionCachePolicy.Never) {
+    let helm = self.helm.withCluster(Dagger.k3S(name: "helm-with-cluster-test"))
+
+    let status = helm
+      .chart(self.chart)
+      .install("helm-cluster-test", createNamespace: true, namespace: "helm-test")
+      .status
+
+    assert { status.contains("STATUS: deployed") }
+    assert { status.contains("NAMESPACE: helm-test") }
+
+    status
+  }
+
+  """
+  An explicit kubeconfig file takes precedence over kubeconfig generated from clusters.
+  """
+  kubeconfigFilePrecedence: String! @check {
+    let config = Dagger
+      .directory
+      .withNewFile("config", "apiVersion: v1\nkind: Config\nclusters:\n- name: explicit\n")
+      .file("config")
+
+    let output = self
+      .helm
+      .withCluster(Dagger.k3S(name: "helm-ignored-cluster-test"))
+      .withKubeconfigFile(config)
+      .container
+      .withExec(["sh", "-c", "grep explicit /root/.kube/config"])
+      .stdout
+
+    assert { output.contains("explicit") }
+
+    output
+  }
+
+  let registryService: Service! {
+    Dagger
+      .container
+      .from("ghcr.io/project-zot/zot:v2.1.1")
+      .withExposedPort(8080)
+      .withMountedDirectory("/etc/zot", Dagger.currentModule.source.directory("testdata/zot"))
+      .asService(useEntrypoint: true)
+  }
+
+  let chartYaml: String! = "apiVersion: v2\nname: helm-test\ndescription: Helm module test chart\ntype: application\nversion: 0.1.0\nappVersion: 1.0.0\n"
+
+  let configMapYaml: String! = "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: {{ .Release.Name }}\ndata:\n  value: ok\n"
+}

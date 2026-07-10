@@ -1,0 +1,12 @@
+name = "helm"
+engineVersion = "v1.0.0"
+runtime.source = "dang"
+include = ["!tests"]
+
+[[dependencies]]
+name = "kubectl"
+source = "../kubectl"
+
+[[dependencies]]
+name = "registry-config"
+source = "../registry-config"

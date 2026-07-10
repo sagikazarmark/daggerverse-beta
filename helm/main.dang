@@ -1,0 +1,932 @@
+type Helm {
+  let baseContainer: Container!
+  let registryConfig: RegistryConfig!
+  let kubeconfigFile: File
+  let clusterInstances: [ClusterInstance!]! = []
+  let registryLogins: Map[RegistryLogin!] = [:]
+
+  new(
+    """
+    Version (image tag) to use from the official image repository as a base container.
+    """
+    version: String! = "latest",
+    """
+    Custom container to use as a base container.
+    """
+    container: Container! = Dagger.container.from("alpine/helm:" + version),
+  ) {
+    # Images (like alpine/helm) don't set HELM_REGISTRY_CONFIG:
+    # an unset variable would expand to the workdir when mounting the registry config.
+    self.baseContainer = container
+      .withUser("root")
+      .withEnvVariable("HELM_REGISTRY_CONFIG", "/root/.config/helm/registry/config.json")
+    self.registryConfig = Dagger.registryConfig
+
+    self
+  }
+
+  """
+  Container with Helm installed and the configured kubeconfig, if any.
+  """
+  container: Container! {
+    self.applyRegistryLogins(self.applyKubeconfig(self.baseContainer))
+  }
+
+  let registryContainer: Container! {
+    let container = self.applyKubeconfig(self.baseContainer)
+
+    if (self.registryLogins.keys.length > 0) {
+      self.applyRegistryLogins(self.withWritableRegistryConfig(container))
+    } else {
+      self.withRegistryConfig(container)
+    }
+  }
+
+  let applyKubeconfig(container: Container!): Container! {
+    if (self.kubeconfigFile != null) {
+      container
+        .withoutEnvVariable("KUBECONFIG")
+        .withMountedFile("/root/.kube/config", self.kubeconfigFile!)
+    } else if (self.clusterInstances.length > 0) {
+      self.clusterKubectl.apply(container)
+    } else container
+  }
+
+  let clusterKubectl: Kubectl! {
+    self.clusterInstances.reduce(Dagger.kubectl) { kubectl, cluster =>
+      kubectl.fromCluster(cluster.cluster, name: cluster.name)
+    }
+  }
+
+  let withRegistryConfig(container: Container!): Container! {
+    container.withMountedSecret("$HELM_REGISTRY_CONFIG", self.registryConfig.secret, expand: true)
+  }
+
+  let withWritableRegistryConfig(container: Container!): Container! {
+    container
+      .withMountedSecret("/tmp/helm-registry-config.json", self.registryConfig.secret)
+      .withExec(["sh", "-c", "mkdir -p \"${HELM_REGISTRY_CONFIG%/*}\" && cp /tmp/helm-registry-config.json \"$HELM_REGISTRY_CONFIG\""])
+  }
+
+  let applyRegistryLogins(container: Container!): Container! {
+    self.registryLogins.keys.reduce(container) { container, host =>
+      self.registryLogins[host]!.apply(host, container)
+    }
+  }
+
+  """
+  Add credentials for a registry.
+
+  This uses the registry-config module to render Helm's registry config file.
+  """
+  withRegistryAuth(
+    """
+    The registry address that needs authentication.
+    """
+    address: String!,
+    """
+    The username to authenticate with.
+    """
+    username: String!,
+    """
+    The API key, password or token to authenticate to this registry.
+    """
+    secret: Secret!,
+  ): Helm! @cache(policy: FunctionCachePolicy.PerSession) {
+    self.registryConfig = self.registryConfig.withRegistryAuth(address, username, secret)
+
+    self
+  }
+
+  """
+  Remove credentials for a registry.
+  """
+  withoutRegistryAuth(
+    """
+    The registry address to remove credentials for.
+    """
+    address: String!,
+  ): Helm! @cache(policy: FunctionCachePolicy.PerSession) {
+    self.registryConfig = self.registryConfig.withoutRegistryAuth(address)
+
+    self
+  }
+
+  """
+  Mount a file as the kubeconfig file.
+  """
+  withKubeconfigFile(file: File!): Helm! {
+    self.kubeconfigFile = file
+
+    self
+  }
+
+  """
+  Configure Helm from a Kubernetes cluster endpoint and credentials.
+  """
+  withCluster(
+    """
+    Cluster endpoint and credentials.
+    """
+    cluster: Cluster!,
+    """
+    Name to use for the cluster, user and context entries.
+    """
+    name: String! = "default",
+  ): Helm! {
+    self.clusterInstances += [ClusterInstance(cluster, name)]
+
+    self
+  }
+
+  """
+  Create a new chart directory along with common chart files.
+  """
+  create(name: String!): Chart! {
+    let workdir = "/work"
+    let chart = self
+      .container
+      .withWorkdir(workdir)
+      .withExec(["helm", "create", name])
+      .directory(workdir + "/" + name)
+
+    self.chart(chart)
+  }
+
+  """
+  Returns a Helm chart from a source directory.
+  """
+  chart(
+    """
+    A directory containing a Helm chart.
+    """
+    source: Directory!,
+  ): Chart! {
+    Chart(source, self)
+  }
+
+  """
+  Lint a Helm chart directory.
+  """
+  lint(
+    """
+    A directory containing a Helm chart.
+    """
+    chart: Directory!,
+  ): Container! @cache(policy: FunctionCachePolicy.PerSession) {
+    let metadata = chartMetadata(chart)
+    let workdir = "/work"
+    let chartPath = workdir + "/" + metadata.name
+
+    self
+      .container
+      .withWorkdir(workdir)
+      .withMountedDirectory(chartPath, chart)
+      .withExec(["helm", "lint", chartPath])
+  }
+
+  """
+  Build a Helm chart package.
+  """
+  package(
+    """
+    A directory containing a Helm chart.
+    """
+    chart: Directory!,
+    """
+    Set the appVersion on the chart to this version.
+    """
+    appVersion: String,
+    """
+    Set the version on the chart to this semver version.
+    """
+    version: String,
+    """
+    Update dependencies from Chart.yaml to the charts directory before packaging.
+    """
+    dependencyUpdate: Boolean! = false,
+  ): File! {
+    let metadata = chartMetadata(chart)
+    let chartVersion = if (version != null and version != "") { version! } else { metadata.version }
+    let workdir = "/work"
+    let chartPath = workdir + "/" + metadata.name
+
+    self
+      .registryContainer
+      .withWorkdir(workdir)
+      .withMountedDirectory(chartPath, chart)
+      .withExec(packageArgs(chartPath, appVersion, version, dependencyUpdate))
+      .file(workdir + "/" + metadata.name + "-" + chartVersion + ".tgz")
+  }
+
+  """
+  Authenticate to an OCI registry.
+
+  Login details are stored and applied lazily when a Helm container is evaluated.
+  """
+  login(
+    """
+    Host of the OCI registry.
+    """
+    host: String!,
+    """
+    Registry username.
+    """
+    username: String!,
+    """
+    Registry password.
+    """
+    password: Secret!,
+    """
+    Allow connections to TLS registry without certs.
+    """
+    insecure: Boolean! = false,
+  ): Helm! @cache(policy: FunctionCachePolicy.PerSession) {
+    self.registryLogins = self.registryLogins.with(host, RegistryLogin(username, password, insecure))
+
+    self
+  }
+
+  """
+  Remove credentials stored for an OCI registry.
+  """
+  logout(host: String!): Helm! @cache(policy: FunctionCachePolicy.PerSession) {
+    self.registryLogins = self.registryLogins.without(host)
+
+    self
+  }
+
+  """
+  Push a Helm chart package to an OCI registry.
+  """
+  push(
+    """
+    Packaged Helm chart.
+    """
+    pkg: File!,
+    """
+    OCI registry to push to, including the path except the chart name.
+    """
+    registry: String!,
+    """
+    Use insecure HTTP connections for the chart upload.
+    """
+    plainHttp: Boolean! = false,
+    """
+    Skip TLS certificate checks for the chart upload.
+    """
+    insecureSkipTlsVerify: Boolean! = false,
+    """
+    Verify certificates of HTTPS-enabled servers using this CA bundle.
+    """
+    caFile: File,
+    """
+    Identify registry client using this SSL certificate file.
+    """
+    certFile: File,
+    """
+    Identify registry client using this SSL key file.
+    """
+    keyFile: Secret,
+  ): Container! @cache(policy: FunctionCachePolicy.Never) {
+    let chartPath = "/work/chart.tgz"
+    let container = self
+      .registryContainer
+      .withWorkdir("/work")
+      .withMountedFile(chartPath, pkg)
+    let args = ["helm", "push", chartPath, registry]
+
+    if (plainHttp) {
+      args += ["--plain-http"]
+    }
+
+    if (insecureSkipTlsVerify) {
+      args += ["--insecure-skip-tls-verify"]
+    }
+
+    if (caFile != null) {
+      container = container.withMountedFile("/etc/helm/ca.pem", caFile!)
+      args += ["--ca-file", "/etc/helm/ca.pem"]
+    }
+
+    if (certFile != null) {
+      container = container.withMountedFile("/etc/helm/cert.pem", certFile!)
+      args += ["--cert-file", "/etc/helm/cert.pem"]
+    }
+
+    if (keyFile != null) {
+      container = container.withMountedSecret("/etc/helm/key.pem", keyFile!)
+      args += ["--key-file", "/etc/helm/key.pem"]
+    }
+
+    container
+      .withEnvVariable("DAGGER_CACHE_KEY", Random.string)
+      .withExec(args)
+  }
+}
+
+type Chart {
+  """
+  Chart source directory.
+  """
+  directory: Directory!
+
+  let helm: Helm!
+
+  new(directory: Directory!, helm: Helm!) {
+    self.directory = directory
+    self.helm = helm
+
+    self
+  }
+
+  """
+  Lint this Helm chart.
+  """
+  lint: Container! @cache(policy: FunctionCachePolicy.PerSession) {
+    self.helm.lint(self.directory)
+  }
+
+  """
+  Build this Helm chart package.
+  """
+  package(
+    """
+    Set the appVersion on the chart to this version.
+    """
+    appVersion: String,
+    """
+    Set the version on the chart to this semver version.
+    """
+    version: String,
+    """
+    Update dependencies from Chart.yaml to the charts directory before packaging.
+    """
+    dependencyUpdate: Boolean! = false,
+  ): Package! {
+    Package(
+      self.helm.package(self.directory, appVersion, version, dependencyUpdate),
+      self.helm,
+      self,
+    )
+  }
+
+  """
+  Install this Helm chart.
+  """
+  install(
+    """
+    Helm release name.
+    """
+    name: String!,
+    atomic: Boolean! = false,
+    caFile: File,
+    certFile: File,
+    createNamespace: Boolean! = false,
+    dependencyUpdate: Boolean! = false,
+    description: String,
+    disableOpenapiValidation: Boolean! = false,
+    enableDns: Boolean! = false,
+    force: Boolean! = false,
+    generateName: Boolean! = false,
+    insecureSkipTlsVerify: Boolean! = false,
+    keyFile: Secret,
+    labels: [String!]! = [],
+    nameTemplate: String,
+    noHooks: Boolean! = false,
+    plainHttp: Boolean! = false,
+    postRenderer: String,
+    postRendererArgs: [String!]! = [],
+    renderSubchartNotes: Boolean! = false,
+    replace: Boolean! = false,
+    skipCrds: Boolean! = false,
+    timeout: String,
+    values: [File!]! = [],
+    verify: Boolean! = false,
+    wait: Boolean! = false,
+    waitForJobs: Boolean! = false,
+    namespace: String,
+  ): Release! @cache(policy: FunctionCachePolicy.Never) {
+    let metadata = chartMetadata(self.directory)
+    let chartPath = "/work/chart/" + metadata.name
+    let container = self
+      .helm
+      .container
+      .withMountedDirectory(chartPath, self.directory)
+      .withDirectory("/work/values", Dagger.directory)
+
+    installRelease(
+      self.helm,
+      name,
+      chartPath,
+      container,
+      atomic,
+      caFile,
+      certFile,
+      createNamespace,
+      dependencyUpdate,
+      description,
+      disableOpenapiValidation,
+      enableDns,
+      force,
+      generateName,
+      insecureSkipTlsVerify,
+      keyFile,
+      labels,
+      nameTemplate,
+      noHooks,
+      plainHttp,
+      postRenderer,
+      postRendererArgs,
+      renderSubchartNotes,
+      replace,
+      skipCrds,
+      timeout,
+      values,
+      verify,
+      wait,
+      waitForJobs,
+      namespace,
+    )
+  }
+}
+
+type Package {
+  """
+  Packaged Helm chart file.
+  """
+  file: File!
+
+  let helm: Helm!
+  let chart: Chart
+
+  new(file: File!, helm: Helm!, chart: Chart) {
+    self.file = file
+    self.helm = helm
+    self.chart = chart
+
+    self
+  }
+
+  """
+  Add credentials for a registry.
+  """
+  withRegistryAuth(address: String!, username: String!, secret: Secret!): Package! @cache(policy: FunctionCachePolicy.PerSession) {
+    self.helm = self.helm.withRegistryAuth(address, username, secret)
+
+    self
+  }
+
+  """
+  Remove credentials for a registry.
+  """
+  withoutRegistryAuth(address: String!): Package! @cache(policy: FunctionCachePolicy.PerSession) {
+    self.helm = self.helm.withoutRegistryAuth(address)
+
+    self
+  }
+
+  """
+  Mount a file as the kubeconfig file.
+  """
+  withKubeconfigFile(file: File!): Package! {
+    self.helm = self.helm.withKubeconfigFile(file)
+
+    self
+  }
+
+  """
+  Configure Helm from a Kubernetes cluster endpoint and credentials.
+  """
+  withCluster(cluster: Cluster!, name: String! = "default"): Package! {
+    self.helm = self.helm.withCluster(cluster, name)
+
+    self
+  }
+
+  """
+  Publish this Helm chart package to an OCI registry.
+  """
+  publish(
+    """
+    OCI registry to push to, including the path except the chart name.
+    """
+    registry: String!,
+    plainHttp: Boolean! = false,
+    insecureSkipTlsVerify: Boolean! = false,
+    caFile: File,
+    certFile: File,
+    keyFile: Secret,
+  ): Container! @cache(policy: FunctionCachePolicy.Never) {
+    self.helm.push(
+      self.file,
+      registry,
+      plainHttp,
+      insecureSkipTlsVerify,
+      caFile,
+      certFile,
+      keyFile,
+    )
+  }
+
+  """
+  Install this Helm chart package.
+  """
+  install(
+    """
+    Helm release name.
+    """
+    name: String!,
+    atomic: Boolean! = false,
+    caFile: File,
+    certFile: File,
+    createNamespace: Boolean! = false,
+    dependencyUpdate: Boolean! = false,
+    description: String,
+    disableOpenapiValidation: Boolean! = false,
+    enableDns: Boolean! = false,
+    force: Boolean! = false,
+    generateName: Boolean! = false,
+    insecureSkipTlsVerify: Boolean! = false,
+    keyFile: Secret,
+    labels: [String!]! = [],
+    nameTemplate: String,
+    noHooks: Boolean! = false,
+    plainHttp: Boolean! = false,
+    postRenderer: String,
+    postRendererArgs: [String!]! = [],
+    renderSubchartNotes: Boolean! = false,
+    replace: Boolean! = false,
+    skipCrds: Boolean! = false,
+    timeout: String,
+    values: [File!]! = [],
+    verify: Boolean! = false,
+    wait: Boolean! = false,
+    waitForJobs: Boolean! = false,
+    namespace: String,
+  ): Release! @cache(policy: FunctionCachePolicy.Never) {
+    let chartPath = "/work/chart/" + self.file.name
+    let container = self
+      .helm
+      .container
+      .withMountedFile(chartPath, self.file)
+      .withDirectory("/work/values", Dagger.directory)
+
+    installRelease(
+      self.helm,
+      name,
+      chartPath,
+      container,
+      atomic,
+      caFile,
+      certFile,
+      createNamespace,
+      dependencyUpdate,
+      description,
+      disableOpenapiValidation,
+      enableDns,
+      force,
+      generateName,
+      insecureSkipTlsVerify,
+      keyFile,
+      labels,
+      nameTemplate,
+      noHooks,
+      plainHttp,
+      postRenderer,
+      postRendererArgs,
+      renderSubchartNotes,
+      replace,
+      skipCrds,
+      timeout,
+      values,
+      verify,
+      wait,
+      waitForJobs,
+      namespace,
+    )
+  }
+}
+
+type Release {
+  """
+  Helm release name.
+  """
+  name: String!
+
+  """
+  Release namespace.
+  """
+  namespace: String
+
+  let container: Container!
+  let installArgs: [String!]!
+  let helm: Helm!
+
+  new(name: String!, namespace: String, container: Container!, installArgs: [String!]!, helm: Helm!) {
+    self.name = name
+    self.namespace = namespace
+    self.container = container
+    self.installArgs = installArgs
+    self.helm = helm
+
+    self
+  }
+
+  """
+  Return Helm status for this release.
+  """
+  status: String! @cache(policy: FunctionCachePolicy.Never) {
+    self
+      .container
+      .withEnvVariable("DAGGER_CACHE_KEY", Random.string)
+      .withExec(chainedReleaseArgs(self.installArgs, releaseArgs(["status", self.name], self.namespace)))
+      .stdout
+  }
+
+  """
+  Run Helm tests for this release.
+  """
+  test(
+    """
+    Specify tests by attribute using attribute=value syntax, or !attribute=value to exclude a test.
+    """
+    filter: [String!]! = [],
+    """
+    Dump the logs from test pods.
+    """
+    logs: Boolean! = false,
+    """
+    Time to wait for any individual Kubernetes operation.
+    """
+    timeout: String,
+  ): String! @cache(policy: FunctionCachePolicy.Never) {
+    let args = ["test", self.name]
+
+    if (filter.length > 0) {
+      args += ["--filter", filter.join(",")]
+    }
+
+    if (logs) {
+      args += ["--logs"]
+    }
+
+    if (timeout != null and timeout != "") {
+      args += ["--timeout", timeout!]
+    }
+
+    self
+      .container
+      .withEnvVariable("DAGGER_CACHE_KEY", Random.string)
+      .withExec(chainedReleaseArgs(self.installArgs, releaseArgs(args, self.namespace)))
+      .stdout
+  }
+}
+
+type ClusterInstance {
+  cluster: Cluster!
+  name: String!
+
+  new(cluster: Cluster!, name: String!) {
+    self.cluster = cluster
+    self.name = name
+
+    self
+  }
+}
+
+type RegistryLogin {
+  let username: String!
+  let password: Secret!
+  let insecure: Boolean!
+
+  new(username: String!, password: Secret!, insecure: Boolean!) {
+    self.username = username
+    self.password = password
+    self.insecure = insecure
+
+    self
+  }
+
+  let apply(host: String!, container: Container!): Container! {
+    let args = ["helm", "registry", "login", host, "--username", self.username, "--password-stdin"]
+
+    if (self.insecure) {
+      args += ["--insecure"]
+    }
+
+    container
+      .withSecretVariable("HELM_PASSWORD", self.password)
+      .withExec(["sh", "-c", "printf '%s' \"$HELM_PASSWORD\" | " + shellCommand(args)])
+      .withoutSecretVariable("HELM_PASSWORD")
+  }
+}
+
+type ChartMetadata {
+  name: String!
+  version: String!
+}
+
+let chartMetadata(chart: Directory!): ChartMetadata! {
+  YAML.decode(chart.file("Chart.yaml").contents) :: ChartMetadata!
+}
+
+let packageArgs(chartPath: String!, appVersion: String, version: String, dependencyUpdate: Boolean!): [String!]! {
+  let args = ["helm", "package", "--destination", "/work"]
+
+  if (appVersion != null and appVersion != "") {
+    args += ["--app-version", appVersion!]
+  }
+
+  if (version != null and version != "") {
+    args += ["--version", version!]
+  }
+
+  if (dependencyUpdate) {
+    args += ["--dependency-update"]
+  }
+
+  args + [chartPath]
+}
+
+let installRelease(
+  helm: Helm!,
+  name: String!,
+  chartPath: String!,
+  container: Container!,
+  atomic: Boolean!,
+  caFile: File,
+  certFile: File,
+  createNamespace: Boolean!,
+  dependencyUpdate: Boolean!,
+  description: String,
+  disableOpenapiValidation: Boolean!,
+  enableDns: Boolean!,
+  force: Boolean!,
+  generateName: Boolean!,
+  insecureSkipTlsVerify: Boolean!,
+  keyFile: Secret,
+  labels: [String!]!,
+  nameTemplate: String,
+  noHooks: Boolean!,
+  plainHttp: Boolean!,
+  postRenderer: String,
+  postRendererArgs: [String!]!,
+  renderSubchartNotes: Boolean!,
+  replace: Boolean!,
+  skipCrds: Boolean!,
+  timeout: String,
+  values: [File!]!,
+  verify: Boolean!,
+  wait: Boolean!,
+  waitForJobs: Boolean!,
+  namespace: String,
+): Release! {
+  let args = ["helm", "install", name, chartPath]
+
+  if (atomic) {
+    args += ["--atomic"]
+  }
+
+  if (caFile != null) {
+    container = container.withMountedFile("/etc/helm/ca.pem", caFile!)
+    args += ["--ca-file", "/etc/helm/ca.pem"]
+  }
+
+  if (certFile != null) {
+    container = container.withMountedFile("/etc/helm/cert.pem", certFile!)
+    args += ["--cert-file", "/etc/helm/cert.pem"]
+  }
+
+  if (createNamespace) {
+    args += ["--create-namespace"]
+  }
+
+  if (dependencyUpdate) {
+    args += ["--dependency-update"]
+  }
+
+  if (description != null and description != "") {
+    args += ["--description", description!]
+  }
+
+  if (disableOpenapiValidation) {
+    args += ["--disable-openapi-validation"]
+  }
+
+  if (enableDns) {
+    args += ["--enable-dns"]
+  }
+
+  if (force) {
+    args += ["--force"]
+  }
+
+  if (generateName) {
+    args += ["--generate-name"]
+  }
+
+  if (insecureSkipTlsVerify) {
+    args += ["--insecure-skip-tls-verify"]
+  }
+
+  if (keyFile != null) {
+    container = container.withMountedSecret("/etc/helm/key.pem", keyFile!)
+    args += ["--key-file", "/etc/helm/key.pem"]
+  }
+
+  if (labels.length > 0) {
+    args += ["--label", labels.join(",")]
+  }
+
+  if (nameTemplate != null and nameTemplate != "") {
+    args += ["--name-template", nameTemplate!]
+  }
+
+  if (noHooks) {
+    args += ["--no-hooks"]
+  }
+
+  if (plainHttp) {
+    args += ["--plain-http"]
+  }
+
+  if (postRenderer != null and postRenderer != "") {
+    args += ["--post-renderer", postRenderer!]
+  }
+
+  postRendererArgs.each { arg =>
+    args += ["--post-renderer-args", arg]
+  }
+
+  if (renderSubchartNotes) {
+    args += ["--render-subchart-notes"]
+  }
+
+  if (replace) {
+    args += ["--replace"]
+  }
+
+  if (skipCrds) {
+    args += ["--skip-crds"]
+  }
+
+  if (timeout != null and timeout != "") {
+    args += ["--timeout", timeout!]
+  }
+
+  values.each { file =>
+    let path = "/work/values/" + file.name
+
+    container = container.withMountedFile(path, file)
+    args += ["--values", path]
+  }
+
+  if (verify) {
+    args += ["--verify"]
+  }
+
+  if (wait) {
+    args += ["--wait"]
+
+    if (waitForJobs) {
+      args += ["--wait-for-jobs"]
+    }
+  }
+
+  if (namespace != null and namespace != "") {
+    args += ["--namespace", namespace!]
+  }
+
+  Release(
+    name,
+    namespace,
+    container,
+    args,
+    helm,
+  )
+}
+
+let releaseArgs(args: [String!]!, namespace: String): [String!]! {
+  let command = ["helm"] + args
+
+  if (namespace != null and namespace != "") {
+    command += ["--namespace", namespace!]
+  }
+
+  command
+}
+
+let chainedReleaseArgs(installArgs: [String!]!, actionArgs: [String!]!): [String!]! {
+  let wait = "for i in $(seq 1 60); do helm list --all-namespaces >/dev/null 2>&1 && break; sleep 1; done; helm list --all-namespaces >/dev/null"
+
+  ["sh", "-c", wait + " && " + shellCommand(installArgs) + " >/dev/null && " + shellCommand(actionArgs)]
+}
+
+let shellCommand(args: [String!]!): String! {
+  args.map { arg => shellQuote(arg) }.join(" ")
+}
+
+let shellQuote(arg: String!): String! {
+  "'" + arg.replace("'", "'\"'\"'") + "'"
+}

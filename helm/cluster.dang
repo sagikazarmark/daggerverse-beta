@@ -1,0 +1,34 @@
+"""
+Kubernetes cluster endpoint and credentials that can be converted into a kubeconfig.
+"""
+interface Cluster implements KubectlCluster {
+  """
+  Kubernetes API server service.
+  """
+  service: Service!
+
+  """
+  Kubernetes API server service port.
+  """
+  port: Int!
+
+  """
+  CA certificate that signed the API server serving certificate.
+  """
+  serverCa: File
+
+  """
+  Optional TLS server name to set in kubeconfig.
+  """
+  serverName: String
+
+  """
+  Client certificate to authenticate to the API server.
+  """
+  clientCertificate: File!
+
+  """
+  Client key to authenticate to the API server.
+  """
+  clientKey: File!
+}

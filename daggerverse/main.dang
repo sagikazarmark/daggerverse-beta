@@ -87,7 +87,7 @@ type Daggerverse {
   Render the Daggerverse GitHub Actions workflow.
   """
   workflow(ws: Workspace!): File! {
-    Dagger.file(self.ciFileName, GENERATED_NOTICE + YAML.encode(self.workflowConfig(ws)) + "\n")
+    Dagger.file(self.ciFileName, GENERATED_NOTICE + self.workflowConfig(ws).yaml)
   }
 
   """
@@ -95,7 +95,7 @@ type Daggerverse {
   manually selected module.
   """
   dispatchWorkflow(ws: Workspace!): File! {
-    Dagger.file(self.dispatchFileName, GENERATED_NOTICE + YAML.encode(self.dispatchWorkflowConfig(ws)) + "\n")
+    Dagger.file(self.dispatchFileName, GENERATED_NOTICE + self.dispatchWorkflowConfig(ws).yaml)
   }
 
   """
@@ -118,56 +118,29 @@ type Daggerverse {
     self.prefix + "dispatch.yaml"
   }
 
-  let workflowConfig(ws: Workspace!): Workflow! {
-    Workflow(
-      name: self.workflowName,
-      triggers: WorkflowTriggers(
-        push: Push(branches: ["main"]),
-        pullRequest: PullRequest,
-      ),
-      permissions: Permissions(contents: "read"),
-      jobs: WorkflowJobs(
-        check: self.checkJob(ws),
-      ),
-    )
+  let workflowConfig(ws: Workspace!): GhaWorkflow! {
+    Dagger.gha.workflow(self.workflowName)
+      .onPush(branches: ["main"])
+      .onPullRequest
+      .withPermission("contents")
+      .withJob("check", self.checkJob(ws))
   }
 
-  let dispatchWorkflowConfig(ws: Workspace!): DispatchWorkflow! {
-    DispatchWorkflow(
-      name: self.workflowName + " Dispatch",
-      triggers: DispatchTriggers(
-        workflowDispatch: WorkflowDispatch(
-          inputs: DispatchInputs(
-            module: ModuleInput(
-              description: "Module to check",
-              required: true,
-              inputType: "choice",
-              options: self.modules(ws),
-            ),
-          ),
-        ),
-      ),
-      permissions: Permissions(contents: "read"),
-      jobs: WorkflowJobs(
-        check: self.dispatchCheckJob,
-      ),
-    )
+  let dispatchWorkflowConfig(ws: Workspace!): GhaWorkflow! {
+    Dagger.gha.workflow(self.workflowName + " Dispatch")
+      .withDispatchInput(
+        "module",
+        description: "Module to check",
+        required: true,
+        inputType: GhaInputType.CHOICE,
+        options: self.modules(ws),
+      )
+      .withPermission("contents")
+      .withJob("check", self.dispatchCheckJob)
   }
 
-  let dispatchCheckJob: CheckJob! {
-    CheckJob(
-      name: "${{ inputs.module }}",
-      runsOn: "ubuntu-latest",
-      strategy: null,
-      steps: [
-        checkoutStep(self.pin),
-        daggerStep(
-          "Check",
-          self.pin,
-          daggerActionInputs("check", "${{ inputs.module }}/tests", self.actionVersion, self.actionCommit),
-        ),
-      ],
-    )
+  let dispatchCheckJob: GhaJob! {
+    self.baseCheckJob("${{ inputs.module }}", "${{ inputs.module }}/tests")
   }
 
   let resolvedDaggerVersion: String! {
@@ -197,26 +170,46 @@ type Daggerverse {
     }
   }
 
-  let checkJob(ws: Workspace!): CheckJob! {
-    CheckJob(
-      name: "${{ matrix.module }}",
-      runsOn: "ubuntu-latest",
-      strategy: Strategy(
-        failFast: false,
-        maxParallel: self.concurrency,
-        matrix: Matrix(
-          module: self.modules(ws),
-        ),
-      ),
-      steps: [
-        checkoutStep(self.pin),
-        daggerStep(
-          "Check",
-          self.pin,
-          daggerActionInputs("check", "${{ matrix.module }}/tests", self.actionVersion, self.actionCommit),
-        ),
-      ],
-    )
+  let checkJob(ws: Workspace!): GhaJob! {
+    self.baseCheckJob("${{ matrix.module }}", "${{ matrix.module }}/tests")
+      .withMatrix("module", self.modules(ws))
+      .withFailFast(false)
+      .{
+        let concurrency = self.concurrency
+
+        if (concurrency != null) {
+          _.withMaxParallel(concurrency!)
+        } else _
+      }
+  }
+
+  let baseCheckJob(name: String!, module: String!): GhaJob! {
+    Dagger.gha.job
+      .withName(name)
+      .withStep(
+        Dagger.gha.step("Checkout repository")
+          .withUses("actions/checkout@" + actionRef("actions/checkout", self.pin)),
+      )
+      .withStep(
+        Dagger.gha.step("Check")
+          .withUses("dagger/dagger-for-github@" + actionRef("dagger/dagger-for-github", self.pin))
+          .withInput("verb", "check")
+          .withInput("module", module)
+          .{
+            let version = self.actionVersion
+
+            if (version != null) {
+              _.withInput("version", version!)
+            } else _
+          }
+          .{
+            let commit = self.actionCommit
+
+            if (commit != null) {
+              _.withInput("commit", commit!)
+            } else _
+          },
+      )
   }
 }
 
@@ -224,15 +217,6 @@ let validatePrefix(prefix: String!): Void {
   if (prefix.contains("/") or prefix.contains("\\")) {
     raise "prefix must be a file name prefix, not a path"
   }
-}
-
-let daggerActionInputs(verb: String!, module: String!, version: String, commit: String): DaggerActionInputs! {
-  DaggerActionInputs(
-    verb: verb,
-    module: module,
-    version: version,
-    commit: commit,
-  )
 }
 
 let daggerActionVersion(version: String!): String {
@@ -277,101 +261,3 @@ let actionRef(repository: String!, pin: ActionPin!): String! {
   }
 }
 
-let checkoutStep(pin: ActionPin!): Step! {
-  Step(
-    name: "Checkout repository",
-    uses: "actions/checkout@" + actionRef("actions/checkout", pin),
-    inputs: null,
-  )
-}
-
-let daggerStep(name: String!, pin: ActionPin!, inputs: DaggerActionInputs!): Step! {
-  Step(
-    name: name,
-    uses: "dagger/dagger-for-github@" + actionRef("dagger/dagger-for-github", pin),
-    inputs: inputs,
-  )
-}
-
-type Workflow {
-  name: String!
-  triggers: WorkflowTriggers! @YAML.field(name: "on")
-  permissions: Permissions!
-  jobs: WorkflowJobs!
-}
-
-type WorkflowTriggers {
-  push: Push!
-  pullRequest: PullRequest! @YAML.field(name: "pull_request")
-}
-
-type Push {
-  branches: [String!]!
-}
-
-type PullRequest {
-}
-
-type Permissions {
-  contents: String!
-}
-
-type WorkflowJobs {
-  check: CheckJob!
-}
-
-type DispatchWorkflow {
-  name: String!
-  triggers: DispatchTriggers! @YAML.field(name: "on")
-  permissions: Permissions!
-  jobs: WorkflowJobs!
-}
-
-type DispatchTriggers {
-  workflowDispatch: WorkflowDispatch! @YAML.field(name: "workflow_dispatch")
-}
-
-type WorkflowDispatch {
-  inputs: DispatchInputs!
-}
-
-type DispatchInputs {
-  module: ModuleInput!
-}
-
-type ModuleInput {
-  description: String!
-  required: Boolean!
-  inputType: String! @YAML.field(name: "type")
-  options: [String!]!
-}
-
-type CheckJob {
-  name: String!
-  runsOn: String! @YAML.field(name: "runs-on")
-  strategy: Strategy @YAML.field(omitEmpty: true)
-  steps: [Step!]!
-}
-
-type Strategy {
-  failFast: Boolean! @YAML.field(name: "fail-fast")
-  maxParallel: Int @YAML.field(name: "max-parallel", omitEmpty: true)
-  matrix: Matrix!
-}
-
-type Matrix {
-  module: [String!]!
-}
-
-type Step {
-  name: String!
-  uses: String!
-  inputs: DaggerActionInputs @YAML.field(name: "with", omitEmpty: true)
-}
-
-type DaggerActionInputs {
-  verb: String!
-  module: String!
-  version: String @YAML.field(omitEmpty: true)
-  commit: String @YAML.field(omitEmpty: true)
-}

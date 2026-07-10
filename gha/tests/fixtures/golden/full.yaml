@@ -1,0 +1,86 @@
+concurrency:
+    cancel-in-progress: true
+    group: ci-${{ github.ref }}
+env:
+    CI: "true"
+jobs:
+    build:
+        continue-on-error: false
+        env:
+            CARGO_TERM_COLOR: always
+        environment: production
+        if: github.event_name != 'schedule'
+        name: Build ${{ matrix.target }}
+        needs:
+            - lint
+        outputs:
+            digest: ${{ steps.push.outputs.digest }}
+        permissions:
+            packages: write
+        runs-on: ubuntu-24.04
+        steps:
+            - name: Checkout
+              uses: actions/checkout@v4
+              with:
+                fetch-depth: "0"
+            - continue-on-error: true
+              env:
+                TARGET: ${{ matrix.target }}
+              id: push
+              if: success()
+              name: Build
+              run: |
+                make build
+                make push
+              shell: bash
+              timeout-minutes: 10
+              working-directory: src
+        strategy:
+            fail-fast: false
+            matrix:
+                arch:
+                    - amd64
+                    - arm64
+                target:
+                    - linux
+                    - darwin
+            max-parallel: 2
+        timeout-minutes: 30
+    lint:
+        runs-on: ubuntu-latest
+        steps:
+            - run: make lint
+name: Full
+"on":
+    pull_request:
+        types:
+            - opened
+            - synchronize
+    push:
+        branches:
+            - main
+        paths-ignore:
+            - docs/**
+        tags:
+            - v*
+    schedule:
+        - cron: 30 5 * * 1
+        - cron: 0 12 * * *
+    workflow_dispatch:
+        inputs:
+            dry-run:
+                default: "true"
+                required: false
+                type: boolean
+            environment:
+                default: staging
+                description: Target environment
+                options:
+                    - staging
+                    - production
+                required: false
+                type: choice
+permissions:
+    actions: none
+    contents: read
+    id-token: write

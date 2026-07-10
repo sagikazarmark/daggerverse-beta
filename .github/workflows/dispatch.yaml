@@ -24,6 +24,7 @@ name: Daggerverse Dispatch
                     - bun-environment
                     - cargo-lock
                     - crypto
+                    - dagger-gha
                     - daggerverse
                     - deno-environment
                     - dioxus

@@ -1,392 +1,720 @@
+"""
+Generic builder for GitHub Actions workflow files.
+
+Workflow, Job and Step are copy-on-write builders (like Container): each with
+function returns a new value. The builders are also the serialization schema,
+so rendering is a single YAML encode of the accumulated state. Keys are
+emitted in alphabetical order.
+"""
 type Gha {
-  let include: [String!]!
-  let skip: [String!]!
-  let noGenerate: Boolean!
-  let onlyGenerate: Boolean!
-  let expand: Boolean!
-  let groupLevel: Int
+  """
+  Start building a workflow.
+  """
+  workflow(
+    """
+    Workflow name displayed in the GitHub UI.
+    """
+    name: String!,
+  ): Workflow! {
+    Workflow(name)
+  }
 
-  new(
+  """
+  Start building a job.
+  """
+  job(
     """
-    Include patterns using the same matching rules as dagger check selectors.
+    Runner image the job runs on.
+    """
+    runsOn: String! = "ubuntu-latest",
+  ): Job! {
+    Job(runsOn)
+  }
 
-    Exact prefixes match all descendants, * matches one segment, and ** matches any remaining segments.
+  """
+  Start building a step.
+  """
+  step(
     """
-    include: [String!]! = [],
+    Step name displayed in the GitHub UI.
     """
-    Skip patterns using the same matching rules as dagger check selectors.
+    name: String = null,
+  ): Step! {
+    Step(name)
+  }
+}
 
-    Exact prefixes match all descendants, * matches one segment, and ** matches any remaining segments.
-    """
-    skip: [String!]! = [],
-    """
-    Only run annotated check functions, skip generate-as-checks.
-    """
-    noGenerate: Boolean! = false,
-    """
-    Only run generate-as-checks, skip annotated check functions.
-    """
-    onlyGenerate: Boolean! = false,
-    """
-    Expand checks into separate matrix jobs.
-    """
-    expand: Boolean! = false,
-    """
-    Number of check path segments to group by in each expanded matrix entry.
-    """
-    groupLevel: Int,
-  ) {
-    if (noGenerate and onlyGenerate) {
-      raise "noGenerate and onlyGenerate cannot both be true"
-    }
+"""
+Access level granted to a permission scope.
+"""
+enum Access {
+  READ
+  WRITE
+  NONE
+}
 
-    self.include = include
-    self.skip = skip
-    self.noGenerate = noGenerate
-    self.onlyGenerate = onlyGenerate
-    self.expand = expand
-    self.groupLevel = groupLevel
+"""
+Value type of a workflow_dispatch input.
+"""
+enum InputType {
+  STRING
+  BOOLEAN
+  NUMBER
+  CHOICE
+  ENVIRONMENT
+}
+
+type Workflow {
+  """
+  Workflow name displayed in the GitHub UI.
+  """
+  name: String!
+
+  triggers: Triggers! @YAML.field(name: "on") = Triggers()
+  concurrency: Concurrency @YAML.field(omitNull: true) = null
+
+  let permissions: Map[String!]! @YAML.field(omitEmpty: true) = [:]
+  let env: Map[String!]! @YAML.field(omitEmpty: true) = [:]
+  let jobs: Map[Job!]! @YAML.field(omitEmpty: true) = [:]
+
+  new(name: String!) {
+    self.name = name
 
     self
   }
 
   """
-  Check selectors included in the expanded GitHub Actions matrix.
+  Trigger the workflow on pushed commits.
+
+  Called without arguments it matches every push. branches, tags and paths
+  accept the usual glob patterns; the *Ignore variants exclude matches.
   """
-  checks(ws: Workspace!): [String!]! {
-    self.resolveChecks(
-      checkSelectors(ws, [], [], self.noGenerate, self.onlyGenerate),
-      checkSelectors(ws, self.include, self.skip, self.noGenerate, self.onlyGenerate),
-    )
+  onPush(
+    branches: [String!]! = [],
+    branchesIgnore: [String!]! = [],
+    tags: [String!]! = [],
+    tagsIgnore: [String!]! = [],
+    paths: [String!]! = [],
+    pathsIgnore: [String!]! = [],
+  ): Workflow! {
+    self.triggers = self.triggers.withPush(PushTrigger(
+      emptyAsNull(branches),
+      emptyAsNull(branchesIgnore),
+      emptyAsNull(tags),
+      emptyAsNull(tagsIgnore),
+      emptyAsNull(paths),
+      emptyAsNull(pathsIgnore),
+    ))
+
+    self
   }
 
   """
-  Resolve the final matrix selectors from explicit check name lists.
+  Trigger the workflow on pull request events.
 
-  allChecks is every check in the workspace, included is the subset selected by
-  the include and skip filters. This is the pure core of checks, exposed so the
-  grouping logic can be exercised without a workspace.
+  Called without arguments it matches every pull request. types narrows the
+  activity types (opened, synchronize, ...).
   """
-  resolveChecks(allChecks: [String!]!, included: [String!]!): [String!]! {
-    resolvedChecks(allChecks, included, self.include, self.groupLevel)
+  onPullRequest(
+    branches: [String!]! = [],
+    branchesIgnore: [String!]! = [],
+    paths: [String!]! = [],
+    pathsIgnore: [String!]! = [],
+    types: [String!]! = [],
+  ): Workflow! {
+    self.triggers = self.triggers.withPullRequest(PullRequestTrigger(
+      emptyAsNull(branches),
+      emptyAsNull(branchesIgnore),
+      emptyAsNull(paths),
+      emptyAsNull(pathsIgnore),
+      emptyAsNull(types),
+    ))
+
+    self
   }
 
   """
-  Render the Dagger GitHub Actions workflow.
-
-  When checks is provided, it is used verbatim as the expanded matrix instead
-  of discovering checks from the workspace.
+  Trigger the workflow on a cron schedule. Can be called multiple times.
   """
-  workflow(ws: Workspace!, checks: [String!] = null): File! {
-    Dagger.file("dagger.yaml", YAML.encode(self.workflowConfig(ws, checks)) + "\n")
+  onSchedule(
+    """
+    POSIX cron expression (in UTC), e.g. "30 5 * * 1".
+    """
+    cron: String!,
+  ): Workflow! {
+    self.triggers = self.triggers.withSchedule(ScheduleTrigger(cron))
+
+    self
   }
 
   """
-  Write the generated Dagger GitHub Actions workflow.
-
-  When checks is provided, it is used verbatim as the expanded matrix instead
-  of discovering checks from the workspace.
+  Allow triggering the workflow manually from the GitHub UI, API or CLI.
   """
-  generate(ws: Workspace!, checks: [String!] = null): Changeset! {
-    let source = ws.directory(".")
+  onWorkflowDispatch: Workflow! {
+    self.triggers = self.triggers.withWorkflowDispatch
 
-    source.withFile(
-      ".github/workflows/dagger.yaml",
-      self.workflow(ws, checks),
-    ).changes(source)
+    self
   }
 
-  let workflowConfig(ws: Workspace!, checks: [String!]): Workflow! {
-    validateWorkflowOptions(expand, self.groupLevel, self.noGenerate, self.onlyGenerate)
-
-    if (checks != null and !expand) {
-      raise "checks can only be provided when expand is true"
+  """
+  Add an input to the workflow_dispatch trigger (enabling it if necessary).
+  """
+  withDispatchInput(
+    name: String!,
+    description: String = null,
+    required: Boolean! = false,
+    inputType: InputType! = InputType.STRING,
+    """
+    Default value for the input (rendered as a string).
+    """
+    defaultValue: String = null,
+    """
+    Choices for a CHOICE input.
+    """
+    options: [String!]! = [],
+  ): Workflow! {
+    if (inputType == InputType.CHOICE and options.isEmpty) {
+      raise `workflow_dispatch input "${name}": CHOICE inputs require options`
     }
 
-    Workflow(
-      name: "Dagger",
-      triggers: WorkflowTriggers(
-        push: Push(branches: ["main"]),
-        pullRequest: PullRequest,
-      ),
-      permissions: Permissions(contents: "read"),
-      jobs: WorkflowJobs(
-        check: if (expand) {
-          self.expandedCheckJob(ws, checks)
-        } else {
-          self.normalCheckJob
-        },
-      ),
-    )
+    if (inputType != InputType.CHOICE and !options.isEmpty) {
+      raise `workflow_dispatch input "${name}": options are only valid for CHOICE inputs`
+    }
+
+    self.triggers = self.triggers.withDispatchInput(name, DispatchInput(
+      description,
+      required,
+      toString(inputType).toLower,
+      defaultValue,
+      emptyAsNull(options),
+    ))
+
+    self
   }
 
-  let normalCheckJob: CheckJob! {
-    CheckJob(
-      name: "Check",
-      runsOn: "ubuntu-latest",
-      strategy: null,
-      steps: [
-        checkoutStep,
-        daggerStep(
-          "Check",
-          daggerActionInputs("check", checkArgs(
-            self.include,
-            self.skip,
-            self.noGenerate,
-            self.onlyGenerate,
-          )),
-        ),
-      ],
-    )
+  """
+  Grant the GITHUB_TOKEN an access level on a permission scope (e.g. contents,
+  id-token, pull-requests).
+  """
+  withPermission(scope: String!, access: Access! = Access.READ): Workflow! {
+    self.permissions = self.permissions.with(scope, toString(access).toLower)
+
+    self
   }
 
-  let expandedCheckJob(ws: Workspace!, checks: [String!]): CheckJob! {
-    CheckJob(
-      name: "${{ matrix.check }}",
-      runsOn: "ubuntu-latest",
-      strategy: Strategy(
-        failFast: false,
-        matrix: Matrix(
-          check: checks ?? self.checks(ws),
-        ),
-      ),
-      steps: [
-        checkoutStep,
-        daggerStep(
-          "Check",
-          daggerActionInputs("check", checkArgs(
-            ["${{ matrix.check }}"],
-            self.skip,
-            self.noGenerate,
-            self.onlyGenerate,
-          )),
-        ),
-      ],
-    )
+  """
+  Set an environment variable for the whole workflow.
+  """
+  withEnvVariable(name: String!, value: String!): Workflow! {
+    self.env = self.env.with(name, value)
+
+    self
+  }
+
+  """
+  Limit the workflow to one run per concurrency group.
+  """
+  withConcurrency(group: String!, cancelInProgress: Boolean! = false): Workflow! {
+    self.concurrency = Concurrency(group, cancelInProgress)
+
+    self
+  }
+
+  """
+  Add a job to the workflow. Jobs render in alphabetical order of their names.
+  """
+  withJob(
+    """
+    Job name (the key under jobs); must be unique within the workflow.
+    """
+    name: String!,
+    job: Job!,
+  ): Workflow! {
+    if (self.jobs.has(name)) {
+      raise `workflow already has a job named "${name}"`
+    }
+
+    self.jobs = self.jobs.with(name, job)
+
+    self
+  }
+
+  """
+  Render the workflow as YAML.
+  """
+  yaml: String! {
+    if (triggers.isEmpty) {
+      raise `workflow "${name}" has no triggers; add onPush, onPullRequest, onSchedule or onWorkflowDispatch`
+    }
+
+    if (jobs.keys.isEmpty) {
+      raise `workflow "${name}" has no jobs`
+    }
+
+    jobs.each { jobName, job =>
+      if (job.steps.isEmpty) {
+        raise `job "${jobName}" has no steps`
+      }
+
+      job.steps.each { step => step.validated }
+    }
+
+    YAML.encode(self) + "\n"
+  }
+
+  """
+  Render the workflow as a file.
+  """
+  file(
+    """
+    File name of the rendered workflow.
+    """
+    name: String! = "workflow.yaml",
+  ): File! {
+    Dagger.file(name, self.yaml)
   }
 }
 
-let checkSelectors(
-  ws: Workspace!,
-  include: [String!]! = [],
-  skip: [String!]! = [],
-  noGenerate: Boolean! = false,
-  onlyGenerate: Boolean! = false,
-): [String!]! {
-  let checks = (
-    ws.checks(
-      include: optionalStringList(include),
-      skip: optionalStringList(skip),
-      noGenerate: noGenerate,
-      onlyGenerate: onlyGenerate,
-    ).list
-  ).{{name}}
+type Triggers {
+  push: PushTrigger @YAML.field(omitNull: true) = null
+  pullRequest: PullRequestTrigger @YAML.field(name: "pull_request", omitNull: true) = null
+  schedule: [ScheduleTrigger!]! @YAML.field(omitEmpty: true) = []
+  workflowDispatch: WorkflowDispatchTrigger @YAML.field(name: "workflow_dispatch", omitNull: true) = null
 
-  checks.map { _.name }
+  isEmpty: Boolean! {
+    push == null and pullRequest == null and schedule.isEmpty and workflowDispatch == null
+  }
+
+  withPush(push: PushTrigger!): Triggers! {
+    self.push = push
+
+    self
+  }
+
+  withPullRequest(pullRequest: PullRequestTrigger!): Triggers! {
+    self.pullRequest = pullRequest
+
+    self
+  }
+
+  withSchedule(entry: ScheduleTrigger!): Triggers! {
+    self.schedule += [entry]
+
+    self
+  }
+
+  withWorkflowDispatch: Triggers! {
+    self.workflowDispatch = self.workflowDispatch ?? WorkflowDispatchTrigger()
+
+    self
+  }
+
+  withDispatchInput(name: String!, input: DispatchInput!): Triggers! {
+    self.workflowDispatch = (self.workflowDispatch ?? WorkflowDispatchTrigger()).withInput(name, input)
+
+    self
+  }
 }
 
-let optionalStringList(values: [String!]!): [String!] {
+type PushTrigger {
+  branches: [String!] @YAML.field(omitNull: true)
+  branchesIgnore: [String!] @YAML.field(name: "branches-ignore", omitNull: true)
+  tags: [String!] @YAML.field(omitNull: true)
+  tagsIgnore: [String!] @YAML.field(name: "tags-ignore", omitNull: true)
+  paths: [String!] @YAML.field(omitNull: true)
+  pathsIgnore: [String!] @YAML.field(name: "paths-ignore", omitNull: true)
+}
+
+type PullRequestTrigger {
+  branches: [String!] @YAML.field(omitNull: true)
+  branchesIgnore: [String!] @YAML.field(name: "branches-ignore", omitNull: true)
+  paths: [String!] @YAML.field(omitNull: true)
+  pathsIgnore: [String!] @YAML.field(name: "paths-ignore", omitNull: true)
+  types: [String!] @YAML.field(omitNull: true)
+}
+
+type ScheduleTrigger {
+  cron: String!
+}
+
+type WorkflowDispatchTrigger {
+  let inputs: Map[DispatchInput!]! @YAML.field(omitEmpty: true) = [:]
+
+  withInput(name: String!, input: DispatchInput!): WorkflowDispatchTrigger! {
+    self.inputs = self.inputs.with(name, input)
+
+    self
+  }
+}
+
+type DispatchInput {
+  description: String @YAML.field(omitNull: true)
+  required: Boolean!
+  inputType: String! @YAML.field(name: "type")
+  defaultValue: String @YAML.field(name: "default", omitNull: true)
+  options: [String!] @YAML.field(omitNull: true)
+}
+
+type Concurrency {
+  group: String!
+  cancelInProgress: Boolean! @YAML.field(name: "cancel-in-progress")
+}
+
+type Job {
+  """
+  Runner image the job runs on.
+  """
+  runsOn: String! @YAML.field(name: "runs-on")
+
+  name: String @YAML.field(omitNull: true) = null
+  needs: [String!]! @YAML.field(omitEmpty: true) = []
+  condition: String @YAML.field(name: "if", omitNull: true) = null
+  environment: String @YAML.field(omitNull: true) = null
+  continueOnError: Boolean @YAML.field(name: "continue-on-error", omitNull: true) = null
+  timeoutMinutes: Int @YAML.field(name: "timeout-minutes", omitNull: true) = null
+  steps: [Step!]! = []
+
+  # Nullable object fields must stay private: a public nullable object field
+  # holding a value breaks when the job crosses the module boundary as a call
+  # argument (the nested object ID arrives detached).
+  let concurrency: Concurrency @YAML.field(omitNull: true) = null
+  let strategy: Strategy @YAML.field(omitNull: true) = null
+  let permissions: Map[String!]! @YAML.field(omitEmpty: true) = [:]
+  let env: Map[String!]! @YAML.field(omitEmpty: true) = [:]
+  let outputs: Map[String!]! @YAML.field(omitEmpty: true) = [:]
+
+  new(runsOn: String! = "ubuntu-latest") {
+    self.runsOn = runsOn
+
+    self
+  }
+
+  """
+  Set the job name displayed in the GitHub UI (defaults to the job's key in
+  the workflow). Supports expressions like ${{ matrix.check }}.
+  """
+  withName(name: String!): Job! {
+    self.name = name
+
+    self
+  }
+
+  """
+  Require another job to finish first. Can be called multiple times.
+  """
+  withNeeds(
+    """
+    Name of the job this one depends on.
+    """
+    job: String!,
+  ): Job! {
+    self.needs += [job]
+
+    self
+  }
+
+  """
+  Run the job only when the expression evaluates to true (rendered as if).
+  """
+  withCondition(
+    """
+    GitHub Actions expression, e.g. "github.ref == 'refs/heads/main'".
+    """
+    condition: String!,
+  ): Job! {
+    self.condition = condition
+
+    self
+  }
+
+  """
+  Run the job against a deployment environment.
+  """
+  withEnvironment(name: String!): Job! {
+    self.environment = name
+
+    self
+  }
+
+  """
+  Grant the GITHUB_TOKEN an access level on a permission scope for this job.
+  """
+  withPermission(scope: String!, access: Access! = Access.READ): Job! {
+    self.permissions = self.permissions.with(scope, toString(access).toLower)
+
+    self
+  }
+
+  """
+  Set an environment variable for every step of the job.
+  """
+  withEnvVariable(name: String!, value: String!): Job! {
+    self.env = self.env.with(name, value)
+
+    self
+  }
+
+  """
+  Limit the job to one run per concurrency group.
+  """
+  withConcurrency(group: String!, cancelInProgress: Boolean! = false): Job! {
+    self.concurrency = Concurrency(group, cancelInProgress)
+
+    self
+  }
+
+  """
+  Let the workflow pass even when this job fails.
+  """
+  withContinueOnError(continueOnError: Boolean! = true): Job! {
+    self.continueOnError = continueOnError
+
+    self
+  }
+
+  """
+  Cancel the job when it runs longer than the given number of minutes.
+  """
+  withTimeoutMinutes(minutes: Int!): Job! {
+    self.timeoutMinutes = minutes
+
+    self
+  }
+
+  """
+  Add a matrix axis, expanding the job into one run per value. Reference
+  values in expressions as ${{ matrix.<key> }}. An empty axis is rendered
+  as-is: it can be a legitimate intermediate for runtime-discovered values.
+  """
+  withMatrix(key: String!, values: [String!]!): Job! {
+    self.strategy = (self.strategy ?? Strategy()).withAxis(key, values)
+
+    self
+  }
+
+  """
+  Control whether a failing matrix job cancels the other in-progress runs.
+  """
+  withFailFast(failFast: Boolean!): Job! {
+    self.strategy = (self.strategy ?? Strategy()).withFailFast(failFast)
+
+    self
+  }
+
+  """
+  Limit how many matrix jobs run concurrently.
+  """
+  withMaxParallel(maxParallel: Int!): Job! {
+    self.strategy = (self.strategy ?? Strategy()).withMaxParallel(maxParallel)
+
+    self
+  }
+
+  """
+  Expose a value to jobs that depend on this one.
+  """
+  withOutput(
+    name: String!,
+    """
+    GitHub Actions expression, e.g. "${{ steps.build.outputs.digest }}".
+    """
+    value: String!,
+  ): Job! {
+    self.outputs = self.outputs.with(name, value)
+
+    self
+  }
+
+  """
+  Append a step to the job.
+  """
+  withStep(step: Step!): Job! {
+    self.steps += [step]
+
+    self
+  }
+}
+
+type Strategy {
+  failFast: Boolean @YAML.field(name: "fail-fast", omitNull: true) = null
+  maxParallel: Int @YAML.field(name: "max-parallel", omitNull: true) = null
+
+  let matrix: Map[[String!]!]! @YAML.field(omitEmpty: true) = [:]
+
+  withAxis(key: String!, values: [String!]!): Strategy! {
+    self.matrix = self.matrix.with(key, values)
+
+    self
+  }
+
+  withFailFast(failFast: Boolean!): Strategy! {
+    self.failFast = failFast
+
+    self
+  }
+
+  withMaxParallel(maxParallel: Int!): Strategy! {
+    self.maxParallel = maxParallel
+
+    self
+  }
+}
+
+type Step {
+  name: String @YAML.field(omitNull: true) = null
+  stepId: String @YAML.field(name: "id", omitNull: true) = null
+  condition: String @YAML.field(name: "if", omitNull: true) = null
+  uses: String @YAML.field(omitNull: true) = null
+  run: String @YAML.field(omitNull: true) = null
+  shell: String @YAML.field(omitNull: true) = null
+  workingDirectory: String @YAML.field(name: "working-directory", omitNull: true) = null
+  continueOnError: Boolean @YAML.field(name: "continue-on-error", omitNull: true) = null
+  timeoutMinutes: Int @YAML.field(name: "timeout-minutes", omitNull: true) = null
+
+  let env: Map[String!]! @YAML.field(omitEmpty: true) = [:]
+  let inputs: Map[String!]! @YAML.field(name: "with", omitEmpty: true) = [:]
+
+  new(name: String = null) {
+    self.name = name
+
+    self
+  }
+
+  """
+  Run an action (rendered as uses). Mutually exclusive with withRun.
+  """
+  withUses(
+    """
+    Action reference, e.g. "actions/checkout@v4" or an owner/repo@sha pin.
+    """
+    ref: String!,
+  ): Step! {
+    self.uses = ref
+
+    self
+  }
+
+  """
+  Run a shell command (rendered as run). Mutually exclusive with withUses.
+  """
+  withRun(
+    """
+    Command or multi-line script to run.
+    """
+    script: String!,
+  ): Step! {
+    self.run = script
+
+    self
+  }
+
+  """
+  Set the step id so later steps can reference its outputs.
+  """
+  withId(stepId: String!): Step! {
+    self.stepId = stepId
+
+    self
+  }
+
+  """
+  Run the step only when the expression evaluates to true (rendered as if).
+  """
+  withCondition(
+    """
+    GitHub Actions expression, e.g. "success() || failure()".
+    """
+    condition: String!,
+  ): Step! {
+    self.condition = condition
+
+    self
+  }
+
+  """
+  Pass an input to the action (rendered under with). Requires withUses.
+  """
+  withInput(name: String!, value: String!): Step! {
+    self.inputs = self.inputs.with(name, value)
+
+    self
+  }
+
+  """
+  Set an environment variable for the step.
+  """
+  withEnvVariable(name: String!, value: String!): Step! {
+    self.env = self.env.with(name, value)
+
+    self
+  }
+
+  """
+  Override the shell the script runs with. Requires withRun.
+  """
+  withShell(shell: String!): Step! {
+    self.shell = shell
+
+    self
+  }
+
+  """
+  Set the working directory for the step.
+  """
+  withWorkingDirectory(path: String!): Step! {
+    self.workingDirectory = path
+
+    self
+  }
+
+  """
+  Let the job pass even when this step fails.
+  """
+  withContinueOnError(continueOnError: Boolean! = true): Step! {
+    self.continueOnError = continueOnError
+
+    self
+  }
+
+  """
+  Cancel the step when it runs longer than the given number of minutes.
+  """
+  withTimeoutMinutes(minutes: Int!): Step! {
+    self.timeoutMinutes = minutes
+
+    self
+  }
+
+  """
+  The step after validation; raises when the configuration is inconsistent.
+  """
+  validated: Step! {
+    let label = name ?? uses ?? run ?? "step"
+
+    if (uses == null and run == null) {
+      raise `step "${label}" needs one of withUses or withRun`
+    }
+
+    if (uses != null and run != null) {
+      raise `step "${label}" cannot combine withUses and withRun`
+    }
+
+    if (!inputs.keys.isEmpty and uses == null) {
+      raise `step "${label}": inputs (with) require withUses`
+    }
+
+    if (shell != null and run == null) {
+      raise `step "${label}": shell requires withRun`
+    }
+
+    self
+  }
+}
+
+let emptyAsNull(values: [String!]!): [String!] {
   if (values.isEmpty) {
     return null
   }
 
   values
-}
-
-let resolvedChecks(
-  allChecks: [String!]!,
-  included: [String!]!,
-  include: [String!]!,
-  groupLevel: Int,
-): [String!]! {
-  if (groupLevel == null or groupLevel! < 1) {
-    return included
-  }
-
-  included
-    .map { check => checkAtLevel(check, groupLevel!) }
-    .uniq
-    .reduce([]) { result, check =>
-      let includePatterns = includePatternsForPrefix(include, check)
-
-      result += if (!includePatterns.isEmpty) {
-        includePatterns
-      } else if (prefixIncludesUnselectedCheck(allChecks, included, check)) {
-        included.filter { checkMatchesPrefix(_, check) }
-      } else {
-        [check]
-      }
-    }
-    .uniq
-}
-
-let checkAtLevel(check: String!, level: Int!): String! {
-  let segments = check.split(":")
-
-  if (level >= segments.length) {
-    return check
-  }
-
-  segments.takeFirst(level).join(":")
-}
-
-let includePatternsForPrefix(include: [String!]!, prefix: String!): [String!]! {
-  include.filter { pattern => pattern == prefix or pattern.hasPrefix(prefix + ":") }
-}
-
-let prefixIncludesUnselectedCheck(
-  checks: [String!]!,
-  included: [String!]!,
-  prefix: String!,
-): Boolean! {
-  checks.reduce(false) { found, check =>
-    found or (checkMatchesPrefix(check, prefix) and !included.contains(check))
-  }
-}
-
-let checkMatchesPrefix(check: String!, prefix: String!): Boolean! {
-  check == prefix or check.hasPrefix(prefix + ":")
-}
-
-let validateWorkflowOptions(
-  expand: Boolean!,
-  groupLevel: Int,
-  noGenerate: Boolean!,
-  onlyGenerate: Boolean!,
-): Void {
-  validateCheckOptions(noGenerate, onlyGenerate)
-
-  if (!expand and groupLevel != null) {
-    raise "groupLevel can only be used when expand is true"
-  }
-}
-
-let validateCheckOptions(noGenerate: Boolean!, onlyGenerate: Boolean!): Void {
-  if (noGenerate and onlyGenerate) {
-    raise "noGenerate and onlyGenerate cannot both be true"
-  }
-}
-
-let checkArgs(
-  patterns: [String!]!,
-  skip: [String!]!,
-  noGenerate: Boolean!,
-  onlyGenerate: Boolean!,
-): String! {
-  let args = skip.reduce([]) { args, pattern => args + ["--skip", pattern] }
-
-  if (noGenerate) {
-    args += ["--no-generate"]
-  }
-
-  if (onlyGenerate) {
-    args += ["--generate"]
-  }
-
-  (args + patterns).join(" ")
-}
-
-let daggerActionInputs(verb: String!, args: String!): DaggerActionInputs! {
-  DaggerActionInputs(
-    verb: verb,
-    args: if (args == "") { null } else { args },
-    version: daggerActionVersion(Dagger.version),
-    commit: daggerActionCommit(Dagger.version),
-  )
-}
-
-let daggerActionVersion(version: String!): String {
-  if (isDaggerVersionTag(version)) {
-    version
-  } else {
-    null
-  }
-}
-
-let daggerActionCommit(version: String!): String {
-  if (isDaggerVersionTag(version)) {
-    null
-  } else if (version.contains("-dev-")) {
-    let parts = version.split("-dev-")
-
-    parts[parts.length - 1]
-  } else {
-    version
-  }
-}
-
-let isDaggerVersionTag(version: String!): Boolean! {
-  version.hasPrefix("v") and !version.contains("-dev-")
-}
-
-let checkoutStep: Step! {
-  Step(
-    name: "Checkout repository",
-    uses: "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd", # v6.0.2
-    inputs: null,
-  )
-}
-
-let daggerStep(name: String!, inputs: DaggerActionInputs!): Step! {
-  Step(
-    name: name,
-    uses: "dagger/dagger-for-github@27b130bf0f79a7f6fbbbe0fbca6760dc9bb40a77", # v8.4.1
-    inputs: inputs,
-  )
-}
-
-type Workflow {
-  name: String!
-  triggers: WorkflowTriggers! @YAML.field(name: "on")
-  permissions: Permissions!
-  jobs: WorkflowJobs!
-}
-
-type WorkflowTriggers {
-  push: Push!
-  pullRequest: PullRequest! @YAML.field(name: "pull_request")
-}
-
-type Push {
-  branches: [String!]!
-}
-
-type PullRequest {
-}
-
-type Permissions {
-  contents: String!
-}
-
-type WorkflowJobs {
-  check: CheckJob!
-}
-
-type CheckJob {
-  name: String!
-  runsOn: String! @YAML.field(name: "runs-on")
-  strategy: Strategy @YAML.field(omitEmpty: true)
-  steps: [Step!]!
-}
-
-type Strategy {
-  failFast: Boolean! @YAML.field(name: "fail-fast")
-  matrix: Matrix!
-}
-
-type Matrix {
-  check: [String!]!
-}
-
-type Step {
-  name: String!
-  uses: String!
-  inputs: DaggerActionInputs @YAML.field(name: "with", omitEmpty: true)
-}
-
-type DaggerActionInputs {
-  verb: String!
-  args: String @YAML.field(omitEmpty: true)
-  version: String @YAML.field(name: "version", omitEmpty: true)
-  commit: String @YAML.field(name: "commit", omitEmpty: true)
 }

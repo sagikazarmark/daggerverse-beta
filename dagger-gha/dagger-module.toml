@@ -1,10 +1,6 @@
-name = "daggerverse"
+name = "dagger-gha"
 engineVersion = "v1.0.0"
 runtime.source = "dang"
-
-[[dependencies]]
-name = "github"
-source = "../github"
 
 [[dependencies]]
 name = "gha"

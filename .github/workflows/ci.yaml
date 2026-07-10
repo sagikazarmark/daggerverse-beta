@@ -21,6 +21,7 @@ jobs:
                     - bun-environment
                     - cargo-lock
                     - crypto
+                    - dagger-gha
                     - daggerverse
                     - deno-environment
                     - dioxus

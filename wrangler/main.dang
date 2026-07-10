@@ -328,7 +328,7 @@ type Versions {
   }
 
   """
-  Uploads Worker code and config as a new version.
+  Uploads Worker code and config as a new version and returns the upload metadata.
 
   The uploaded version is not deployed to production; use deploy to roll it out.
   """
@@ -357,7 +357,7 @@ type Versions {
     Name of an alias for this Worker version.
     """
     previewAlias: String,
-  ): Container! @cache(policy: FunctionCachePolicy.Never) {
+  ): VersionUpload! @cache(policy: FunctionCachePolicy.Never) {
     let args = ["wrangler", "versions", "upload"]
 
     let name = self.name
@@ -385,7 +385,27 @@ type Versions {
       args += ["--preview-alias", previewAlias]
     }
 
-    self.run(source, args)
+    let outputFilePath = "/work/wrangler-output.json"
+
+    let output = self
+      .container
+      .withWorkdir("/work/src")
+      .withDirectory(".", source)
+      .withEnvVariable("WRANGLER_OUTPUT_FILE_PATH", outputFilePath)
+      .withExec(args)
+      .file(outputFilePath)
+      .contents
+
+    let uploads = output
+      .split("\n")
+      .filter { _ != "" }
+      .filter { (JSON.decode(_) :: OutputEntry!).entryType == "version-upload" }
+
+    if (uploads.isEmpty) {
+      raise "wrangler output file did not contain a version-upload entry"
+    }
+
+    JSON.decode(uploads[0]!) :: VersionUpload!
   }
 
   let run(source: Directory, args: [String!]!): Container! {
@@ -462,6 +482,43 @@ type VersionAnnotations {
   tag: String @JSON.field(name: "workers/tag")
   message: String @JSON.field(name: "workers/message")
   triggeredBy: String @JSON.field(name: "workers/triggered_by")
+}
+
+"""
+Metadata about a Worker version created by an upload.
+"""
+type VersionUpload {
+  """
+  The name of the Worker.
+  """
+  workerName: String @JSON.field(name: "worker_name")
+
+  """
+  The tag of the Worker.
+  """
+  workerTag: String! @JSON.field(name: "worker_tag")
+
+  """
+  The Worker Version ID.
+  """
+  versionId: String! @JSON.field(name: "version_id")
+
+  """
+  The URL where the uploaded version can be previewed (only when workers.dev previews are enabled).
+  """
+  previewUrl: String @JSON.field(name: "preview_url")
+
+  """
+  The aliased preview URL (only when a preview alias was requested).
+  """
+  previewAliasUrl: String @JSON.field(name: "preview_alias_url")
+}
+
+"""
+Envelope for inspecting entries in the Wrangler output file.
+"""
+type OutputEntry {
+  entryType: String! @JSON.field(name: "type")
 }
 
 enum LogLevel {

@@ -19,4 +19,41 @@ type Tests {
 
     null
   }
+
+  versionsUpload: Void @check {
+    let npmStub = """
+#!/bin/sh
+exit 0
+"""
+
+    let wranglerStub = """
+#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "fake-wrangler 0.0.0"
+  exit 0
+fi
+
+cat > "$WRANGLER_OUTPUT_FILE_PATH" <<'EOF'
+{"type":"wrangler-session","version":1,"wrangler_version":"4.0.0","command_line_args":["versions","upload"],"log_file_path":"/tmp/wrangler.log"}
+{"type":"version-upload","version":1,"worker_name":"test-worker","worker_tag":"tag123","version_id":"3bb2c286-6c56-42c8-8ee6-321290ecfc98","preview_url":"https://test.example.workers.dev","preview_alias_url":null,"wrangler_environment":null,"worker_name_overridden":false}
+EOF
+"""
+
+    let base = alpine
+      .withNewFile("/usr/local/bin/npm", npmStub, permissions: 755)
+      .withNewFile("/usr/local/bin/wrangler", wranglerStub, permissions: 755)
+
+    let upload = Dagger
+      .wrangler(container: base)
+      .versions(name: "test-worker")
+      .upload(Dagger.directory.withNewFile("wrangler.toml", ""))
+
+    assert { upload.workerName == "test-worker" }
+    assert { upload.workerTag == "tag123" }
+    assert { upload.versionId == "3bb2c286-6c56-42c8-8ee6-321290ecfc98" }
+    assert { upload.previewUrl == "https://test.example.workers.dev" }
+    assert { upload.previewAliasUrl == null }
+
+    null
+  }
 }

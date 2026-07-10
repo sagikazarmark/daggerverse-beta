@@ -2,6 +2,13 @@ type Tests {
   resolveRepo: RepoResolutionTests! { RepoResolutionTests }
 
   releases: ReleasesTests! { ReleasesTests }
+
+  """
+  A tag resolves to the commit it points to.
+  """
+  commit: Void @check {
+    assert { Dagger.github.commit("v6.0.2", "actions/checkout") == "de0fac2e4500dabe0009e67214ff5f5447ce83dd" }
+  }
 }
 
 type RepoResolutionTests {

@@ -46,4 +46,19 @@ type Github {
         }
       }
   }
+
+  """
+  Resolve a git ref (tag, branch or commit) to a commit SHA.
+  """
+  commit(ref: String!, repository: String! = self.repository!): String! {
+    let commit = JSON.decode(
+      self.client.get(`/repos/${normalizeRepository(repository)}/commits/${ref}`),
+    ) :: Commit!
+
+    commit.sha
+  }
+}
+
+type Commit {
+  sha: String!
 }

@@ -1,0 +1,5 @@
+type Beta {
+  lint: Void @check {
+    null
+  }
+}

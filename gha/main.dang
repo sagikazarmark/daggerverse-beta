@@ -1,0 +1,392 @@
+type Gha {
+  let include: [String!]!
+  let skip: [String!]!
+  let noGenerate: Boolean!
+  let onlyGenerate: Boolean!
+  let expand: Boolean!
+  let groupLevel: Int
+
+  new(
+    """
+    Include patterns using the same matching rules as dagger check selectors.
+
+    Exact prefixes match all descendants, * matches one segment, and ** matches any remaining segments.
+    """
+    include: [String!]! = [],
+    """
+    Skip patterns using the same matching rules as dagger check selectors.
+
+    Exact prefixes match all descendants, * matches one segment, and ** matches any remaining segments.
+    """
+    skip: [String!]! = [],
+    """
+    Only run annotated check functions, skip generate-as-checks.
+    """
+    noGenerate: Boolean! = false,
+    """
+    Only run generate-as-checks, skip annotated check functions.
+    """
+    onlyGenerate: Boolean! = false,
+    """
+    Expand checks into separate matrix jobs.
+    """
+    expand: Boolean! = false,
+    """
+    Number of check path segments to group by in each expanded matrix entry.
+    """
+    groupLevel: Int,
+  ) {
+    if (noGenerate and onlyGenerate) {
+      raise "noGenerate and onlyGenerate cannot both be true"
+    }
+
+    self.include = include
+    self.skip = skip
+    self.noGenerate = noGenerate
+    self.onlyGenerate = onlyGenerate
+    self.expand = expand
+    self.groupLevel = groupLevel
+
+    self
+  }
+
+  """
+  Check selectors included in the expanded GitHub Actions matrix.
+  """
+  checks(ws: Workspace!): [String!]! {
+    self.resolveChecks(
+      checkSelectors(ws, [], [], self.noGenerate, self.onlyGenerate),
+      checkSelectors(ws, self.include, self.skip, self.noGenerate, self.onlyGenerate),
+    )
+  }
+
+  """
+  Resolve the final matrix selectors from explicit check name lists.
+
+  allChecks is every check in the workspace, included is the subset selected by
+  the include and skip filters. This is the pure core of checks, exposed so the
+  grouping logic can be exercised without a workspace.
+  """
+  resolveChecks(allChecks: [String!]!, included: [String!]!): [String!]! {
+    resolvedChecks(allChecks, included, self.include, self.groupLevel)
+  }
+
+  """
+  Render the Dagger GitHub Actions workflow.
+
+  When checks is provided, it is used verbatim as the expanded matrix instead
+  of discovering checks from the workspace.
+  """
+  workflow(ws: Workspace!, checks: [String!] = null): File! {
+    Dagger.file("dagger.yaml", YAML.encode(self.workflowConfig(ws, checks)) + "\n")
+  }
+
+  """
+  Write the generated Dagger GitHub Actions workflow.
+
+  When checks is provided, it is used verbatim as the expanded matrix instead
+  of discovering checks from the workspace.
+  """
+  generate(ws: Workspace!, checks: [String!] = null): Changeset! {
+    let source = ws.directory(".")
+
+    source.withFile(
+      ".github/workflows/dagger.yaml",
+      self.workflow(ws, checks),
+    ).changes(source)
+  }
+
+  let workflowConfig(ws: Workspace!, checks: [String!]): Workflow! {
+    validateWorkflowOptions(expand, self.groupLevel, self.noGenerate, self.onlyGenerate)
+
+    if (checks != null and !expand) {
+      raise "checks can only be provided when expand is true"
+    }
+
+    Workflow(
+      name: "Dagger",
+      triggers: WorkflowTriggers(
+        push: Push(branches: ["main"]),
+        pullRequest: PullRequest,
+      ),
+      permissions: Permissions(contents: "read"),
+      jobs: WorkflowJobs(
+        check: if (expand) {
+          self.expandedCheckJob(ws, checks)
+        } else {
+          self.normalCheckJob
+        },
+      ),
+    )
+  }
+
+  let normalCheckJob: CheckJob! {
+    CheckJob(
+      name: "Check",
+      runsOn: "ubuntu-latest",
+      strategy: null,
+      steps: [
+        checkoutStep,
+        daggerStep(
+          "Check",
+          daggerActionInputs("check", checkArgs(
+            self.include,
+            self.skip,
+            self.noGenerate,
+            self.onlyGenerate,
+          )),
+        ),
+      ],
+    )
+  }
+
+  let expandedCheckJob(ws: Workspace!, checks: [String!]): CheckJob! {
+    CheckJob(
+      name: "${{ matrix.check }}",
+      runsOn: "ubuntu-latest",
+      strategy: Strategy(
+        failFast: false,
+        matrix: Matrix(
+          check: checks ?? self.checks(ws),
+        ),
+      ),
+      steps: [
+        checkoutStep,
+        daggerStep(
+          "Check",
+          daggerActionInputs("check", checkArgs(
+            ["${{ matrix.check }}"],
+            self.skip,
+            self.noGenerate,
+            self.onlyGenerate,
+          )),
+        ),
+      ],
+    )
+  }
+}
+
+let checkSelectors(
+  ws: Workspace!,
+  include: [String!]! = [],
+  skip: [String!]! = [],
+  noGenerate: Boolean! = false,
+  onlyGenerate: Boolean! = false,
+): [String!]! {
+  let checks = (
+    ws.checks(
+      include: optionalStringList(include),
+      skip: optionalStringList(skip),
+      noGenerate: noGenerate,
+      onlyGenerate: onlyGenerate,
+    ).list
+  ).{{name}}
+
+  checks.map { _.name }
+}
+
+let optionalStringList(values: [String!]!): [String!] {
+  if (values.isEmpty) {
+    return null
+  }
+
+  values
+}
+
+let resolvedChecks(
+  allChecks: [String!]!,
+  included: [String!]!,
+  include: [String!]!,
+  groupLevel: Int,
+): [String!]! {
+  if (groupLevel == null or groupLevel! < 1) {
+    return included
+  }
+
+  included
+    .map { check => checkAtLevel(check, groupLevel!) }
+    .uniq
+    .reduce([]) { result, check =>
+      let includePatterns = includePatternsForPrefix(include, check)
+
+      result += if (!includePatterns.isEmpty) {
+        includePatterns
+      } else if (prefixIncludesUnselectedCheck(allChecks, included, check)) {
+        included.filter { checkMatchesPrefix(_, check) }
+      } else {
+        [check]
+      }
+    }
+    .uniq
+}
+
+let checkAtLevel(check: String!, level: Int!): String! {
+  let segments = check.split(":")
+
+  if (level >= segments.length) {
+    return check
+  }
+
+  segments.takeFirst(level).join(":")
+}
+
+let includePatternsForPrefix(include: [String!]!, prefix: String!): [String!]! {
+  include.filter { pattern => pattern == prefix or pattern.hasPrefix(prefix + ":") }
+}
+
+let prefixIncludesUnselectedCheck(
+  checks: [String!]!,
+  included: [String!]!,
+  prefix: String!,
+): Boolean! {
+  checks.reduce(false) { found, check =>
+    found or (checkMatchesPrefix(check, prefix) and !included.contains(check))
+  }
+}
+
+let checkMatchesPrefix(check: String!, prefix: String!): Boolean! {
+  check == prefix or check.hasPrefix(prefix + ":")
+}
+
+let validateWorkflowOptions(
+  expand: Boolean!,
+  groupLevel: Int,
+  noGenerate: Boolean!,
+  onlyGenerate: Boolean!,
+): Void {
+  validateCheckOptions(noGenerate, onlyGenerate)
+
+  if (!expand and groupLevel != null) {
+    raise "groupLevel can only be used when expand is true"
+  }
+}
+
+let validateCheckOptions(noGenerate: Boolean!, onlyGenerate: Boolean!): Void {
+  if (noGenerate and onlyGenerate) {
+    raise "noGenerate and onlyGenerate cannot both be true"
+  }
+}
+
+let checkArgs(
+  patterns: [String!]!,
+  skip: [String!]!,
+  noGenerate: Boolean!,
+  onlyGenerate: Boolean!,
+): String! {
+  let args = skip.reduce([]) { args, pattern => args + ["--skip", pattern] }
+
+  if (noGenerate) {
+    args += ["--no-generate"]
+  }
+
+  if (onlyGenerate) {
+    args += ["--generate"]
+  }
+
+  (args + patterns).join(" ")
+}
+
+let daggerActionInputs(verb: String!, args: String!): DaggerActionInputs! {
+  DaggerActionInputs(
+    verb: verb,
+    args: if (args == "") { null } else { args },
+    version: daggerActionVersion(Dagger.version),
+    commit: daggerActionCommit(Dagger.version),
+  )
+}
+
+let daggerActionVersion(version: String!): String {
+  if (isDaggerVersionTag(version)) {
+    version
+  } else {
+    null
+  }
+}
+
+let daggerActionCommit(version: String!): String {
+  if (isDaggerVersionTag(version)) {
+    null
+  } else if (version.contains("-dev-")) {
+    let parts = version.split("-dev-")
+
+    parts[parts.length - 1]
+  } else {
+    version
+  }
+}
+
+let isDaggerVersionTag(version: String!): Boolean! {
+  version.hasPrefix("v") and !version.contains("-dev-")
+}
+
+let checkoutStep: Step! {
+  Step(
+    name: "Checkout repository",
+    uses: "actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd", # v6.0.2
+    inputs: null,
+  )
+}
+
+let daggerStep(name: String!, inputs: DaggerActionInputs!): Step! {
+  Step(
+    name: name,
+    uses: "dagger/dagger-for-github@27b130bf0f79a7f6fbbbe0fbca6760dc9bb40a77", # v8.4.1
+    inputs: inputs,
+  )
+}
+
+type Workflow {
+  name: String!
+  triggers: WorkflowTriggers! @YAML.field(name: "on")
+  permissions: Permissions!
+  jobs: WorkflowJobs!
+}
+
+type WorkflowTriggers {
+  push: Push!
+  pullRequest: PullRequest! @YAML.field(name: "pull_request")
+}
+
+type Push {
+  branches: [String!]!
+}
+
+type PullRequest {
+}
+
+type Permissions {
+  contents: String!
+}
+
+type WorkflowJobs {
+  check: CheckJob!
+}
+
+type CheckJob {
+  name: String!
+  runsOn: String! @YAML.field(name: "runs-on")
+  strategy: Strategy @YAML.field(omitEmpty: true)
+  steps: [Step!]!
+}
+
+type Strategy {
+  failFast: Boolean! @YAML.field(name: "fail-fast")
+  matrix: Matrix!
+}
+
+type Matrix {
+  check: [String!]!
+}
+
+type Step {
+  name: String!
+  uses: String!
+  inputs: DaggerActionInputs @YAML.field(name: "with", omitEmpty: true)
+}
+
+type DaggerActionInputs {
+  verb: String!
+  args: String @YAML.field(omitEmpty: true)
+  version: String @YAML.field(name: "version", omitEmpty: true)
+  commit: String @YAML.field(name: "commit", omitEmpty: true)
+}

@@ -1,0 +1,25 @@
+type Alpha {
+  build: Void @check {
+    null
+  }
+
+  test: AlphaTests! {
+    AlphaTests
+  }
+
+  fmt(ws: Workspace!): Changeset! @generate {
+    let source = ws.directory(".")
+
+    source.withNewFile("fmt.txt", "formatted\n").changes(source)
+  }
+}
+
+type AlphaTests {
+  unit: Void @check {
+    null
+  }
+
+  integration: Void @check {
+    null
+  }
+}

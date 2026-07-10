@@ -1,0 +1,395 @@
+type Tests {
+  # Value workspaces (Directory.asWorkspace) cannot enumerate checks, so the
+  # fixture workspace only backs workflow rendering and generate. The check
+  # names below mirror the modules in fixtures/workspace and drive the pure
+  # resolveChecks tests.
+  let ws: Workspace! {
+    Dagger
+      .currentModule
+      .source
+      .directory("fixtures/workspace")
+      .asWorkspace
+  }
+
+  let golden: Directory! {
+    Dagger.currentModule.source.directory("fixtures/golden")
+  }
+
+  let allChecks: [String!]! = [
+    "alpha:build",
+    "alpha:fmt",
+    "alpha:test:integration",
+    "alpha:test:unit",
+    "beta:lint",
+  ]
+
+  defaultWorkflow: Void @check {
+    let contents = Dagger.gha.workflow(ws).contents
+
+    assertGolden(contents, golden.file("default.yaml").contents)
+
+    let wf = decodeWorkflow(contents)
+
+    assert { wf.name == "Dagger" }
+    assert { wf.triggers.push.branches.join(",") == "main" }
+    assert { wf.permissions.contents == "read" }
+    assert { wf.jobs.check.name == "Check" }
+    assert { wf.jobs.check.runsOn == "ubuntu-latest" }
+    assert { wf.jobs.check.strategy == null }
+    assert { wf.jobs.check.steps.length == 2 }
+    assert { wf.jobs.check.steps[0].uses.hasPrefix("actions/checkout@") }
+    assert { wf.jobs.check.steps[1].uses.hasPrefix("dagger/dagger-for-github@") }
+
+    let inputs = wf.jobs.check.steps[1].inputs!
+
+    assert { inputs.verb == "check" }
+    assert { inputs.args == null }
+  }
+
+  expandedWorkflow: Void @check {
+    let contents = Dagger.gha(expand: true).workflow(ws, allChecks).contents
+
+    assertGolden(contents, golden.file("expanded.yaml").contents)
+
+    let wf = decodeWorkflow(contents)
+
+    assert { wf.jobs.check.name == "${{ matrix.check }}" }
+
+    let strategy = wf.jobs.check.strategy!
+
+    assert { strategy.failFast == false }
+    assertList(strategy.matrix.check, allChecks)
+
+    assert { wf.jobs.check.steps[1].inputs!.args == "${{ matrix.check }}" }
+  }
+
+  checkArguments: Void @check {
+    assertEqual(workflowArgs(Dagger.gha(include: ["alpha:**", "beta:lint"]).workflow(ws).contents), "alpha:** beta:lint")
+    assertEqual(workflowArgs(Dagger.gha(skip: ["alpha:fmt"]).workflow(ws).contents), "--skip alpha:fmt")
+    assertEqual(workflowArgs(Dagger.gha(noGenerate: true).workflow(ws).contents), "--no-generate")
+    assertEqual(workflowArgs(Dagger.gha(onlyGenerate: true).workflow(ws).contents), "--generate")
+    assertEqual(
+      workflowArgs(Dagger.gha(include: ["alpha:**"], skip: ["beta:**"], noGenerate: true).workflow(ws).contents),
+      "--skip beta:** --no-generate alpha:**",
+    )
+    # Expanded workflows select checks per matrix entry, but keep the skip
+    # patterns and generate flags on the command line.
+    assertEqual(
+      workflowArgs(Dagger.gha(skip: ["alpha:fmt"], onlyGenerate: true, expand: true).workflow(ws).contents),
+      "--skip alpha:fmt --generate ${{ matrix.check }}",
+    )
+  }
+
+  engineRef: Void @check {
+    let inputs = decodeWorkflow(Dagger.gha.workflow(ws).contents).jobs.check.steps[1].inputs!
+
+    # Exactly one of version and commit is rendered, derived from the engine
+    # version: release tags pin the action version, dev builds pin the commit.
+    if (Dagger.version.hasPrefix("v") and !Dagger.version.contains("-dev-")) {
+      assert { inputs.version == Dagger.version }
+      assert { inputs.commit == null }
+    } else {
+      assert { inputs.version == null }
+      assert { inputs.commit != null }
+
+      if (Dagger.version.contains("-dev-")) {
+        let parts = Dagger.version.split("-dev-")
+
+        assert { inputs.commit == parts[parts.length - 1] }
+      } else {
+        assert { inputs.commit == Dagger.version }
+      }
+    }
+  }
+
+  generateChangeset: Void @check {
+    let changes = Dagger.gha.generate(ws)
+
+    # addedPaths lists the created parent directories too, keep the files only.
+    let addedFiles = changes.addedPaths.filter { path => !path.hasSuffix("/") }
+
+    assertEqual(addedFiles.join(","), ".github/workflows/dagger.yaml")
+    assert { changes.after.file(".github/workflows/dagger.yaml").contents == Dagger.gha.workflow(ws).contents }
+  }
+
+  groupingDisabled: Void @check {
+    # Without a group level the included checks pass through untouched, and
+    # levels below 1 are treated the same as unset.
+    assertList(Dagger.gha.resolveChecks(allChecks, allChecks), allChecks)
+    assertList(Dagger.gha(groupLevel: 0).resolveChecks(allChecks, allChecks), allChecks)
+    assertList(Dagger.gha(groupLevel: -1).resolveChecks(allChecks, allChecks), allChecks)
+
+    # A group level deeper than any check name changes nothing either.
+    assertList(Dagger.gha(groupLevel: 5).resolveChecks(allChecks, allChecks), allChecks)
+  }
+
+  groupingCollapsesFullPrefixes: Void @check {
+    # Fully included prefixes collapse into one selector per group.
+    assertList(
+      Dagger.gha(groupLevel: 1).resolveChecks(allChecks, allChecks),
+      ["alpha", "beta"],
+    )
+    assertList(
+      Dagger.gha(groupLevel: 2).resolveChecks(allChecks, allChecks),
+      ["alpha:build", "alpha:fmt", "alpha:test", "beta:lint"],
+    )
+
+    # Groups keep the order in which their first check appears.
+    assertList(
+      Dagger.gha(groupLevel: 1).resolveChecks(
+        allChecks,
+        ["beta:lint", "alpha:build", "alpha:fmt", "alpha:test:integration", "alpha:test:unit"],
+      ),
+      ["beta", "alpha"],
+    )
+
+    # Checks shorter than the group level stay untouched next to collapsed ones.
+    let mixedDepth = ["alpha:build", "alpha:fmt", "solo"]
+
+    assertList(
+      Dagger.gha(groupLevel: 1).resolveChecks(mixedDepth, mixedDepth),
+      ["alpha", "solo"],
+    )
+
+    # Grouping applies at any depth, not just module level.
+    let deep = ["alpha:test:unit:fast", "alpha:test:unit:slow", "alpha:test:integration:api"]
+
+    assertList(
+      Dagger.gha(groupLevel: 3).resolveChecks(deep, deep),
+      ["alpha:test:unit", "alpha:test:integration"],
+    )
+  }
+
+  groupingKeepsPartialPrefixesExpanded: Void @check {
+    # A partially included prefix cannot collapse: its selector would also run
+    # the excluded checks, so the included ones stay listed individually.
+    let withoutFmt = allChecks.filter { _ != "alpha:fmt" }
+
+    assertList(
+      Dagger.gha(groupLevel: 1).resolveChecks(allChecks, withoutFmt),
+      ["alpha:build", "alpha:test:integration", "alpha:test:unit", "beta"],
+    )
+
+    # The same holds for deeper groups: only the partial prefix stays expanded.
+    let withoutUnit = allChecks.filter { _ != "alpha:test:unit" }
+
+    assertList(
+      Dagger.gha(groupLevel: 2).resolveChecks(allChecks, withoutUnit),
+      ["alpha:build", "alpha:fmt", "alpha:test:integration", "beta:lint"],
+    )
+
+    # Nothing included, nothing resolved.
+    assertList(Dagger.gha(groupLevel: 1).resolveChecks(allChecks, []), [])
+  }
+
+  groupingHonorsIncludePatterns: Void @check {
+    # Include patterns below a grouped prefix survive as-is instead of being
+    # widened to the whole group.
+    assertList(
+      Dagger.gha(include: ["alpha:test:**"], groupLevel: 1).resolveChecks(
+        allChecks,
+        ["alpha:test:integration", "alpha:test:unit"],
+      ),
+      ["alpha:test:**"],
+    )
+
+    # An include pattern equal to the grouped prefix is kept verbatim.
+    assertList(
+      Dagger.gha(include: ["alpha"], groupLevel: 1).resolveChecks(
+        allChecks,
+        ["alpha:build", "alpha:fmt", "alpha:test:integration", "alpha:test:unit"],
+      ),
+      ["alpha"],
+    )
+
+    # So is a glob covering the whole prefix.
+    assertList(
+      Dagger.gha(include: ["alpha:**"], groupLevel: 1).resolveChecks(
+        allChecks,
+        ["alpha:build", "alpha:fmt", "alpha:test:integration", "alpha:test:unit"],
+      ),
+      ["alpha:**"],
+    )
+
+    # Multiple patterns under one prefix are all kept, in include order.
+    assertList(
+      Dagger.gha(include: ["alpha:test:unit", "alpha:build"], groupLevel: 1).resolveChecks(
+        allChecks,
+        ["alpha:build", "alpha:test:unit"],
+      ),
+      ["alpha:test:unit", "alpha:build"],
+    )
+
+    # Prefixes without an include pattern still collapse independently.
+    assertList(
+      Dagger.gha(include: ["alpha:test:**"], groupLevel: 1).resolveChecks(
+        allChecks,
+        ["alpha:test:integration", "alpha:test:unit", "beta:lint"],
+      ),
+      ["alpha:test:**", "beta"],
+    )
+  }
+
+  groupedWorkflow: Void @check {
+    # Composition: grouped selectors flow into the expanded matrix.
+    let grouped = Dagger.gha(expand: true, groupLevel: 1)
+    let contents = grouped.workflow(ws, grouped.resolveChecks(allChecks, allChecks)).contents
+
+    assertList(decodeWorkflow(contents).jobs.check.strategy!.matrix.check, ["alpha", "beta"])
+  }
+
+  emptyWorkspaceChecks: Void @check {
+    # Canary for the engine limitation described on the ws field: discovery
+    # finds no checks on a value workspace, so an expanded workflow without an
+    # explicit check list renders an empty matrix. If this ever fails, the
+    # engine learned to enumerate checks on value workspaces and the expanded
+    # tests can switch to real discovery.
+    assert { Dagger.gha.checks(ws).isEmpty }
+
+    let wf = decodeWorkflow(Dagger.gha(expand: true).workflow(ws).contents)
+
+    assert { wf.jobs.check.strategy!.matrix.check.isEmpty }
+  }
+
+  invalidOptions: Void @check {
+    let bothFlags = try {
+      Dagger.gha(noGenerate: true, onlyGenerate: true).workflow(ws).contents
+
+      false
+    } catch {
+      err => true
+    }
+
+    assert { bothFlags }
+
+    let groupWithoutExpand = try {
+      Dagger.gha(groupLevel: 1).workflow(ws).contents
+
+      false
+    } catch {
+      err => true
+    }
+
+    assert { groupWithoutExpand }
+
+    let checksWithoutExpand = try {
+      Dagger.gha.workflow(ws, allChecks).contents
+
+      false
+    } catch {
+      err => true
+    }
+
+    assert { checksWithoutExpand }
+
+    # groupLevel is valid once expand is set.
+    assert { Dagger.gha(expand: true, groupLevel: 1).workflow(ws).contents != "" }
+  }
+
+  # Temporary helpers to (re)generate the golden files:
+  #   dagger -m gha/tests call golden-default export --path gha/tests/fixtures/golden/default.yaml
+  goldenDefault: File! {
+    Dagger.file("default.yaml", stripEngineRef(Dagger.gha.workflow(ws).contents))
+  }
+
+  goldenExpanded: File! {
+    Dagger.file("expanded.yaml", stripEngineRef(Dagger.gha(expand: true).workflow(ws, allChecks).contents))
+  }
+}
+
+let workflowArgs(contents: String!): String! {
+  decodeWorkflow(contents).jobs.check.steps[1].inputs!.args ?? ""
+}
+
+let decodeWorkflow(contents: String!): TestWorkflow! {
+  YAML.decode(contents) :: TestWorkflow!
+}
+
+"""
+Drop the engine-version-derived action pin so golden files stay stable across
+engine builds: release engines render a version line, dev engines a commit
+line, and the two sort differently in the encoded output.
+"""
+let stripEngineRef(contents: String!): String! {
+  contents
+    .split("\n")
+    .filter { line => !line.contains("version: ") and !line.contains("commit: ") }
+    .join("\n")
+}
+
+let assertGolden(actual: String!, expected: String!): Void {
+  let normalized = stripEngineRef(actual)
+
+  if (normalized != expected) {
+    raise "generated workflow does not match golden file\n--- expected ---\n" + expected + "\n--- actual (engine ref stripped) ---\n" + normalized
+  }
+}
+
+let assertEqual(actual: String!, expected: String!): Void {
+  if (actual != expected) {
+    raise "expected \"" + expected + "\", got \"" + actual + "\""
+  }
+}
+
+let assertList(actual: [String!]!, expected: [String!]!): Void {
+  assertEqual(actual.join(", "), expected.join(", "))
+}
+
+# Mirrors of the workflow document shape rendered by the gha module. Kept
+# independent from the module's own types on purpose: decoding through these
+# asserts the on-disk YAML field names, not just that encoding round-trips.
+type TestWorkflow {
+  name: String!
+  triggers: TestTriggers! @YAML.field(name: "on")
+  permissions: TestPermissions!
+  jobs: TestJobs!
+}
+
+type TestTriggers {
+  push: TestPush!
+  pullRequest: TestPullRequest! @YAML.field(name: "pull_request")
+}
+
+type TestPush {
+  branches: [String!]!
+}
+
+type TestPullRequest {
+}
+
+type TestPermissions {
+  contents: String!
+}
+
+type TestJobs {
+  check: TestJob!
+}
+
+type TestJob {
+  name: String!
+  runsOn: String! @YAML.field(name: "runs-on")
+  strategy: TestStrategy
+  steps: [TestStep!]!
+}
+
+type TestStrategy {
+  failFast: Boolean! @YAML.field(name: "fail-fast")
+  matrix: TestMatrix!
+}
+
+type TestMatrix {
+  check: [String!]!
+}
+
+type TestStep {
+  name: String!
+  uses: String!
+  inputs: TestStepInputs @YAML.field(name: "with")
+}
+
+type TestStepInputs {
+  verb: String!
+  args: String
+  version: String
+  commit: String
+}

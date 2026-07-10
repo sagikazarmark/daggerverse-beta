@@ -142,7 +142,10 @@ type DaggerGha {
   of discovering checks from the workspace.
   """
   workflow(ws: Workspace!, checks: [String!] = null): File! {
-    self.workflowConfig(ws, checks).file(workflowFileName(self.workspaceDir(ws)))
+    self.workflowConfig(ws, checks).file(
+      workflowFileName(self.workspaceDir(ws)),
+      generated: true,
+    )
   }
 
   """

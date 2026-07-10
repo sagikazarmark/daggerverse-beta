@@ -52,7 +52,7 @@ type DaggerGha {
     """
     Workspace directory relative to the workspace root (the repository root
     for git workspaces). Drives the workflow file name, the workflow display
-    name, and the -W flag of the generated check command, so multiple
+    name, and the workdir of the generated check step, so multiple
     workspaces in one repository produce distinct workflows.
 
     Defaults to the directory of the selected workspace config file: empty
@@ -197,24 +197,22 @@ type DaggerGha {
 
   let normalCheckJob(workspaceDir: String!): GhaJob! {
     self.checkJob("Check", checkArgs(
-      workspaceDir,
       self.env,
       self.include,
       self.skip,
       self.noGenerate,
       self.onlyGenerate,
-    ))
+    ), workspaceDir)
   }
 
   let expandedCheckJob(ws: Workspace!, checks: [String!], workspaceDir: String!): GhaJob! {
     self.checkJob("${{ matrix.check }}", checkArgs(
-      workspaceDir,
       self.env,
       ["${{ matrix.check }}"],
       self.skip,
       self.noGenerate,
       self.onlyGenerate,
-    ))
+    ), workspaceDir)
       .withMatrix("check", checks ?? self.checks(ws))
       .withFailFast(false)
       .{
@@ -226,20 +224,25 @@ type DaggerGha {
       }
   }
 
-  let checkJob(name: String!, args: String!): GhaJob! {
+  let checkJob(name: String!, args: String!, workdir: String!): GhaJob! {
     Dagger.gha.job
       .withName(name)
       .withStep(
         Dagger.gha.step("Checkout repository")
           .withUses("actions/checkout@" + actionRef("actions/checkout", self.pin)),
       )
-      .withStep(self.daggerStep("Check", "check", args))
+      .withStep(self.daggerStep("Check", "check", args, workdir))
   }
 
-  let daggerStep(name: String!, verb: String!, args: String!): GhaStep! {
+  let daggerStep(name: String!, verb: String!, args: String!, workdir: String!): GhaStep! {
     Dagger.gha.step(name)
       .withUses("dagger/dagger-for-github@" + actionRef("dagger/dagger-for-github", self.pin))
       .withInput("verb", verb)
+      .{
+        if (workdir != "") {
+          _.withInput("workdir", workdir)
+        } else _
+      }
       .{
         if (args != "") {
           _.withInput("args", args)
@@ -428,7 +431,6 @@ let validateCheckOptions(noGenerate: Boolean!, onlyGenerate: Boolean!): Void {
 }
 
 let checkArgs(
-  workspaceDir: String!,
   env: String,
   patterns: [String!]!,
   skip: [String!]!,
@@ -447,10 +449,6 @@ let checkArgs(
 
   if (env != null) {
     args = ["--env", env!] + args
-  }
-
-  if (workspaceDir != "") {
-    args = ["-W", workspaceDir] + args
   }
 
   (args + patterns).join(" ")

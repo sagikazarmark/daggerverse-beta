@@ -6,6 +6,7 @@ type Fix {
       .container(ws)
       .withExec(args)
       .directory("/work/src")
+      .filter(gitignore: true)
       .changes(parent.buildEnv.source(ws))
   }
 

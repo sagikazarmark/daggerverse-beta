@@ -117,7 +117,7 @@ type NodeEnvironment {
 
     container
       .{
-        if (_.envVariable("NPM_CONFIG_CACHE") == null) {
+        if (_.envVariable("NPM_CONFIG_CACHE") == null or _.envVariable("NPM_CONFIG_CACHE") == "") {
           _.withEnvVariable("NPM_CONFIG_CACHE", "/root/.npm")
         } else _
       }

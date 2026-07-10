@@ -22,6 +22,21 @@ type Tests {
     assert { container.withExec(["bun", "--version"]).stdout.trimSpace == bunVersion }
   }
 
+  emptyCacheDir: Void @check {
+    let container = Dagger
+      .bunEnvironment(
+        version: bunVersion,
+        container: Dagger
+          .container
+          .from("oven/bun:" + bunVersion)
+          .withEnvVariable("BUN_INSTALL_CACHE_DIR", ""),
+      )
+      .container(ws: null)
+
+    assert { container.envVariable("BUN_INSTALL_CACHE_DIR") == "/root/.bun/install/cache" }
+    assert { container.mounts.contains("/root/.bun/install/cache") or container.mounts.contains("/root/.bun/install/cache/") }
+  }
+
   noCache: Void @check {
     let container = Dagger
       .bunEnvironment(version: bunVersion, noCache: true)

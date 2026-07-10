@@ -117,7 +117,7 @@ type BunEnvironment {
 
     container
       .{
-        if (_.envVariable("BUN_INSTALL_CACHE_DIR") == null) {
+        if (_.envVariable("BUN_INSTALL_CACHE_DIR") == null or _.envVariable("BUN_INSTALL_CACHE_DIR") == "") {
           _.withEnvVariable("BUN_INSTALL_CACHE_DIR", "/root/.bun/install/cache")
         } else _
       }

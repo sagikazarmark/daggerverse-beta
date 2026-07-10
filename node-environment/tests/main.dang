@@ -22,6 +22,21 @@ type Tests {
     assert { container.withExec(["node", "--version"]).stdout.contains("v22.") }
   }
 
+  emptyCacheDir: Void @check {
+    let container = Dagger
+      .nodeEnvironment(
+        version: nodeVersion,
+        container: Dagger
+          .container
+          .from("node:" + nodeVersion)
+          .withEnvVariable("NPM_CONFIG_CACHE", ""),
+      )
+      .container(ws: null)
+
+    assert { container.envVariable("NPM_CONFIG_CACHE") == "/root/.npm" }
+    assert { container.mounts.contains("/root/.npm") or container.mounts.contains("/root/.npm/") }
+  }
+
   noCache: Void @check {
     let container = Dagger
       .nodeEnvironment(version: nodeVersion, noCache: true)

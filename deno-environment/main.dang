@@ -116,7 +116,7 @@ type DenoEnvironment {
 
     container
       .{
-        if (_.envVariable("DENO_DIR") == null) {
+        if (_.envVariable("DENO_DIR") == null or _.envVariable("DENO_DIR") == "") {
           _.withEnvVariable("DENO_DIR", "/usr/local/cache/deno")
         } else _
       }

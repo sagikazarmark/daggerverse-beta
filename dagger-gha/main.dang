@@ -5,6 +5,7 @@ type DaggerGha {
   let onlyGenerate: Boolean!
   let expand: Boolean!
   let groupLevel: Int
+  let workspace: String
 
   new(
     """
@@ -35,6 +36,16 @@ type DaggerGha {
     Number of check path segments to group by in each expanded matrix entry.
     """
     groupLevel: Int,
+    """
+    Workspace directory relative to the workspace root (the repository root
+    for git workspaces). Drives the workflow file name, the workflow display
+    name, and the -W flag of the generated check command, so multiple
+    workspaces in one repository produce distinct workflows.
+
+    Defaults to the directory of the selected workspace config file: empty
+    for the root workspace, "helm" for a workspace at helm/dagger.toml.
+    """
+    workspace: String = null,
   ) {
     if (noGenerate and onlyGenerate) {
       raise "noGenerate and onlyGenerate cannot both be true"
@@ -46,6 +57,7 @@ type DaggerGha {
     self.onlyGenerate = onlyGenerate
     self.expand = expand
     self.groupLevel = groupLevel
+    self.workspace = workspace
 
     self
   }
@@ -74,26 +86,42 @@ type DaggerGha {
   """
   Render the Dagger GitHub Actions workflow.
 
+  The file name is derived from the workspace directory (dagger.yaml for the
+  root workspace, dagger-<dir>.yaml for nested ones) so workspaces sharing a
+  repository do not collide.
+
   When checks is provided, it is used verbatim as the expanded matrix instead
   of discovering checks from the workspace.
   """
   workflow(ws: Workspace!, checks: [String!] = null): File! {
-    self.workflowConfig(ws, checks).file("dagger.yaml")
+    self.workflowConfig(ws, checks).file(workflowFileName(self.workspaceDir(ws)))
   }
 
   """
-  Write the generated Dagger GitHub Actions workflow.
+  Write the generated Dagger GitHub Actions workflow to the .github/workflows
+  directory at the workspace root (the repository root), where GitHub picks
+  it up even when the generating workspace is nested.
 
   When checks is provided, it is used verbatim as the expanded matrix instead
   of discovering checks from the workspace.
   """
   generate(ws: Workspace!, checks: [String!] = null): Changeset! {
-    let source = ws.directory(".")
+    let source = ws.directory("/", gitignore: true)
+    let workflowFile = self.workflow(ws, checks)
 
     source.withFile(
-      ".github/workflows/dagger.yaml",
-      self.workflow(ws, checks),
+      ".github/workflows/" + workflowFile.name,
+      workflowFile,
     ).changes(source)
+  }
+
+  """
+  Workspace directory relative to the workspace root: the workspace
+  constructor argument when set, otherwise derived from the selected
+  workspace config file. Empty for the root workspace.
+  """
+  let workspaceDir(ws: Workspace!): String! {
+    self.workspace ?? configDir(ws.configFile)
   }
 
   let workflowConfig(ws: Workspace!, checks: [String!]): GhaWorkflow! {
@@ -103,22 +131,25 @@ type DaggerGha {
       raise "checks can only be provided when expand is true"
     }
 
-    Dagger.gha.workflow("Dagger")
+    let workspaceDir = self.workspaceDir(ws)
+
+    Dagger.gha.workflow(workflowTitle(workspaceDir))
       .onPush(branches: ["main"])
       .onPullRequest
       .withPermission("contents")
       .withJob(
         "check",
         if (expand) {
-          self.expandedCheckJob(ws, checks)
+          self.expandedCheckJob(ws, checks, workspaceDir)
         } else {
-          self.normalCheckJob
+          self.normalCheckJob(workspaceDir)
         },
       )
   }
 
-  let normalCheckJob: GhaJob! {
+  let normalCheckJob(workspaceDir: String!): GhaJob! {
     checkJob("Check", checkArgs(
+      workspaceDir,
       self.include,
       self.skip,
       self.noGenerate,
@@ -126,8 +157,9 @@ type DaggerGha {
     ))
   }
 
-  let expandedCheckJob(ws: Workspace!, checks: [String!]): GhaJob! {
+  let expandedCheckJob(ws: Workspace!, checks: [String!], workspaceDir: String!): GhaJob! {
     checkJob("${{ matrix.check }}", checkArgs(
+      workspaceDir,
       ["${{ matrix.check }}"],
       self.skip,
       self.noGenerate,
@@ -136,6 +168,37 @@ type DaggerGha {
       .withMatrix("check", checks ?? self.checks(ws))
       .withFailFast(false)
   }
+}
+
+"""
+Directory of the selected workspace config file relative to the workspace
+root: "" for the root workspace (or when no config is selected, e.g. value
+workspaces), "helm" for a workspace at helm/dagger.toml.
+"""
+let configDir(configFile: String!): String! {
+  let segments = configFile.split("/")
+
+  if (segments.length < 2) {
+    return ""
+  }
+
+  segments.takeFirst(segments.length - 1).join("/")
+}
+
+let workflowFileName(workspaceDir: String!): String! {
+  if (workspaceDir == "") {
+    return "dagger.yaml"
+  }
+
+  "dagger-" + workspaceDir.split("/").join("-") + ".yaml"
+}
+
+let workflowTitle(workspaceDir: String!): String! {
+  if (workspaceDir == "") {
+    return "Dagger"
+  }
+
+  "Dagger (" + workspaceDir + ")"
 }
 
 let checkSelectors(
@@ -240,6 +303,7 @@ let validateCheckOptions(noGenerate: Boolean!, onlyGenerate: Boolean!): Void {
 }
 
 let checkArgs(
+  workspaceDir: String!,
   patterns: [String!]!,
   skip: [String!]!,
   noGenerate: Boolean!,
@@ -253,6 +317,10 @@ let checkArgs(
 
   if (onlyGenerate) {
     args += ["--generate"]
+  }
+
+  if (workspaceDir != "") {
+    args = ["-W", workspaceDir] + args
   }
 
   (args + patterns).join(" ")

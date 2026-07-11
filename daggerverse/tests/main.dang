@@ -53,6 +53,7 @@ type Tests {
 
     assert { inputs.verb == "check" }
     assert { inputs.module == "${{ matrix.module }}/tests" }
+    assert { inputs.args == null }
   }
 
   excludedWorkflow: Void @check {
@@ -164,6 +165,21 @@ type Tests {
     }
 
     assert { failed }
+  }
+
+  lock: Void @check {
+    # The lock mode renders as a lowercase --lock argument in both workflows.
+    let locked = Dagger.daggerverse(lock: DaggerverseLockMode.FROZEN)
+
+    assert { stepInputs(locked.workflow(ws).contents).args == "--lock frozen" }
+
+    let dispatch = decodeDispatchWorkflow(locked.dispatchWorkflow(ws).contents).jobs.check.steps[1].inputs!
+
+    assert { dispatch.args == "--lock frozen" }
+
+    assert { stepInputs(Dagger.daggerverse(lock: DaggerverseLockMode.LIVE).workflow(ws).contents).args == "--lock live" }
+    assert { stepInputs(Dagger.daggerverse(lock: DaggerverseLockMode.PINNED).workflow(ws).contents).args == "--lock pinned" }
+    assert { stepInputs(Dagger.daggerverse(lock: DaggerverseLockMode.DISABLED).workflow(ws).contents).args == "--lock disabled" }
   }
 
   concurrency: Void @check {
@@ -396,6 +412,7 @@ type TestStep {
 type TestStepInputs {
   verb: String!
   module: String!
+  args: String
   version: String
   commit: String
 }

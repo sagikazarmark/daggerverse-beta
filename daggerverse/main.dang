@@ -6,10 +6,21 @@ enum ActionPin {
   COMMIT
 }
 
+"""
+Lock lookup mode passed to the dagger command.
+"""
+enum LockMode {
+  DISABLED
+  LIVE
+  PINNED
+  FROZEN
+}
+
 type Daggerverse {
   let exclude: [String!]!
   let prefix: String!
   let workflowName: String!
+  let lock: LockMode
   let daggerVersion: String
   let daggerCommit: String
   let pin: ActionPin!
@@ -28,6 +39,11 @@ type Daggerverse {
     Name of the generated workflow.
     """
     workflowName: String! = "Daggerverse",
+    """
+    Lock lookup mode, passed to the generated check command as --lock. The
+    dagger default (disabled) applies when omitted.
+    """
+    lock: LockMode,
     """
     Dagger version to use in the workflow. Detected from the workspace when omitted.
     """
@@ -58,6 +74,7 @@ type Daggerverse {
     self.exclude = exclude
     self.prefix = prefix
     self.workflowName = workflowName
+    self.lock = lock
     self.daggerVersion = daggerVersion
     self.daggerCommit = daggerCommit
     self.pin = pin
@@ -193,6 +210,13 @@ type Daggerverse {
           .withUses("dagger/dagger-for-github@" + actionRef("dagger/dagger-for-github", self.pin))
           .withInput("verb", "check")
           .withInput("module", module)
+          .{
+            let lock = self.lock
+
+            if (lock != null) {
+              _.withInput("args", "--lock " + toString(lock!).toLower)
+            } else _
+          }
           .{
             let version = self.actionVersion
 

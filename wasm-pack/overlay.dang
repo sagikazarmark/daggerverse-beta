@@ -42,14 +42,7 @@ let browserPackages(browsers: [Browser!]!): DistroPackages! {
     case (browser) {
       Browser.CHROME => {
         apk += ["chromium", "chromium-chromedriver"]
-        # Pin to the trixie/main chromium: the trixie-security update to
-        # 150.0.7871.46 deterministically SIGTRAPs headless on arm64. 147 works.
-        # chromium-common must be pinned too (chromium depends on the exact ver).
-        apt += [
-          "chromium=147.0.7727.137-1~deb13u1",
-          "chromium-common=147.0.7727.137-1~deb13u1",
-          "chromium-driver=147.0.7727.137-1~deb13u1",
-        ]
+        apt += ["chromium", "chromium-common", "chromium-driver"]
       }
 
       Browser.FIREFOX => {

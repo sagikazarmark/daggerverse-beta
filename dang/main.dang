@@ -106,7 +106,7 @@ type Dang {
     if (paths.isEmpty) {
       paths = source
         .glob("**/*.dang")
-        .map { _.split("/").dropLast.join("/") }
+        .map { _.split("/").dropLast.join("/").{ if (_ == "") "." else _ } } # TODO: once Path module lands, use that
         .uniq
     }
 

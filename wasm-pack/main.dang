@@ -198,7 +198,7 @@ type WasmPack {
     _args += ["."]
 
     if (!args.isEmpty) {
-      _args += ["--"] + args
+      _args += args
     }
 
     self.container(ws).withExec(_args, experimentalPrivilegedNesting: true)

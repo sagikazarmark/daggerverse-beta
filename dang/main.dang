@@ -6,6 +6,8 @@ type Dang {
   """
   container: Container!
 
+  let source: Directory!
+
   new(
     """
     Exclude paths from formatting.
@@ -30,6 +32,7 @@ type Dang {
       build(source, alpine.platform),
       permissions: 755,
     )
+    self.source = source
 
     self
   }
@@ -93,6 +96,18 @@ type Dang {
       .withExec(["dang", "fmt", "-w"] + paths)
       .directory("/work")
       .changes(source)
+  }
+
+  """
+  Format dang files.
+  """
+  binary(
+    """
+    Platform to use for building the binary.
+    """
+    platform: Platform! = Dagger.defaultPlatform,
+  ): File! {
+    build(self.source, platform)
   }
 }
 

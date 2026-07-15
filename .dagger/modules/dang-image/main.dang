@@ -18,7 +18,7 @@ type DangImage {
             .container(platform: _ :: Platform)
             .withFile(
               "/usr/local/bin/dang",
-              Dagger.dang.binary(_),
+              Dagger.dang(installType: DangInstallType.FROM_SOURCE).binary(_),
               permissions: 755,
             )
         },

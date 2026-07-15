@@ -1,3 +1,8 @@
+enum InstallType {
+  FROM_SOURCE
+  FROM_DIST
+}
+
 type Dang {
   let exclude: [String!]!
 
@@ -6,7 +11,7 @@ type Dang {
   """
   container: Container!
 
-  let source: Directory!
+  let source: Directory
 
   new(
     """
@@ -14,24 +19,40 @@ type Dang {
     """
     exclude: [String!]! = [],
     """
+    Install type.
+    """
+    installType: InstallType! = InstallType.FROM_DIST,
+    """
     Dang version.
     """
-    version: String,
+    version: String! = if (installType == InstallType.FROM_DIST) "latest" else "HEAD",
     """
-    Dang ref to build.
+    Custom container to use as the default container.
     """
-    ref: String! = "HEAD",
+    container: Container = if (installType == InstallType.FROM_DIST) Dagger.container.from("ghcr.io/sagikazarmark/dang:" + version),
     """
-    Dang source.
+    Dang source (when installing from source).
     """
-    source: Directory! = Dagger.git("https://github.com/vito/dang.git").ref(ref).tree(depth: 1),
+    source: Directory = if (installType == InstallType.FROM_SOURCE) Dagger.git("https://github.com/vito/dang.git").ref(version).tree(depth: 1),
   ) {
+    if (installType == InstallType.FROM_SOURCE) {
+      if (source == null) {
+        raise "source is required when installing from source"
+      }
+
+      container = alpine.withFile(
+        "/usr/local/bin/dang",
+        build(source, alpine.platform),
+        permissions: 755,
+      )
+    }
+
+    if (container == null) {
+      raise "container is required when installing from dist"
+    }
+
     self.exclude = exclude
-    self.container = alpine.withFile(
-      "/usr/local/bin/dang",
-      build(source, alpine.platform),
-      permissions: 755,
-    )
+    self.container = container
     self.source = source
 
     self
@@ -107,7 +128,12 @@ type Dang {
     """
     platform: Platform! = Dagger.defaultPlatform,
   ): File! {
-    build(self.source, platform)
+    let source = self.source
+    if (source == null) {
+      raise "source is required for building a binary"
+    }
+
+    build(source, platform)
   }
 }
 

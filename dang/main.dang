@@ -1,0 +1,120 @@
+type Dang {
+  let exclude: [String!]!
+
+  """
+  A container with the dang binary.
+  """
+  container: Container!
+
+  new(
+    """
+    Exclude paths from formatting.
+    """
+    exclude: [String!]! = [],
+    """
+    Dang version.
+    """
+    version: String,
+    """
+    Dang ref to build.
+    """
+    ref: String! = "HEAD",
+    """
+    Dang source.
+    """
+    source: Directory! = Dagger.git("https://github.com/vito/dang.git").ref(ref).tree(depth: 1),
+  ) {
+    self.exclude = exclude
+    self.container = alpine.withFile(
+      "/usr/local/bin/dang",
+      build(source, alpine.platform),
+      permissions: 755,
+    )
+
+    self
+  }
+
+  """
+  Run a Dang script or module.
+  """
+  run(
+    ws: Workspace!,
+    """
+    Source directory to evaluate.
+    """
+    source: Directory! = ws.directory(
+      "",
+      gitignore: true,
+      include: ["**/*.dang", "**/dang.toml"],
+      exclude: self.exclude,
+    ),
+    """
+    Paths to evaluate within the source directory.
+    """
+    path: String,
+  ): Container {
+    let args = ["dang"] + [if (path == null) "." else path]
+
+    self
+      .container
+      .withWorkdir("/work")
+      .withMountedDirectory(".", source)
+      .withExec(args)
+  }
+
+  """
+  Format dang files.
+  """
+  fmt(
+    ws: Workspace!,
+    """
+    Paths to format (default: all dang files in the workspace).
+    """
+    paths: [String!]! = [],
+  ): Changeset! @generate {
+    let source = ws.directory(
+      "/",
+      gitignore: true,
+      include: ["**/*.dang", "**/dang.toml"],
+      exclude: self.exclude,
+    )
+
+    if (paths.isEmpty) {
+      paths = source
+        .glob("**/*.dang")
+        .map { _.split("/").dropLast.join("/") }
+        .uniq
+    }
+
+    self
+      .container
+      .withWorkdir("/work")
+      .withMountedDirectory(".", source)
+      .withExec(["dang", "fmt", "-w"] + paths)
+      .directory("/work")
+      .changes(source)
+  }
+}
+
+"""
+Builds the dang binary for the given platform.
+"""
+let build(source: Directory!, platform: Platform!): File! {
+  Dagger
+    .container
+    .from("golang:1.26.4-trixie@sha256:bbf22ddccb3205344f2755ea8fa4fe39f7a8b2b77b9f7b764ec2aad31406f6fc")
+    .withMountedCache("/go/pkg/mod", Dagger.cacheVolume("dang-dang-go-mod"))
+    .withMountedCache("/root/.cache/go-build", Dagger.cacheVolume("dang-dang-go-build"))
+    .{
+      let segments = toString(platform).trim("\"").split("/", 3)
+      let os = segments[0]
+      let arch = segments[1]
+
+      _.withEnvVariable("GOOS", os!).withEnvVariable("GOARCH", arch!)
+    }
+    .withEnvVariable("CGO_ENABLED", "0")
+    .withWorkdir("/usr/local/src/dang")
+    .withMountedDirectory(".", source)
+    .withExec(["go", "build", "./cmd/dang"])
+    .file("dang")
+}

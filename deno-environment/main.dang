@@ -141,13 +141,13 @@ type DenoEnvironment {
         "deno.lock",
         "import_map.json",
         "import-map.json",
-      ].map { Path.clean(Path.join([root, _])).trimPrefix("/") },
+      ].map { Path(root).join(Path(_)).string.trimPrefix("/") },
       gitignore: true,
     )
 
     container
       .withMountedDirectory("/work/src", source)
-      .withWorkdir(Path.join(["/work/src", root]))
+      .withWorkdir(Path("/work/src").join(Path(root)).string)
       .{
         let args = ["deno", "install"]
         if (self.locked) {
@@ -165,7 +165,7 @@ type DenoEnvironment {
     ].each { name =>
       let file = workspace.findUp(name)
       if (file != null) {
-        return Path.dir(file)
+        return Path(file).parent.string
       }
     }
 

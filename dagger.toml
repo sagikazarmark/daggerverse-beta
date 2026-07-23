@@ -14,9 +14,12 @@ check.skip = ["generate-all"]
 source = "daggerverse"
 
 [modules.daggerverse.settings]
-daggerCommit = "86d1d2f5791bcf3213d56903cfa81a3ba0abe54a"
+# daggerCommit = "86d1d2f5791bcf3213d56903cfa81a3ba0abe54a"
 concurrency = 5
 exclude = "crates,distro,php-ext-rs"
+
+# [modules.dang]
+# source = "dang"
 
 [modules.dangpkg]
 source = "github.com/sagikazarmark/dangpkg"

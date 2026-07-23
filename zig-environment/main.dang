@@ -48,7 +48,7 @@ type ZigEnvironment {
       key: ZIG_MINISIGN_PUBLIC_KEY,
     )
 
-    Archive.extract(archive, stripComponents: 1)
+    extract(archive, stripComponents: 1)
   }
 
   """

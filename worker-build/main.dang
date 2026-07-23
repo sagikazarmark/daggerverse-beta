@@ -233,7 +233,7 @@ type WorkerBuild {
     }
 
     buildArgs += ["--out-dir", "/work/out"]
-    buildArgs += [Path.join(["/work/src", ws.cwd])]
+    buildArgs += [Path("/work/src").join(Path(ws.cwd)).string]
     buildArgs += args
 
     self

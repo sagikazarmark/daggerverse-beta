@@ -190,7 +190,7 @@ type BuildEnvironment {
 
     container
       .withMountedDirectory(self.mountPath, source)
-      .withWorkdir(Path.join([self.mountPath, cwd]))
+      .withWorkdir(Path(self.mountPath).join(Path(cwd)).string)
   }
 }
 

@@ -107,7 +107,7 @@ let installEsbuild(version: String, container: Container!): Container! {
     name: `esbuild-${version}.tgz`,
   )
 
-  let binary = Archive.extract(tarball, 2).file("esbuild")
+  let binary = extract(tarball, 2).file("esbuild")
 
   container.withFile("/usr/local/bin/esbuild", binary)
 }

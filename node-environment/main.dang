@@ -145,12 +145,12 @@ type NodeEnvironment {
         "package-lock.json",
         "npm-shrinkwrap.json",
         ".npmrc",
-      ].map { Path.clean(Path.join([root, _])).trimPrefix("/") },
+      ].map { Path(root).join(Path(_)).string.trimPrefix("/") },
     )
 
     let installed = installContainer
       .withMountedDirectory("/work/src", source)
-      .withWorkdir(Path.join(["/work/src", root]))
+      .withWorkdir(Path("/work/src").join(Path(root)).string)
       .{
         if (self.locked) {
           _.withExec(["npm", "ci"])
@@ -166,7 +166,7 @@ type NodeEnvironment {
     let dependencies = installed.directory("node_modules")
 
     container.withMountedDirectory(
-      Path.join(["/work/src", root, "node_modules"]),
+      Path("/work/src").join(Path(root)).join("node_modules").string,
       dependencies,
     )
   }
@@ -179,7 +179,7 @@ type NodeEnvironment {
     ].each { name =>
       let file = workspace.findUp(name)
       if (file != null) {
-        return Path.dir(file)
+        return Path(file).parent.string
       }
     }
 

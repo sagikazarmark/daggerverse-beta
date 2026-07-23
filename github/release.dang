@@ -20,10 +20,8 @@ type Releases {
   Get the latest, non-draft, non-prerelease release.
   """
   latest: Release! {
-    try {
-      JSON.decode(self.client.get("/latest"))
-    } catch {
-      err => if (err.message.contains("404 Not Found")) {
+    JSON.decode(self.client.get("/latest")) rescue {
+      err: Error => if (err.message.contains("404 Not Found")) {
         self.ensureRepositoryExists
 
         raise `repository "${self.repository}" has no stable releases yet`
@@ -42,10 +40,8 @@ type Releases {
     """
     version: String!,
   ): Release! {
-    try {
-      JSON.decode(self.client.get(`/tags/${version}`))
-    } catch {
-      err => if (err.message.contains("404 Not Found")) {
+    JSON.decode(self.client.get(`/tags/${version}`)) rescue {
+      err: Error => if (err.message.contains("404 Not Found")) {
         self.ensureRepositoryExists
 
         raise ReleaseNotFound(self.repository, version)
@@ -56,11 +52,11 @@ type Releases {
   }
 
   let ensureRepositoryExists: Void {
-    try {
+    {
       self.api.get(`/repos/${self.repository}`)
       null
-    } catch {
-      err => if (err.message.contains("404 Not Found")) {
+    } rescue {
+      err: Error => if (err.message.contains("404 Not Found")) {
         raise RepositoryNotFound(self.repository)
       } else {
         raise err
@@ -159,6 +155,6 @@ type ReleaseAsset {
     """
     stripComponents: Int = if (stripParent) { 1 } else { null },
   ): Directory! {
-    Archive.extract(self.file, stripComponents)
+    extract(self.file, stripComponents)
   }
 }

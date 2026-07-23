@@ -1,6 +1,8 @@
 type Rust {
   let env: RustEnvironment!
   let buildEnv: BuildEnvironment!
+  let cargoFuzzVersion: String!
+  let noCache: Boolean!
 
   new(
     """
@@ -31,6 +33,10 @@ type Rust {
     Additional components to install.
     """
     components: [String!]! = [],
+    """
+    Version of cargo-fuzz to use.
+    """
+    cargoFuzzVersion: String! = "0.13.2",
     """
     Overlay to apply to the base container.
     """
@@ -101,6 +107,9 @@ type Rust {
       envFile: envFile,
       sourceDateEpoch: sourceDateEpoch,
     )
+
+    self.cargoFuzzVersion = cargoFuzzVersion.trimPrefix("v")
+    self.noCache = noCache
 
     self
   }
@@ -203,6 +212,73 @@ type Rust {
       .withExec(["cargo", "fetch", "--locked"]) # This is necessary, because --no-fetch also skips fetching cargo index
       .withExec(args)
       .stdout
+  }
+
+  """
+  Run a cargo-fuzz target.
+
+  cargo-fuzz requires a nightly Rust toolchain. On Alpine, pass
+  `--sanitizer=none` in options because Rust's musl target is statically linked.
+  By default the fuzzer runs until it finds a failure; pass
+  `-max_total_time=<seconds>` or `-runs=<count>` in args to bound execution.
+  """
+  fuzz(
+    ws: Workspace!,
+    """
+    Name of the fuzz target.
+    """
+    target: String!,
+    """
+    Options passed to cargo-fuzz before the target name.
+    """
+    options: [String!]! = [],
+    """
+    Custom corpus directories or artifact files.
+    """
+    corpus: [String!]! = [],
+    """
+    Arguments passed to libFuzzer.
+    """
+    args: [String!]! = [],
+  ): String! @check {
+    let command = ["cargo", "fuzz", "run"] + options + [target] + corpus
+
+    if (!args.isEmpty) {
+      command += ["--"] + args
+    }
+
+    self.fuzzContainer(ws).withExec(command).combinedOutput
+  }
+
+  let fuzzContainer(ws: Workspace!): Container! {
+    let workdir = "/work/src" + ws.cwd
+
+    self
+      .container(ws)
+      .{ self.withCxxCompiler(_) }
+      .withWorkdir("/")
+      .withExec([
+        "cargo", "install", "cargo-fuzz",
+        "--version", self.cargoFuzzVersion,
+        "--locked",
+      ])
+      .withWorkdir(workdir)
+  }
+
+  let withCxxCompiler(container: Container!): Container! {
+    if (container.exists("/usr/bin/c++")
+      or container.exists("/usr/local/bin/c++")) {
+      return container
+    }
+
+    if (Dagger.distro.kind(container) == DistroKind.UNKNOWN) {
+      return container
+    }
+
+    Dagger
+      .distro
+      .packages(apk: ["g++"], apt: ["g++"], cache: !self.noCache)
+      .install(container)
   }
 
   """

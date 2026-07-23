@@ -16,5 +16,9 @@ name = "build-environment"
 source = "../build-environment"
 
 [[dependencies]]
+name = "distro"
+source = "../distro"
+
+[[dependencies]]
 name = "overlays"
 source = "../overlays"

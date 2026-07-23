@@ -1,0 +1,8 @@
+[package]
+name = "fuzz-project"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+members = ["fuzz"]
+resolver = "3"

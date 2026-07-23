@@ -7,6 +7,10 @@ let realProject: Directory! {
     .tree
 }
 
+let fuzzProject: Directory! {
+  Dagger.currentModule.source.directory("fixtures/fuzz-project")
+}
+
 type Tests {
   envFile: Void @check {
     let output = Dagger
@@ -32,5 +36,17 @@ type Tests {
 
   clippy: String! @check {
     Dagger.rust(version: rustVersion).clippy(ws: realProject.asWorkspace)
+  }
+
+  fuzz: String! @check {
+    Dagger
+      .rust(version: rustVersion)
+      .fuzz(
+        ws: fuzzProject.asWorkspace,
+        target: "smoke",
+        options: ["--jobs", "1"],
+        corpus: ["fuzz/corpus/smoke"],
+        args: ["-runs=1"],
+      )
   }
 }

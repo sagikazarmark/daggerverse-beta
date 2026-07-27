@@ -23,6 +23,11 @@ type Tests {
     "beta:lint",
   ]
 
+  # Mirrors the [env.*] tables in fixtures/workspace/dagger.toml. Environments,
+  # unlike checks, are readable on a value workspace, so allEnvs discovery is
+  # exercised against these for real.
+  let envs: [String!]! = ["ci", "nightly"]
+
   defaultWorkflow: Void @check {
     let contents = Dagger.daggerGha.workflow(ws).contents
 
@@ -62,9 +67,101 @@ type Tests {
     let strategy = wf.jobs.check.strategy!
 
     assert { strategy.failFast == false }
-    assertList(strategy.matrix.check, allChecks)
+    assertList(strategy.matrix.check!, allChecks)
+    assert { strategy.matrix.env == null }
 
     assert { wf.jobs.check.steps[1].inputs!.args == "${{ matrix.check }}" }
+  }
+
+  envMatrix: Void @check {
+    # An explicit envs list expands the single check job into one run per
+    # environment, without touching check selection.
+    let contents = Dagger.daggerGha(envs: envs).workflow(ws).contents
+
+    assertGolden(contents, golden.file("envs.yaml").contents)
+
+    let wf = decodeWorkflow(contents)
+
+    assert { wf.jobs.check.name == "Check (${{ matrix.env }})" }
+
+    let strategy = wf.jobs.check.strategy!
+
+    assert { strategy.failFast == false }
+    assertList(strategy.matrix.env!, envs)
+    assert { strategy.matrix.check == null }
+
+    assertEqual(workflowArgs(contents), "--env ${{ matrix.env }}")
+
+    # The env axis composes with the other check options, keeping the --env
+    # flag in front of them.
+    assertEqual(
+      workflowArgs(Dagger.daggerGha(envs: envs, skip: ["alpha:fmt"], lock: DaggerGhaLockMode.PINNED).workflow(ws).contents),
+      "--env ${{ matrix.env }} --lock pinned --skip alpha:fmt",
+    )
+  }
+
+  envMatrixWithExpand: Void @check {
+    # Both axes together render a check x environment cartesian product.
+    let contents = Dagger.daggerGha(expand: true, envs: envs).workflow(ws, allChecks).contents
+
+    assertGolden(contents, golden.file("envs-expanded.yaml").contents)
+
+    let wf = decodeWorkflow(contents)
+
+    assert { wf.jobs.check.name == "${{ matrix.env }} / ${{ matrix.check }}" }
+
+    let strategy = wf.jobs.check.strategy!
+
+    assertList(strategy.matrix.check!, allChecks)
+    assertList(strategy.matrix.env!, envs)
+
+    assertEqual(workflowArgs(contents), "--env ${{ matrix.env }} ${{ matrix.check }}")
+  }
+
+  envMatrixDiscovery: Void @check {
+    # Unlike checks, environments are enumerable on a value workspace, so
+    # allEnvs discovers the fixture's [env.*] tables for real.
+    assertList(Dagger.daggerGha(allEnvs: true).matrixEnvs(ws), envs)
+
+    assertList(
+      decodeWorkflow(Dagger.daggerGha(allEnvs: true).workflow(ws).contents).jobs.check.strategy!.matrix.env!,
+      envs,
+    )
+
+    # Without either option there is no env axis to discover.
+    assert { Dagger.daggerGha.matrixEnvs(ws).isEmpty }
+    assert { Dagger.daggerGha(env: "ci").matrixEnvs(ws).isEmpty }
+    assert { decodeWorkflow(Dagger.daggerGha(env: "ci").workflow(ws).contents).jobs.check.strategy == null }
+
+    # The envs argument overrides discovery, the way checks overrides check
+    # discovery.
+    assertList(
+      decodeWorkflow(Dagger.daggerGha(allEnvs: true).workflow(ws, envs: ["staging"]).contents).jobs.check.strategy!.matrix.env!,
+      ["staging"],
+    )
+  }
+
+  envMatrixConcurrency: Void @check {
+    # An env matrix is a matrix, so it can be limited without expand.
+    let limited = decodeWorkflow(Dagger.daggerGha(envs: envs, concurrency: 1).workflow(ws).contents)
+
+    assert { limited.jobs.check.strategy!.maxParallel == 1 }
+  }
+
+  invalidEnvOptions: Void @check {
+    # env selects one environment, envs and allEnvs expand several: combining
+    # them would silently drop one of the two.
+    assert { raises { Dagger.daggerGha(env: "ci", envs: envs).workflow(ws).contents } }
+    assert { raises { Dagger.daggerGha(env: "ci", allEnvs: true).workflow(ws).contents } }
+    assert { raises { Dagger.daggerGha(envs: envs, allEnvs: true).workflow(ws).contents } }
+
+    # The envs argument needs an env matrix to fill.
+    assert { raises { Dagger.daggerGha.workflow(ws, envs: envs).contents } }
+    assert { raises { Dagger.daggerGha(env: "ci").workflow(ws, envs: envs).contents } }
+
+    # It is valid as soon as either option turns the axis on.
+    assert { Dagger.daggerGha(envs: ["ci"]).workflow(ws, envs: envs).contents != "" }
+    assert { Dagger.daggerGha(allEnvs: true).workflow(ws, envs: envs).contents != "" }
   }
 
   checkArguments: Void @check {
@@ -127,15 +224,7 @@ type Tests {
     assert { inputs.commit == "abc123def" }
 
     # daggerVersion and daggerCommit are mutually exclusive.
-    let failed = try {
-      Dagger.daggerGha(daggerVersion: "v1.2.3", daggerCommit: "abc123def").workflow(ws).contents
-
-      false
-    } catch {
-      err => true
-    }
-
-    assert { failed }
+    assert { raises { Dagger.daggerGha(daggerVersion: "v1.2.3", daggerCommit: "abc123def").workflow(ws).contents } }
   }
 
   concurrency: Void @check {
@@ -148,26 +237,10 @@ type Tests {
 
     assert { limited.jobs.check.strategy!.maxParallel == 2 }
 
-    # The limit applies to the expanded matrix, so it requires expand.
-    let withoutExpand = try {
-      Dagger.daggerGha(concurrency: 2).workflow(ws).contents
+    # The limit applies to a matrix, so it requires an axis to limit.
+    assert { raises { Dagger.daggerGha(concurrency: 2).workflow(ws).contents } }
 
-      false
-    } catch {
-      err => true
-    }
-
-    assert { withoutExpand }
-
-    let invalid = try {
-      Dagger.daggerGha(expand: true, concurrency: 0).workflow(ws, allChecks).contents
-
-      false
-    } catch {
-      err => true
-    }
-
-    assert { invalid }
+    assert { raises { Dagger.daggerGha(expand: true, concurrency: 0).workflow(ws, allChecks).contents } }
   }
 
   actionPin: Void @check {
@@ -376,7 +449,7 @@ type Tests {
     let grouped = Dagger.daggerGha(expand: true, groupLevel: 1)
     let contents = grouped.workflow(ws, grouped.resolveChecks(allChecks, allChecks)).contents
 
-    assertList(decodeWorkflow(contents).jobs.check.strategy!.matrix.check, ["alpha", "beta"])
+    assertList(decodeWorkflow(contents).jobs.check.strategy!.matrix.check!, ["alpha", "beta"])
   }
 
   emptyWorkspaceChecks: Void @check {
@@ -389,39 +462,13 @@ type Tests {
 
     let wf = decodeWorkflow(Dagger.daggerGha(expand: true).workflow(ws).contents)
 
-    assert { wf.jobs.check.strategy!.matrix.check.isEmpty }
+    assert { wf.jobs.check.strategy!.matrix.check!.isEmpty }
   }
 
   invalidOptions: Void @check {
-    let bothFlags = try {
-      Dagger.daggerGha(noGenerate: true, onlyGenerate: true).workflow(ws).contents
-
-      false
-    } catch {
-      err => true
-    }
-
-    assert { bothFlags }
-
-    let groupWithoutExpand = try {
-      Dagger.daggerGha(groupLevel: 1).workflow(ws).contents
-
-      false
-    } catch {
-      err => true
-    }
-
-    assert { groupWithoutExpand }
-
-    let checksWithoutExpand = try {
-      Dagger.daggerGha.workflow(ws, allChecks).contents
-
-      false
-    } catch {
-      err => true
-    }
-
-    assert { checksWithoutExpand }
+    assert { raises { Dagger.daggerGha(noGenerate: true, onlyGenerate: true).workflow(ws).contents } }
+    assert { raises { Dagger.daggerGha(groupLevel: 1).workflow(ws).contents } }
+    assert { raises { Dagger.daggerGha.workflow(ws, allChecks).contents } }
 
     # groupLevel is valid once expand is set.
     assert { Dagger.daggerGha(expand: true, groupLevel: 1).workflow(ws).contents != "" }
@@ -435,6 +482,31 @@ type Tests {
 
   goldenExpanded: File! {
     Dagger.file("expanded.yaml", stripVolatileRefs(Dagger.daggerGha(expand: true).workflow(ws, allChecks).contents))
+  }
+
+  goldenEnvs: File! {
+    Dagger.file("envs.yaml", stripVolatileRefs(Dagger.daggerGha(envs: envs).workflow(ws).contents))
+  }
+
+  goldenEnvsExpanded: File! {
+    Dagger.file(
+      "envs-expanded.yaml",
+      stripVolatileRefs(Dagger.daggerGha(expand: true, envs: envs).workflow(ws, allChecks).contents),
+    )
+  }
+}
+
+"""
+Whether rendering the workflow in the block fails, which is how the module
+rejects an invalid option combination.
+"""
+let raises(&body: String!): Boolean! {
+  try {
+    # Comparing the block's value forces it; only whether producing it raised
+    # matters, so the comparison is discarded.
+    body == "" and false
+  } catch {
+    err => true
   }
 }
 
@@ -526,8 +598,10 @@ type TestStrategy {
   matrix: TestMatrix!
 }
 
+# Both axes are optional: a workflow renders only the ones it expands.
 type TestMatrix {
-  check: [String!]!
+  check: [String!]
+  env: [String!]
 }
 
 type TestStep {

@@ -25,6 +25,8 @@ type DaggerGha {
   let groupLevel: Int
   let workspace: String
   let env: String
+  let envs: [String!]!
+  let allEnvs: Boolean!
   let lock: LockMode
   let daggerVersion: String
   let daggerCommit: String
@@ -73,8 +75,28 @@ type DaggerGha {
     """
     Dagger environment to use in the workflow, passed to the generated check
     command as --env. No environment is passed when omitted.
+
+    Mutually exclusive with envs and allEnvs, which run several environments
+    instead of one.
     """
     env: String,
+    """
+    Dagger environments to run, expanded into an env matrix axis: every check
+    the workflow runs is repeated once per environment, with --env set to the
+    matrix entry.
+
+    Combines with expand into a check x environment matrix. Mutually exclusive
+    with env and allEnvs.
+    """
+    envs: [String!]! = [],
+    """
+    Run every environment defined in the workspace configuration, expanded
+    into an env matrix axis. Same as listing them in envs, except the list is
+    discovered from the workspace at generation time.
+
+    Mutually exclusive with env and envs.
+    """
+    allEnvs: Boolean! = false,
     """
     Lock lookup mode, passed to the generated check command as --lock. The
     dagger default (disabled) applies when omitted.
@@ -93,7 +115,7 @@ type DaggerGha {
     """
     pin: ActionPin! = ActionPin.VERSION,
     """
-    Maximum number of matrix checks running concurrently in the expanded
+    Maximum number of matrix entries running concurrently in the generated
     workflow. No limit when omitted.
     """
     concurrency: Int,
@@ -104,6 +126,14 @@ type DaggerGha {
 
     if (daggerVersion != null and daggerCommit != null) {
       raise "daggerVersion and daggerCommit cannot both be set"
+    }
+
+    if (!envs.isEmpty and allEnvs) {
+      raise "envs and allEnvs cannot both be set"
+    }
+
+    if (env != null and (!envs.isEmpty or allEnvs)) {
+      raise "env cannot be combined with envs or allEnvs"
     }
 
     if (concurrency != null and concurrency! < 1) {
@@ -118,6 +148,8 @@ type DaggerGha {
     self.groupLevel = groupLevel
     self.workspace = workspace
     self.env = env
+    self.envs = envs
+    self.allEnvs = allEnvs
     self.lock = lock
     self.daggerVersion = daggerVersion
     self.daggerCommit = daggerCommit
@@ -149,17 +181,36 @@ type DaggerGha {
   }
 
   """
+  Environments included in the generated GitHub Actions matrix.
+
+  The envs list when set, every environment defined in the workspace
+  configuration when allEnvs is set, and nothing otherwise (the workflow runs
+  a single job, with or without the env option).
+  """
+  matrixEnvs(ws: Workspace!): [String!]! {
+    if (!self.envs.isEmpty) {
+      return self.envs
+    }
+
+    if (self.allEnvs) {
+      return ws.envList
+    }
+
+    []
+  }
+
+  """
   Render the Dagger GitHub Actions workflow.
 
   The file name is derived from the workspace directory (dagger.yaml for the
   root workspace, dagger-<dir>.yaml for nested ones) so workspaces sharing a
   repository do not collide.
 
-  When checks is provided, it is used verbatim as the expanded matrix instead
-  of discovering checks from the workspace.
+  When checks or envs is provided, it is used verbatim as the matrix axis
+  instead of discovering the values from the workspace.
   """
-  workflow(ws: Workspace!, checks: [String!] = null): File! {
-    self.workflowConfig(ws, checks).file(
+  workflow(ws: Workspace!, checks: [String!] = null, envs: [String!] = null): File! {
+    self.workflowConfig(ws, checks, envs).file(
       workflowFileName(self.workspaceDir(ws)),
       generated: true,
     )
@@ -170,12 +221,12 @@ type DaggerGha {
   directory at the workspace root (the repository root), where GitHub picks
   it up even when the generating workspace is nested.
 
-  When checks is provided, it is used verbatim as the expanded matrix instead
-  of discovering checks from the workspace.
+  When checks or envs is provided, it is used verbatim as the matrix axis
+  instead of discovering the values from the workspace.
   """
-  generate(ws: Workspace!, checks: [String!]): Changeset! @generate {
+  generate(ws: Workspace!, checks: [String!], envs: [String!]): Changeset! @generate {
     let source = ws.directory("/", gitignore: true)
-    let workflowFile = self.workflow(ws, checks)
+    let workflowFile = self.workflow(ws, checks, envs)
 
     source.withFile(
       ".github/workflows/" + workflowFile.name,
@@ -192,11 +243,22 @@ type DaggerGha {
     self.workspace ?? configDir(ws.configFile)
   }
 
-  let workflowConfig(ws: Workspace!, checks: [String!]): GhaWorkflow! {
-    validateWorkflowOptions(expand, self.groupLevel, self.concurrency, self.noGenerate, self.onlyGenerate)
+  let workflowConfig(ws: Workspace!, checks: [String!], envs: [String!]): GhaWorkflow! {
+    validateWorkflowOptions(
+      self.expand,
+      self.envMatrix,
+      self.groupLevel,
+      self.concurrency,
+      self.noGenerate,
+      self.onlyGenerate,
+    )
 
-    if (checks != null and !expand) {
+    if (checks != null and !self.expand) {
       raise "checks can only be provided when expand is true"
+    }
+
+    if (envs != null and !self.envMatrix) {
+      raise "envs can only be provided when the envs or allEnvs option is set"
     }
 
     let workspaceDir = self.workspaceDir(ws)
@@ -205,38 +267,51 @@ type DaggerGha {
       .onPush(branches: ["main"])
       .onPullRequest
       .withPermission("contents")
-      .withJob(
-        "check",
+      .withJob("check", self.matrixCheckJob(ws, checks, envs, workspaceDir))
+  }
+
+  """
+  Whether the envs option or allEnvs turned the environment into a matrix axis.
+  """
+  let envMatrix: Boolean! {
+    !self.envs.isEmpty or self.allEnvs
+  }
+
+  # One job carries both axes: expand repeats it per check, an env matrix
+  # repeats it per environment, and together they form the cartesian product.
+  # Without either axis this is the plain single check job.
+  let matrixCheckJob(
+    ws: Workspace!,
+    checks: [String!],
+    envs: [String!],
+    workspaceDir: String!,
+  ): GhaJob! {
+    let expand = self.expand
+    let envMatrix = self.envMatrix
+
+    self.checkJob(checkJobName(expand, envMatrix), checkArgs(
+      matrixEnvArg(envMatrix, self.env),
+      self.lock,
+      matrixCheckPatterns(expand, self.include),
+      self.skip,
+      self.noGenerate,
+      self.onlyGenerate,
+    ), workspaceDir)
+      .{
         if (expand) {
-          self.expandedCheckJob(ws, checks, workspaceDir)
-        } else {
-          self.normalCheckJob(workspaceDir)
-        },
-      )
-  }
-
-  let normalCheckJob(workspaceDir: String!): GhaJob! {
-    self.checkJob("Check", checkArgs(
-      self.env,
-      self.lock,
-      self.include,
-      self.skip,
-      self.noGenerate,
-      self.onlyGenerate,
-    ), workspaceDir)
-  }
-
-  let expandedCheckJob(ws: Workspace!, checks: [String!], workspaceDir: String!): GhaJob! {
-    self.checkJob("${{ matrix.check }}", checkArgs(
-      self.env,
-      self.lock,
-      ["${{ matrix.check }}"],
-      self.skip,
-      self.noGenerate,
-      self.onlyGenerate,
-    ), workspaceDir)
-      .withMatrix("check", checks ?? self.checks(ws))
-      .withFailFast(false)
+          _.withMatrix("check", checks ?? self.checks(ws))
+        } else _
+      }
+      .{
+        if (envMatrix) {
+          _.withMatrix("env", envs ?? self.matrixEnvs(ws))
+        } else _
+      }
+      .{
+        if (expand or envMatrix) {
+          _.withFailFast(false)
+        } else _
+      }
       .{
         let concurrency = self.concurrency
 
@@ -346,6 +421,53 @@ let workflowTitle(workspaceDir: String!): String! {
   "Dagger (" + workspaceDir + ")"
 }
 
+"""
+Display name of the check job: the matrix coordinates it runs at.
+
+Expanded checks name the job after the check itself, so an environment in front
+of it reads as a path. Without them the job still runs every check, so it keeps
+the plain "Check" name and carries the environment as a suffix instead.
+"""
+let checkJobName(expand: Boolean!, envMatrix: Boolean!): String! {
+  if (expand) {
+    if (envMatrix) {
+      return "${{ matrix.env }} / ${{ matrix.check }}"
+    }
+
+    return "${{ matrix.check }}"
+  }
+
+  if (envMatrix) {
+    return "Check (${{ matrix.env }})"
+  }
+
+  "Check"
+}
+
+"""
+Value of the --env flag: the matrix entry when environments are expanded, the
+single env option otherwise (null renders no flag at all).
+"""
+let matrixEnvArg(envMatrix: Boolean!, env: String): String {
+  if (envMatrix) {
+    return "${{ matrix.env }}"
+  }
+
+  env
+}
+
+"""
+Check selectors on the generated command line: the matrix entry when checks are
+expanded, the configured include patterns otherwise.
+"""
+let matrixCheckPatterns(expand: Boolean!, include: [String!]!): [String!]! {
+  if (expand) {
+    return ["${{ matrix.check }}"]
+  }
+
+  include
+}
+
 let checkSelectors(
   ws: Workspace!,
   include: [String!]! = [],
@@ -430,6 +552,7 @@ let checkMatchesPrefix(check: String!, prefix: String!): Boolean! {
 
 let validateWorkflowOptions(
   expand: Boolean!,
+  envMatrix: Boolean!,
   groupLevel: Int,
   concurrency: Int,
   noGenerate: Boolean!,
@@ -441,8 +564,10 @@ let validateWorkflowOptions(
     raise "groupLevel can only be used when expand is true"
   }
 
-  if (!expand and concurrency != null) {
-    raise "concurrency can only be used when expand is true"
+  # The limit applies to matrix entries, so it needs an axis to limit: either
+  # the expanded checks or the expanded environments.
+  if (!expand and !envMatrix and concurrency != null) {
+    raise "concurrency can only be used when the workflow renders a matrix (expand, envs or allEnvs)"
   }
 }
 

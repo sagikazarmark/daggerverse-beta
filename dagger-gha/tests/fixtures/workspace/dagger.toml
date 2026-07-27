@@ -3,3 +3,7 @@ source = "alpha"
 
 [modules.beta]
 source = "beta"
+
+[env.ci]
+
+[env.nightly]

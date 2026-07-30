@@ -182,7 +182,7 @@ type RustEnvironment {
 
     container
       .withEnvVariable("CARGO_TARGET_DIR", "/target")
-      .withMountedCache("/target", cargoTargetCache)
+      .withMountedCache("/target", cargoTargetCache, sharing: CacheSharingMode.LOCKED)
   }
 
   let withOverlay(container: Container!): Container! {

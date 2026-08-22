@@ -95,8 +95,8 @@ type Tests {
     # The env axis composes with the other check options, keeping the --env
     # flag in front of them.
     assertEqual(
-      workflowArgs(Dagger.daggerGha(envs: envs, skip: ["alpha:fmt"], lock: DaggerGhaLockMode.PINNED).workflow(ws).contents),
-      "--env ${{ matrix.env }} --lock pinned --skip alpha:fmt",
+      workflowArgs(Dagger.daggerGha(envs: envs, skip: ["alpha:fmt"]).workflow(ws).contents),
+      "--env ${{ matrix.env }} --skip alpha:fmt",
     )
   }
 
@@ -174,16 +174,6 @@ type Tests {
     assertEqual(
       workflowArgs(Dagger.daggerGha(env: "ci", skip: ["alpha:fmt"]).workflow(ws).contents),
       "--env ci --skip alpha:fmt",
-    )
-    # The lock mode renders as its lowercase flag value, after env and before
-    # the other arguments.
-    assertEqual(workflowArgs(Dagger.daggerGha(lock: DaggerGhaLockMode.DISABLED).workflow(ws).contents), "--lock disabled")
-    assertEqual(workflowArgs(Dagger.daggerGha(lock: DaggerGhaLockMode.LIVE).workflow(ws).contents), "--lock live")
-    assertEqual(workflowArgs(Dagger.daggerGha(lock: DaggerGhaLockMode.PINNED).workflow(ws).contents), "--lock pinned")
-    assertEqual(workflowArgs(Dagger.daggerGha(lock: DaggerGhaLockMode.FROZEN).workflow(ws).contents), "--lock frozen")
-    assertEqual(
-      workflowArgs(Dagger.daggerGha(env: "ci", lock: DaggerGhaLockMode.PINNED, skip: ["alpha:fmt"]).workflow(ws).contents),
-      "--env ci --lock pinned --skip alpha:fmt",
     )
     assertEqual(
       workflowArgs(Dagger.daggerGha(include: ["alpha:**"], skip: ["beta:**"], noGenerate: true).workflow(ws).contents),

@@ -6,16 +6,6 @@ enum ActionPin {
   COMMIT
 }
 
-"""
-Lock lookup mode passed to the dagger command.
-"""
-enum LockMode {
-  DISABLED
-  LIVE
-  PINNED
-  FROZEN
-}
-
 type DaggerGha {
   let include: [String!]!
   let skip: [String!]!
@@ -27,7 +17,6 @@ type DaggerGha {
   let env: String
   let envs: [String!]!
   let allEnvs: Boolean!
-  let lock: LockMode
   let daggerVersion: String
   let daggerCommit: String
   let pin: ActionPin!
@@ -98,11 +87,6 @@ type DaggerGha {
     """
     allEnvs: Boolean! = false,
     """
-    Lock lookup mode, passed to the generated check command as --lock. The
-    dagger default (disabled) applies when omitted.
-    """
-    lock: LockMode,
-    """
     Dagger version to use in the workflow. Detected from the workspace when omitted.
     """
     daggerVersion: String,
@@ -150,7 +134,6 @@ type DaggerGha {
     self.env = env
     self.envs = envs
     self.allEnvs = allEnvs
-    self.lock = lock
     self.daggerVersion = daggerVersion
     self.daggerCommit = daggerCommit
     self.pin = pin
@@ -291,7 +274,6 @@ type DaggerGha {
 
     self.checkJob(checkJobName(expand, envMatrix), checkArgs(
       matrixEnvArg(envMatrix, self.env),
-      self.lock,
       matrixCheckPatterns(expand, self.include),
       self.skip,
       self.noGenerate,
@@ -579,7 +561,6 @@ let validateCheckOptions(noGenerate: Boolean!, onlyGenerate: Boolean!): Void {
 
 let checkArgs(
   env: String,
-  lock: LockMode,
   patterns: [String!]!,
   skip: [String!]!,
   noGenerate: Boolean!,
@@ -593,10 +574,6 @@ let checkArgs(
 
   if (onlyGenerate) {
     args += ["--generate"]
-  }
-
-  if (lock != null) {
-    args = ["--lock", toString(lock!).toLower] + args
   }
 
   if (env != null) {

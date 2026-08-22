@@ -608,7 +608,7 @@ let checkArgs(
 
 let daggerActionVersion(version: String!): String {
   if (isDaggerVersionTag(version)) {
-    version
+    version.split("+")[0]!
   } else {
     null
   }

@@ -205,6 +205,13 @@ type Tests {
     assert { release.version == "v1.2.3" }
     assert { release.commit == null }
 
+    let prerelease = stepInputs(
+      Dagger.daggerGha(daggerVersion: "v1.0.0-beta.1+abc123def").workflow(ws).contents,
+    )
+
+    assert { prerelease.version == "v1.0.0-beta.1" }
+    assert { prerelease.commit == null }
+
     let dev = stepInputs(Dagger.daggerGha(daggerVersion: "v1.0.0-dev-abc123def").workflow(ws).contents)
 
     assert { dev.version == null }
@@ -259,7 +266,7 @@ type Tests {
     # rendered, derived from the engine version: release tags pin the action
     # version, dev builds pin the commit.
     if (Dagger.version.hasPrefix("v") and !Dagger.version.contains("-dev-")) {
-      assert { inputs.version == Dagger.version }
+      assert { inputs.version == Dagger.version.split("+")[0]! }
       assert { inputs.commit == null }
     } else {
       assert { inputs.version == null }

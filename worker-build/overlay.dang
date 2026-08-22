@@ -7,13 +7,18 @@ let moduleOverlay(
   esbuildVersion: String,
   overlay: Overlay,
 ): OverlaysList! {
-  Dagger.overlays.combine([
-    Dagger
-      .wasmTools
-      .withTool(WasmToolsTool.BINARYEN, binaryenVersion)
-      .withTool(WasmToolsTool.ESBUILD, esbuildVersion),
+  let wasmTools = Dagger.wasmTools.withTool(WasmToolsTool.ESBUILD, esbuildVersion)
+  let customBinaryen = binaryenVersion != null and binaryenVersion != ""
+  if (customBinaryen) {
+    wasmTools = wasmTools.withTool(WasmToolsTool.BINARYEN, binaryenVersion)
+  }
 
-    Dagger.overlays.withEnvVariable("WASM_OPT_BIN", "wasm-opt"),
+  Dagger.overlays.combine([
+    wasmTools,
+
+    if (customBinaryen) {
+      Dagger.overlays.withEnvVariable("WASM_OPT_BIN", "wasm-opt")
+    } else null,
     Dagger.overlays.withEnvVariable("ESBUILD_BIN", "esbuild"),
     overlay,
   ])

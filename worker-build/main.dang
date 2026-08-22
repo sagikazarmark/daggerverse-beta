@@ -15,7 +15,7 @@ type WorkerBuild {
     """
     wasmBindgenVersion: String,
     """
-    Version of Binaryen to use (default: latest).
+    Version of Binaryen to use. By default, worker-build uses its managed version.
     """
     binaryenVersion: String,
     """

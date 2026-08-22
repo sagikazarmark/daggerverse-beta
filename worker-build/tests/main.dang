@@ -33,6 +33,33 @@ type Tests {
     )
   }
 
+  """
+  Use worker-build's managed wasm-opt unless a Binaryen version is explicitly requested.
+  """
+  binaryenOverride: Void @check {
+    let ws = Dagger.directory.asWorkspace
+    let defaultContainer = Dagger
+      .workerBuild(
+        version: "0.8.5",
+        rustVersion: rustVersion,
+        container: self.container,
+      )
+      .container(ws: ws)
+
+    assert { defaultContainer.envVariable("WASM_OPT_BIN") == null }
+
+    let overriddenContainer = Dagger
+      .workerBuild(
+        version: "0.8.5",
+        binaryenVersion: "version_130",
+        rustVersion: rustVersion,
+        container: self.container,
+      )
+      .container(ws: ws)
+
+    assert { overriddenContainer.envVariable("WASM_OPT_BIN") == "wasm-opt" }
+  }
+
   let buildExample(source: Directory! = self.source, name: String!): Directory! {
     let output = self
       .workerBuild

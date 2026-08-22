@@ -43,7 +43,7 @@ let packageVersion(ws: Workspace, name: String!): String {
   }
 
   Dagger
-    .cargoLock(file: ws.file(path))
+    .cargoLock(ws, file: ws.file(path))
     .findOne(name)
     .version
 }

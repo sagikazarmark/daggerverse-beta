@@ -13,7 +13,6 @@ type DaggerGha {
   let onlyGenerate: Boolean!
   let expand: Boolean!
   let groupLevel: Int
-  let workspace: String
   let env: String
   let envs: [String!]!
   let allEnvs: Boolean!
@@ -51,16 +50,6 @@ type DaggerGha {
     Number of check path segments to group by in each expanded matrix entry.
     """
     groupLevel: Int,
-    """
-    Workspace directory relative to the workspace root (the repository root
-    for git workspaces). Drives the workflow file name, the workflow display
-    name, and the workdir of the generated check step, so multiple
-    workspaces in one repository produce distinct workflows.
-
-    Defaults to the directory of the selected workspace config file: empty
-    for the root workspace, "helm" for a workspace at helm/dagger.toml.
-    """
-    workspace: String = null,
     """
     Dagger environment to use in the workflow, passed to the generated check
     command as --env. No environment is passed when omitted.
@@ -130,7 +119,6 @@ type DaggerGha {
     self.onlyGenerate = onlyGenerate
     self.expand = expand
     self.groupLevel = groupLevel
-    self.workspace = workspace
     self.env = env
     self.envs = envs
     self.allEnvs = allEnvs
@@ -218,12 +206,10 @@ type DaggerGha {
   }
 
   """
-  Workspace directory relative to the workspace root: the workspace
-  constructor argument when set, otherwise derived from the selected
-  workspace config file. Empty for the root workspace.
+  Current directory relative to the workspace root. Empty at the root.
   """
   let workspaceDir(ws: Workspace!): String! {
-    self.workspace ?? configDir(ws.configFile)
+    Path(ws.cwd).parts.join("/")
   }
 
   let workflowConfig(ws: Workspace!, checks: [String!], envs: [String!]): GhaWorkflow! {
@@ -372,27 +358,12 @@ type DaggerGha {
   }
 }
 
-"""
-Directory of the selected workspace config file relative to the workspace
-root: "" for the root workspace (or when no config is selected, e.g. value
-workspaces), "helm" for a workspace at helm/dagger.toml.
-"""
-let configDir(configFile: String!): String! {
-  let segments = configFile.split("/")
-
-  if (segments.length < 2) {
-    return ""
-  }
-
-  segments.takeFirst(segments.length - 1).join("/")
-}
-
 let workflowFileName(workspaceDir: String!): String! {
   if (workspaceDir == "") {
     return "dagger.yaml"
   }
 
-  "dagger-" + workspaceDir.split("/").join("-") + ".yaml"
+  "dagger-" + Path(workspaceDir).parts.join("-") + ".yaml"
 }
 
 let workflowTitle(workspaceDir: String!): String! {

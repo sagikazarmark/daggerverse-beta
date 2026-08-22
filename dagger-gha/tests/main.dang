@@ -11,6 +11,14 @@ type Tests {
       .asWorkspace
   }
 
+  let nestedWs: Workspace! {
+    Dagger
+      .currentModule
+      .source
+      .directory("fixtures/workspace")
+      .asWorkspace("alpha")
+  }
+
   let golden: Directory! {
     Dagger.currentModule.source.directory("fixtures/golden")
   }
@@ -282,33 +290,21 @@ type Tests {
     assert { changes.after.file(".github/workflows/dagger.yaml").contents == Dagger.daggerGha.workflow(ws).contents }
   }
 
-  workspaceNaming: Void @check {
-    # Value workspaces report no config file, so the workspace constructor
-    # arg stands in for the config-file-derived directory here. Nested
-    # workspaces get unique workflow file and display names, and their check
-    # step runs from the workspace directory via workdir.
-    let file = Dagger.daggerGha(workspace: "helm").workflow(ws)
+  workspaceDetection: Void @check {
+    let file = Dagger.daggerGha.workflow(nestedWs)
 
-    assertEqual(file.name, "dagger-helm.yaml")
-    assertEqual(decodeWorkflow(file.contents).name, "Dagger (helm)")
-    assertEqual(stepInputs(file.contents).workdir ?? "", "helm")
-    assertEqual(workflowArgs(file.contents), "")
-
-    # Deeper nesting joins path segments with dashes in the file name.
-    let deep = Dagger.daggerGha(workspace: "foo/bar").workflow(ws)
-
-    assertEqual(deep.name, "dagger-foo-bar.yaml")
-    assertEqual(decodeWorkflow(deep.contents).name, "Dagger (foo/bar)")
-    assertEqual(stepInputs(deep.contents).workdir ?? "", "foo/bar")
+    assertEqual(file.name, "dagger-alpha.yaml")
+    assertEqual(decodeWorkflow(file.contents).name, "Dagger (alpha)")
+    assertEqual(stepInputs(file.contents).workdir ?? "", "alpha")
 
     # The workspace only sets the workdir, the check arguments stay untouched.
-    let nested = Dagger.daggerGha(workspace: "helm", skip: ["fmt"], noGenerate: true).workflow(ws).contents
+    let nested = Dagger.daggerGha(skip: ["fmt"], noGenerate: true).workflow(nestedWs).contents
 
-    assertEqual(stepInputs(nested).workdir ?? "", "helm")
+    assertEqual(stepInputs(nested).workdir ?? "", "alpha")
     assertEqual(workflowArgs(nested), "--skip fmt --no-generate")
 
-    # An empty workspace matches the root default and renders no workdir.
-    let root = Dagger.daggerGha(workspace: "").workflow(ws)
+    # The workspace root renders no suffix or workdir.
+    let root = Dagger.daggerGha.workflow(ws)
 
     assertEqual(root.name, "dagger.yaml")
     assert { stepInputs(root.contents).workdir == null }
@@ -317,10 +313,10 @@ type Tests {
   workspaceGenerate: Void @check {
     # Nested workspaces write their workflow to the root .github/workflows,
     # not one nested inside the workspace directory.
-    let changes = Dagger.daggerGha(workspace: "helm").generate(ws)
+    let changes = Dagger.daggerGha.generate(nestedWs)
     let addedFiles = changes.addedPaths.filter { path => !path.hasSuffix("/") }
 
-    assertEqual(addedFiles.join(","), ".github/workflows/dagger-helm.yaml")
+    assertEqual(addedFiles.join(","), ".github/workflows/dagger-alpha.yaml")
   }
 
   groupingDisabled: Void @check {

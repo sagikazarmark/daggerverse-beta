@@ -37,6 +37,10 @@ let moduleSourceOverlay(
 }
 
 let packageVersion(ws: Workspace, name: String!): String {
+  if (ws == null) {
+    return null
+  }
+
   let path = ws.findUp("Cargo.lock")
   if (path == null) {
     return null

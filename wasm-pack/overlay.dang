@@ -23,6 +23,10 @@ let moduleSourceOverlay(ws: Workspace, wasmBindgenVersion: String): OverlaysList
 }
 
 let packageVersion(ws: Workspace, name: String!): String {
+  if (ws == null) {
+    return null
+  }
+
   let path = ws.findUp("Cargo.lock")
   if (path == null) {
     return null

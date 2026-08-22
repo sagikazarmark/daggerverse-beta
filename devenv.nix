@@ -2,5 +2,5 @@
 
 {
   dagger.enable = true;
-  env.DAGGER_X_RELEASE = "v1.0.0-beta.9";
+  env.DAGGER_X_RELEASE = "v1.0.0-beta.10";
 }

@@ -101,12 +101,6 @@ type Dioxus {
     cargoGitDbCache: CacheVolume = if (!noCache) {
       Dagger.cacheVolume("cargo-git-db")
     } else null,
-    """
-    Cache volume for cargo target.
-    """
-    cargoTargetCache: CacheVolume = if (!noCache) {
-      Dagger.cacheVolume("cargo-target")
-    } else null,
   ) {
     self.rustEnv = Dagger.rustEnvironment(
       container: container,
@@ -117,7 +111,6 @@ type Dioxus {
       overlay: rustOverlay,
       targets: ["wasm32-unknown-unknown"] + targets,
       components: ["rust-std"] + components,
-      cargoTargetCache: cargoTargetCache,
     )
 
     self.buildEnv = Dagger.buildEnvironment(

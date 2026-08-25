@@ -13,7 +13,7 @@ type Tests {
   ) {
     self.dioxusVersion = (version ?? Dagger.github.releases("DioxusLabs/dioxus").latest.tagName).trimPrefix("v")
     self.source = Dagger.git("https://github.com/DioxusLabs/dioxus.git").tag("v" + self.dioxusVersion).tree
-    self.wasmBindgenVersion = Dagger.cargoLock(file: self.source.file("Cargo.lock")).findOne("wasm-bindgen")!.version
+    self.wasmBindgenVersion = Dagger.cargoLock(self.source.asWorkspace).findOne("wasm-bindgen")!.version
 
     self
   }

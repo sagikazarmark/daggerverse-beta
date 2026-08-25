@@ -70,12 +70,6 @@ type Rust {
     cargoGitDbCache: CacheVolume = if (!noCache) {
       Dagger.cacheVolume("cargo-git-db")
     } else null,
-    """
-    Cache volume for cargo target.
-    """
-    cargoTargetCache: CacheVolume = if (!noCache) {
-      Dagger.cacheVolume("cargo-target")
-    } else null,
   ) {
     self.env = Dagger.rustEnvironment(
       container: container,
@@ -86,7 +80,6 @@ type Rust {
 
       targets: targets,
       components: ["rustfmt", "clippy"] + components,
-      cargoTargetCache: cargoTargetCache,
     )
 
     self.buildEnv = Dagger.buildEnvironment(

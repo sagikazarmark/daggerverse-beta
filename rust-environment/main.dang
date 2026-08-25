@@ -7,7 +7,6 @@ type RustEnvironment {
   let overlay: Overlay
   let targets: [String!]!
   let components: [String!]!
-  let cargoTargetCache: CacheVolume
 
   new(
     """
@@ -53,12 +52,6 @@ type RustEnvironment {
     cargoGitDbCache: CacheVolume = if (!noCache) {
       Dagger.cacheVolume("cargo-git-db")
     } else null,
-    """
-    Cache volume for cargo target.
-    """
-    cargoTargetCache: CacheVolume = if (!noCache) {
-      Dagger.cacheVolume("cargo-target")
-    } else null,
   ) {
     self.defaultContainer = container
 
@@ -68,7 +61,6 @@ type RustEnvironment {
     self.overlay = overlay
     self.targets = targets
     self.components = components
-    self.cargoTargetCache = cargoTargetCache
 
     self
   }
@@ -87,7 +79,6 @@ type RustEnvironment {
       .{ self.withDefaults(_) }
       .{ self.withCache(_) }
       .{ self.rustup(ws, _) }
-      .{ self.withTargetCache(_) }
       .{ self.withOverlay(_) }
   }
 
@@ -96,6 +87,11 @@ type RustEnvironment {
       .{
         if (_.envVariable("CARGO_HOME") == null or _.envVariable("CARGO_HOME") == "") {
           _.withEnvVariable("CARGO_HOME", "/usr/local/cargo")
+        } else _
+      }
+      .{
+        if (_.envVariable("CARGO_TARGET_DIR") == null or _.envVariable("CARGO_TARGET_DIR") == "") {
+          _.withEnvVariable("CARGO_TARGET_DIR", "/target")
         } else _
       }
       .withExec(["rustup", "set", "auto-self-update", "disable"])
@@ -172,17 +168,6 @@ type RustEnvironment {
     }
 
     container.withExec(["rustup", "component", "add"] + self.components.uniq)
-  }
-
-  let withTargetCache(container: Container!): Container! {
-    let cargoTargetCache = self.cargoTargetCache
-    if (cargoTargetCache == null) {
-      return container
-    }
-
-    container
-      .withEnvVariable("CARGO_TARGET_DIR", "/target")
-      .withMountedCache("/target", cargoTargetCache, sharing: CacheSharingMode.LOCKED)
   }
 
   let withOverlay(container: Container!): Container! {

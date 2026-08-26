@@ -18,8 +18,11 @@ type Tests {
     assert { container.envVariable("FOO") == null }
 
     container = Dagger
-      .rustEnvironment(overlay: overlays.withEnvVariable("FOO", "bar"))
-      .container(ws: null, base: container)
+      .rustEnvironment(
+        ws: Dagger.directory.asWorkspace,
+        overlay: overlays.withEnvVariable("FOO", "bar"),
+      )
+      .container(base: container)
 
     assert { container.envVariable("FOO") == "bar" }
   }

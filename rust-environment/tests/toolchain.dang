@@ -8,7 +8,9 @@ type ToolchainTests {
   }
 
   defaults: Void @check {
-    let container = Dagger.rustEnvironment(version: rustVersion).container(ws: null)
+    let container = Dagger
+      .rustEnvironment(ws: Dagger.directory.asWorkspace, version: rustVersion)
+      .container
 
     assert { !targets(container).contains("wasm32-unknown-unknown") }
     assert { !components(container).contains("rust-src") }
@@ -17,11 +19,12 @@ type ToolchainTests {
   constructorConfigured: Void @check {
     let container = Dagger
       .rustEnvironment(
+        ws: Dagger.directory.asWorkspace,
         version: rustVersion,
         targets: ["wasm32-unknown-unknown"],
         components: ["rust-src"],
       )
-      .container(ws: null)
+      .container
 
     assert { targets(container).contains("wasm32-unknown-unknown") }
     assert { components(container).contains("rust-src") }
@@ -29,8 +32,8 @@ type ToolchainTests {
 
   toml: Void @check {
     let container = Dagger
-      .rustEnvironment(version: rustVersion)
-      .container(self.workspace)
+      .rustEnvironment(ws: self.workspace, version: rustVersion)
+      .container
       .withMountedDirectory("/work/src", self.workspace.directory("/"))
       .withWorkdir("/work/src" + self.workspace.cwd)
 
@@ -42,11 +45,12 @@ type ToolchainTests {
   tomlAndConstructor: Void @check {
     let container = Dagger
       .rustEnvironment(
+        ws: self.workspace,
         version: rustVersion,
         targets: ["aarch64-unknown-linux-musl"],
         components: ["rustfmt"],
       )
-      .container(self.workspace)
+      .container
       .withMountedDirectory("/work/src", self.workspace.directory("/"))
       .withWorkdir("/work/src" + self.workspace.cwd)
 

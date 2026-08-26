@@ -3,6 +3,7 @@ type Rust {
   let buildEnv: BuildEnvironment!
 
   new(
+    ws: Workspace!,
     """
     Version (image tag) to use from the official Rust image repository as a base container.
     """
@@ -72,17 +73,19 @@ type Rust {
     } else null,
   ) {
     self.env = Dagger.rustEnvironment(
+      ws: ws,
       container: container,
+
+      targets: targets,
+      components: ["rustfmt", "clippy"] + components,
 
       cargoRegistryIndexCache: cargoRegistryIndexCache,
       cargoRegistryArchiveCache: cargoRegistryArchiveCache,
       cargoGitDbCache: cargoGitDbCache,
-
-      targets: targets,
-      components: ["rustfmt", "clippy"] + components,
     )
 
     self.buildEnv = Dagger.buildEnvironment(
+      ws: ws,
       overlay: moduleOverlay(
         cargoArtifactsVersion: "v0.2.0",
         cargoAuditVersion: "0.22.0",
@@ -125,43 +128,21 @@ type Rust {
   Container with the Rust toolchain and common components installed.
   """
   container(
-    ws: Workspace,
     """
     Custom base container to use.
     """
     base: Container,
-    """
-    Ignore paths included in the gitignore file.
-    """
-    gitignore: Boolean,
-    """
-    Include only artifacts that match the given pattern (e.g., ["app/", "Cargo.*"]).
-    """
-    include: [String!],
-    """
-    Exclude artifacts that match the given pattern (e.g., ["target/", ".git*"]).
-    """
-    exclude: [String!],
   ): Container! {
     self
       .env
-      .container(ws, base)
-      .{
-        self.buildEnv.container(
-          ws,
-          _,
-          gitignore: gitignore,
-          include: include,
-          exclude: exclude,
-        )
-      }
+      .container(base: base)
+      .{ self.buildEnv.container(base: _) }
   }
 
   """
   Audit Cargo.lock files for vulnerable crates.
   """
   audit(
-    ws: Workspace!,
     """
     Exit with an error on any violation.
     """
@@ -191,7 +172,7 @@ type Rust {
     }
 
     self
-      .container(ws)
+      .container
       .withMountedDirectory(DB_PATH, db)
       .withExec(["cargo", "fetch", "--locked"]) # This is necessary, because --no-fetch also skips fetching cargo index
       .withExec(args)
@@ -202,7 +183,6 @@ type Rust {
   Compile a local package and all of its dependencies.
   """
   build(
-    ws: Workspace!,
     """
     Package to build.
     """
@@ -313,7 +293,7 @@ type Rust {
     }
 
     self
-      .container(ws)
+      .container
       .withExec(
         args,
         expand: true,
@@ -328,7 +308,6 @@ type Rust {
   Execute all unit and integration tests and build examples of a local package.
   """
   test(
-    ws: Workspace!,
     """
     If specified, only run tests containing this string in their names.
     """
@@ -448,26 +427,25 @@ type Rust {
       profile,
     )
 
-    self.container(ws).withExec(args).combinedOutput
+    self.container.withExec(args).combinedOutput
   }
 
   """
   Format the codebase using rustfmt.
   """
-  fmt(ws: Workspace!): Changeset! @generate {
+  fmt: Changeset! @generate {
     self
-      .container(ws)
+      .container
       .withExec(["cargo", "fmt", "--", "--check"])
       .directory("/work/src")
       .filter(gitignore: true)
-      .changes(self.buildEnv.source(ws))
+      .changes(self.buildEnv.source)
   }
 
   """
   Checks a package to catch common mistakes and improve your Rust code.
   """
   clippy(
-    ws: Workspace!,
     """
     Run Clippy only on the given crate, without linting the dependencies.
     """
@@ -501,14 +479,13 @@ type Rust {
     deny.each { d => args += ["--deny", d] }
     forbid.each { f => args += ["--forbid", f] }
 
-    self.container(ws).withExec(args).stdout
+    self.container.withExec(args).stdout
   }
 
   """
   Build a package's documentation.
   """
   doc(
-    ws: Workspace!,
     """
     Don't build documentation for dependencies.
     """
@@ -584,7 +561,7 @@ type Rust {
     )
 
     self
-      .container(ws)
+      .container
       .withEnvVariable("RUSTDOCFLAGS", "-D warnings")
       .withExec(args)
       .stdout

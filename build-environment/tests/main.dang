@@ -20,8 +20,8 @@ let envFile: File! {
 type Tests {
   sourceMountAndCwd: Void @check {
     let container = Dagger
-      .buildEnvironment(mountPath: "/workspace")
-      .container(ws: source.asWorkspace("/app"), base: alpine)
+      .buildEnvironment(ws: source.asWorkspace("/app"), mountPath: "/workspace")
+      .container(base: alpine)
 
     assert { container.mounts.contains("/workspace") or container.mounts.contains("/workspace/") }
     assert { container.file("/workspace/app/marker.txt").contents == "source-ok" }
@@ -36,10 +36,11 @@ type Tests {
   envFileAndEpoch: Void @check {
     let container = Dagger
       .buildEnvironment(
+        ws: Dagger.directory.asWorkspace,
         envFile: envFile,
         sourceDateEpoch: "1234567890",
       )
-      .container(ws: Dagger.directory.asWorkspace, base: alpine)
+      .container(base: alpine)
 
     assert { container.envVariable("BUILD_ENV_TEST") == "from-env-file" }
     assert { container.envVariable("BUILD_ENV_EQUALS") == "a=b" }
@@ -54,8 +55,11 @@ type Tests {
 
   overlay: Void @check {
     let container = Dagger
-      .buildEnvironment(overlay: overlays.withEnvVariable("BUILD_ENV_OVERLAY", "overlay-ok"))
-      .container(ws: Dagger.directory.asWorkspace, base: alpine)
+      .buildEnvironment(
+        ws: Dagger.directory.asWorkspace,
+        overlay: overlays.withEnvVariable("BUILD_ENV_OVERLAY", "overlay-ok"),
+      )
+      .container(base: alpine)
 
     assert { container.envVariable("BUILD_ENV_OVERLAY") == "overlay-ok" }
     assert { container.withExec(["printenv", "BUILD_ENV_OVERLAY"]).stdout.trimSpace == "overlay-ok" }
@@ -63,13 +67,13 @@ type Tests {
 
   workspace: Void @check {
     let container = Dagger
-      .buildEnvironment(mountPath: "/src")
-      .container(
+      .buildEnvironment(
         ws: source.asWorkspace("/app"),
-        base: alpine,
+        mountPath: "/src",
         include: ["app/**"],
         exclude: ["app/drop.txt"],
       )
+      .container(base: alpine)
 
     assert { container.directory("/src/app").entries == ["marker.txt"] }
 

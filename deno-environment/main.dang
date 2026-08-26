@@ -3,11 +3,14 @@ type DenoEnvironment {
 
   let cache: CacheVolume
   let buildEnv: BuildEnvironment!
+  let packageRoot: String
+  let dependencySource: Directory
 
   let install: Boolean!
   let locked: Boolean!
 
   new(
+    ws: Workspace!,
     """
     Version (image tag) to use from the official Deno image repository.
     """
@@ -58,6 +61,7 @@ type DenoEnvironment {
 
     self.cache = cache
     self.buildEnv = Dagger.buildEnvironment(
+      ws: ws,
       envFile: envFile,
       sourceDateEpoch: sourceDateEpoch,
 
@@ -65,6 +69,22 @@ type DenoEnvironment {
       include: include,
       exclude: exclude,
     )
+
+    let packageRoot = findPackageRoot(ws)
+    self.packageRoot = packageRoot
+    if (packageRoot != null) {
+      self.dependencySource = ws.directory(
+        "/",
+        include: [
+          "deno.json",
+          "deno.jsonc",
+          "deno.lock",
+          "import_map.json",
+          "import-map.json",
+        ].map { Path(packageRoot!).join(Path(_)).string.trimPrefix("/") },
+        gitignore: true,
+      )
+    }
 
     self.install = install
     self.locked = locked
@@ -76,36 +96,15 @@ type DenoEnvironment {
   Returns a container with the configured Deno environment.
   """
   container(
-    ws: Workspace,
     """
     Custom base container to use.
     """
     base: Container,
-    """
-    Ignore paths included in the gitignore file.
-    """
-    gitignore: Boolean,
-    """
-    Include only artifacts that match the given pattern (e.g., ["app/", "deno.*"]).
-    """
-    include: [String!],
-    """
-    Exclude artifacts that match the given pattern (e.g., ["node_modules/", ".git*"]).
-    """
-    exclude: [String!],
   ): Container! {
     (base ?? self.defaultContainer)
       .{ self.withCache(_) }
-      .{ self.withDependencies(ws, _) }
-      .{
-        self.buildEnv.container(
-          ws,
-          _,
-          gitignore: gitignore,
-          include: include,
-          exclude: exclude,
-        )
-      }
+      .{ self.withDependencies(_) }
+      .{ self.buildEnv.container(base: _) }
   }
 
   let withCache(container: Container!): Container! {
@@ -123,31 +122,17 @@ type DenoEnvironment {
       .withMountedCache("${DENO_DIR}", cache, expand: true)
   }
 
-  let withDependencies(ws: Workspace, container: Container!): Container! {
-    if (!self.install or ws == null) {
+  let withDependencies(container: Container!): Container! {
+    if (!self.install or self.packageRoot == null) {
       return container
     }
 
-    let root = findPackageRoot(ws)
-    if (root == null) {
-      return container
-    }
-
-    let source = ws.directory(
-      "/",
-      include: [
-        "deno.json",
-        "deno.jsonc",
-        "deno.lock",
-        "import_map.json",
-        "import-map.json",
-      ].map { Path(root).join(Path(_)).string.trimPrefix("/") },
-      gitignore: true,
-    )
+    let packageRoot = self.packageRoot!
+    let dependencySource = self.dependencySource!
 
     container
-      .withMountedDirectory("/work/src", source)
-      .withWorkdir(Path("/work/src").join(Path(root)).string)
+      .withMountedDirectory("/work/src", dependencySource)
+      .withWorkdir(Path("/work/src").join(Path(packageRoot)).string)
       .{
         let args = ["deno", "install"]
         if (self.locked) {
@@ -176,7 +161,6 @@ type DenoEnvironment {
   Run a Deno task in the source.
   """
   withRun(
-    ws: Workspace!,
     """
     Deno task to run.
     """
@@ -186,7 +170,7 @@ type DenoEnvironment {
     """
     args: [String!]! = [],
   ): Container! {
-    self.container(ws).withExec(["deno", "task", task] + args)
+    self.container.withExec(["deno", "task", task] + args)
   }
 }
 

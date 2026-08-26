@@ -12,6 +12,7 @@ type WorkerBuild {
   let args: [String!]! = []
 
   new(
+    ws: Workspace!,
     """
     worker-build version to install (default: auto-detect from Cargo.lock worker crate, then latest).
     """
@@ -120,7 +121,11 @@ type WorkerBuild {
     """
     args: [String!]! = [],
   ) {
+    version = version ?? packageVersion(ws, "worker")
+    wasmBindgenVersion = wasmBindgenVersion ?? packageVersion(ws, "wasm-bindgen")
+
     self.rustEnv = Dagger.rustEnvironment(
+      ws: ws,
       container: container,
       cargoRegistryIndexCache: cargoRegistryIndexCache,
       cargoRegistryArchiveCache: cargoRegistryArchiveCache,
@@ -132,11 +137,15 @@ type WorkerBuild {
     )
 
     self.buildEnv = Dagger.buildEnvironment(
-      overlay: moduleOverlay(
-        binaryenVersion,
-        esbuildVersion,
-        overlay,
-      ),
+      ws: ws,
+      overlay: Dagger.overlays.combine([
+        moduleOverlay(
+          binaryenVersion,
+          esbuildVersion,
+          overlay,
+        ),
+        moduleSourceOverlay(version, wasmBindgenVersion),
+      ]),
       envFile: envFile,
       sourceDateEpoch: sourceDateEpoch,
       gitignore: gitignore,
@@ -183,44 +192,21 @@ type WorkerBuild {
   Container with the Rust toolchain and worker-build installed.
   """
   container(
-    ws: Workspace,
     """
     Custom base container to use.
     """
     base: Container,
-    """
-    Ignore paths included in the gitignore file.
-    """
-    gitignore: Boolean,
-    """
-    Include only artifacts that match the given pattern (e.g., ["app/", "Cargo.*"]).
-    """
-    include: [String!],
-    """
-    Exclude artifacts that match the given pattern (e.g., ["target/", ".git*"]).
-    """
-    exclude: [String!],
   ): Container! {
     self
       .rustEnv
-      .container(ws, base)
-      .{
-        self.buildEnv.container(
-          ws,
-          _,
-          moduleSourceOverlay(ws, self.workerBuildVersion, self.wasmBindgenVersion),
-          gitignore,
-          include,
-          exclude,
-        )
-      }
+      .container(base: base)
+      .{ self.buildEnv.container(base: _) }
   }
 
   """
   Run worker-build and return the generated Worker output directory.
   """
   build(
-    ws: Workspace!,
     """
     Build in release mode.
     """
@@ -258,11 +244,11 @@ type WorkerBuild {
     }
 
     buildArgs += ["--out-dir", "/work/out"]
-    buildArgs += [Path("/work/src").join(Path(ws.cwd)).string]
+    buildArgs += [Path("/work/src").join(Path(self.buildEnv.cwd)).string]
     buildArgs += args
 
     self
-      .container(ws)
+      .container
       .withExec(buildArgs)
       .directory("/work/out")
   }
@@ -273,7 +259,6 @@ type WorkerBuild {
   This is a workaround until module wiring supports Directory.
   """
   buildAsContainer(
-    ws: Workspace!,
     """
     Build in release mode.
     """
@@ -297,7 +282,7 @@ type WorkerBuild {
   ): Container! {
     Dagger.container.withDirectory(
       "",
-      self.build(ws, release, dev, noOpt, panicUnwind, args),
+      self.build(release, dev, noOpt, panicUnwind, args),
     )
   }
 }

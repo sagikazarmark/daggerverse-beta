@@ -1,15 +1,15 @@
 type ContainerTests {
   defaults: Container! @check {
     Dagger
-      .rustEnvironment(version: rustVersion)
-      .container(ws: null)
+      .rustEnvironment(ws: Dagger.directory.asWorkspace, version: rustVersion)
+      .container
       .withExec(["cargo", "version"])
   }
 
   cargoHomeDefault: Void @check {
     let container = Dagger
-      .rustEnvironment(version: rustVersion)
-      .container(ws: null)
+      .rustEnvironment(ws: Dagger.directory.asWorkspace, version: rustVersion)
+      .container
 
     assert { container.envVariable("CARGO_HOME") == "/usr/local/cargo" }
   }
@@ -17,13 +17,14 @@ type ContainerTests {
   cargoHomeCustom: Void @check {
     let container = Dagger
       .rustEnvironment(
+        ws: Dagger.directory.asWorkspace,
         version: rustVersion,
         container: Dagger
           .container
           .from("rust:" + rustVersion)
           .withEnvVariable("CARGO_HOME", "/custom/cargo"),
       )
-      .container(ws: null)
+      .container
 
     assert { container.envVariable("CARGO_HOME") == "/custom/cargo" }
   }
@@ -31,28 +32,29 @@ type ContainerTests {
   cargoHomeEmpty: Void @check {
     let container = Dagger
       .rustEnvironment(
+        ws: Dagger.directory.asWorkspace,
         version: rustVersion,
         container: Dagger
           .container
           .from("rust:" + rustVersion)
           .withEnvVariable("CARGO_HOME", ""),
       )
-      .container(ws: null)
+      .container
 
     assert { container.envVariable("CARGO_HOME") == "/usr/local/cargo" }
   }
 
   emptyWorkspace: Container! @check {
     Dagger
-      .rustEnvironment(version: rustVersion)
-      .container(Dagger.directory.asWorkspace)
+      .rustEnvironment(ws: Dagger.directory.asWorkspace, version: rustVersion)
+      .container
       .withExec(["cargo", "version"])
   }
 
   realProjectSource: Container! @check {
     Dagger
-      .rustEnvironment(version: rustVersion)
-      .container(realProject.asWorkspace)
+      .rustEnvironment(ws: realProject.asWorkspace, version: rustVersion)
+      .container
       .withExec(["cargo", "version"])
   }
 }

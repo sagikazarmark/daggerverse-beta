@@ -15,8 +15,8 @@ let envFile: File! {
 type Tests {
   container: Void @check {
     let container = Dagger
-      .bunEnvironment(version: bunVersion)
-      .container(ws: null)
+      .bunEnvironment(ws: Dagger.directory.asWorkspace, version: bunVersion)
+      .container
 
     assert { container.mounts.contains("/root/.bun/install/cache") }
     assert { container.withExec(["bun", "--version"]).stdout.trimSpace == bunVersion }
@@ -25,13 +25,14 @@ type Tests {
   emptyCacheDir: Void @check {
     let container = Dagger
       .bunEnvironment(
+        ws: Dagger.directory.asWorkspace,
         version: bunVersion,
         container: Dagger
           .container
           .from("oven/bun:" + bunVersion)
           .withEnvVariable("BUN_INSTALL_CACHE_DIR", ""),
       )
-      .container(ws: null)
+      .container
 
     assert { container.envVariable("BUN_INSTALL_CACHE_DIR") == "/root/.bun/install/cache" }
     assert { container.mounts.contains("/root/.bun/install/cache") or container.mounts.contains("/root/.bun/install/cache/") }
@@ -39,8 +40,8 @@ type Tests {
 
   noCache: Void @check {
     let container = Dagger
-      .bunEnvironment(version: bunVersion, noCache: true)
-      .container(ws: null)
+      .bunEnvironment(ws: Dagger.directory.asWorkspace, version: bunVersion, noCache: true)
+      .container
 
     assert { !container.mounts.contains("/root/.bun/install/cache") }
   }
@@ -48,11 +49,12 @@ type Tests {
   envFileAndEpoch: Void @check {
     let container = Dagger
       .bunEnvironment(
+        ws: Dagger.directory.asWorkspace,
         version: bunVersion,
         envFile: envFile,
         sourceDateEpoch: "1234567890",
       )
-      .container(ws: null)
+      .container
 
     assert { container.envVariable("BUN_ENV_TEST") == "from-env-file" }
     assert { container.envVariable("SOURCE_DATE_EPOCH") == "1234567890" }
@@ -60,8 +62,8 @@ type Tests {
 
   withRun: Void @check {
     let output = Dagger
-      .bunEnvironment(version: bunVersion, install: true)
-      .withRun(bunProject.asWorkspace, "check")
+      .bunEnvironment(ws: bunProject.asWorkspace, version: bunVersion, install: true)
+      .withRun("check")
       .stdout
 
     assert { output.contains("bun-ok") }
@@ -69,8 +71,8 @@ type Tests {
 
   withRunNamedArgs: Void @check {
     let output = Dagger
-      .bunEnvironment(version: bunVersion, install: true)
-      .withRun(ws: bunProject.asWorkspace, script: "check")
+      .bunEnvironment(ws: bunProject.asWorkspace, version: bunVersion, install: true)
+      .withRun(script: "check")
       .stdout
 
     assert { output.contains("bun-ok") }
@@ -78,8 +80,8 @@ type Tests {
 
   lockedWithRun: Void @check {
     let output = Dagger
-      .bunEnvironment(version: bunVersion, install: true, locked: true)
-      .withRun(ws: bunLockedProject.asWorkspace, script: "check")
+      .bunEnvironment(ws: bunLockedProject.asWorkspace, version: bunVersion, install: true, locked: true)
+      .withRun(script: "check")
       .stdout
 
     assert { output.contains("bun-ok") }

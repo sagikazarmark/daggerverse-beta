@@ -3,11 +3,14 @@ type BunEnvironment {
 
   let cache: CacheVolume
   let buildEnv: BuildEnvironment!
+  let packageRoot: String
+  let dependencySource: Directory
 
   let install: Boolean!
   let locked: Boolean!
 
   new(
+    ws: Workspace!,
     """
     Version (image tag) to use from the official Bun image repository.
     """
@@ -58,6 +61,7 @@ type BunEnvironment {
 
     self.cache = cache
     self.buildEnv = Dagger.buildEnvironment(
+      ws: ws,
       envFile: envFile,
       sourceDateEpoch: sourceDateEpoch,
 
@@ -65,6 +69,22 @@ type BunEnvironment {
       include: include,
       exclude: exclude,
     )
+
+    let packageRoot = findPackageRoot(ws)
+    self.packageRoot = packageRoot
+    if (packageRoot != null) {
+      self.dependencySource = ws.directory(
+        "/",
+        include: [
+          "package.json",
+          "bun.lock",
+          "bun.lockb",
+          ".npmrc",
+          ".bunfig.toml",
+          "bunfig.toml",
+        ].map { Path(packageRoot!).join(Path(_)).string.trimPrefix("/") },
+      )
+    }
 
     self.install = install
     self.locked = locked
@@ -76,37 +96,16 @@ type BunEnvironment {
   Returns a container with the configured Bun environment.
   """
   container(
-    ws: Workspace,
     """
     Custom base container to use.
     """
     base: Container,
-    """
-    Ignore paths included in the gitignore file.
-    """
-    gitignore: Boolean,
-    """
-    Include only artifacts that match the given pattern (e.g., ["app/", "package.*"]).
-    """
-    include: [String!],
-    """
-    Exclude artifacts that match the given pattern (e.g., ["node_modules/", ".git*"]).
-    """
-    exclude: [String!],
   ): Container! {
     let base = (base ?? self.defaultContainer).{ self.withCache(_) }
 
     base
-      .{
-        self.buildEnv.container(
-          ws,
-          base,
-          gitignore: gitignore,
-          include: include,
-          exclude: exclude,
-        )
-      }
-      .{ self.withDependencies(ws, _, base) }
+      .{ self.buildEnv.container(base: base) }
+      .{ self.withDependencies(_, base) }
   }
 
   let withCache(container: Container!): Container! {
@@ -125,34 +124,19 @@ type BunEnvironment {
   }
 
   let withDependencies(
-    ws: Workspace,
     container: Container!,
     installContainer: Container!,
   ): Container! {
-    if (!self.install or ws == null) {
+    if (!self.install or self.packageRoot == null) {
       return container
     }
 
-    let root = findPackageRoot(ws)
-    if (root == null) {
-      return container
-    }
-
-    let source = ws.directory(
-      "/",
-      include: [
-        "package.json",
-        "bun.lock",
-        "bun.lockb",
-        ".npmrc",
-        ".bunfig.toml",
-        "bunfig.toml",
-      ].map { Path(root).join(Path(_)).string.trimPrefix("/") },
-    )
+    let packageRoot = self.packageRoot!
+    let dependencySource = self.dependencySource!
 
     let dependencies = installContainer
-      .withMountedDirectory("/work/src", source)
-      .withWorkdir(Path("/work/src").join(Path(root)).string)
+      .withMountedDirectory("/work/src", dependencySource)
+      .withWorkdir(Path("/work/src").join(Path(packageRoot)).string)
       .{
         let args = ["bun", "install"]
         if (self.locked) {
@@ -164,7 +148,7 @@ type BunEnvironment {
       .directory("node_modules")
 
     container.withMountedDirectory(
-      Path("/work/src").join(Path(root)).join("node_modules").string,
+      Path("/work/src").join(Path(packageRoot)).join("node_modules").string,
       dependencies,
     )
   }
@@ -188,7 +172,6 @@ type BunEnvironment {
   Run a Bun package script in the source.
   """
   withRun(
-    ws: Workspace!,
     """
     Package script to run.
     """
@@ -198,6 +181,6 @@ type BunEnvironment {
     """
     args: [String!]! = [],
   ): Container! {
-    self.container(ws).withExec(["bun", "run", script] + args)
+    self.container.withExec(["bun", "run", script] + args)
   }
 }

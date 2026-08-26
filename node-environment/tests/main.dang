@@ -15,8 +15,8 @@ let envFile: File! {
 type Tests {
   container: Void @check {
     let container = Dagger
-      .nodeEnvironment(version: nodeVersion)
-      .container(ws: null)
+      .nodeEnvironment(ws: Dagger.directory.asWorkspace, version: nodeVersion)
+      .container
 
     assert { container.mounts.contains("/root/.npm") }
     assert { container.withExec(["node", "--version"]).stdout.contains("v22.") }
@@ -25,13 +25,14 @@ type Tests {
   emptyCacheDir: Void @check {
     let container = Dagger
       .nodeEnvironment(
+        ws: Dagger.directory.asWorkspace,
         version: nodeVersion,
         container: Dagger
           .container
           .from("node:" + nodeVersion)
           .withEnvVariable("NPM_CONFIG_CACHE", ""),
       )
-      .container(ws: null)
+      .container
 
     assert { container.envVariable("NPM_CONFIG_CACHE") == "/root/.npm" }
     assert { container.mounts.contains("/root/.npm") or container.mounts.contains("/root/.npm/") }
@@ -39,8 +40,8 @@ type Tests {
 
   noCache: Void @check {
     let container = Dagger
-      .nodeEnvironment(version: nodeVersion, noCache: true)
-      .container(ws: null)
+      .nodeEnvironment(ws: Dagger.directory.asWorkspace, version: nodeVersion, noCache: true)
+      .container
 
     assert { !container.mounts.contains("/root/.npm") }
   }
@@ -48,11 +49,12 @@ type Tests {
   envFileAndEpoch: Void @check {
     let container = Dagger
       .nodeEnvironment(
+        ws: Dagger.directory.asWorkspace,
         version: nodeVersion,
         envFile: envFile,
         sourceDateEpoch: "1234567890",
       )
-      .container(ws: null)
+      .container
 
     assert { container.envVariable("NODE_ENV_TEST") == "from-env-file" }
     assert { container.envVariable("SOURCE_DATE_EPOCH") == "1234567890" }
@@ -60,8 +62,8 @@ type Tests {
 
   withRun: Void @check {
     let output = Dagger
-      .nodeEnvironment(version: nodeVersion, install: true)
-      .withRun(nodeProject.asWorkspace, "check")
+      .nodeEnvironment(ws: nodeProject.asWorkspace, version: nodeVersion, install: true)
+      .withRun("check")
       .stdout
 
     assert { output.contains("node-ok") }
@@ -69,8 +71,8 @@ type Tests {
 
   withRunNamedArgs: Void @check {
     let output = Dagger
-      .nodeEnvironment(version: nodeVersion, install: true)
-      .withRun(ws: nodeProject.asWorkspace, script: "check")
+      .nodeEnvironment(ws: nodeProject.asWorkspace, version: nodeVersion, install: true)
+      .withRun(script: "check")
       .stdout
 
     assert { output.contains("node-ok") }
@@ -78,8 +80,8 @@ type Tests {
 
   withRunScriptArgs: Void @check {
     let output = Dagger
-      .nodeEnvironment(version: nodeVersion, install: true)
-      .withRun(ws: nodeProject.asWorkspace, script: "args", args: ["one", "two"])
+      .nodeEnvironment(ws: nodeProject.asWorkspace, version: nodeVersion, install: true)
+      .withRun(script: "args", args: ["one", "two"])
       .stdout
 
     assert { output.contains("one,two") }
@@ -88,8 +90,8 @@ type Tests {
 
   lockedWithRun: Void @check {
     let output = Dagger
-      .nodeEnvironment(version: nodeVersion, install: true, locked: true)
-      .withRun(ws: nodeLockedProject.asWorkspace, script: "check")
+      .nodeEnvironment(ws: nodeLockedProject.asWorkspace, version: nodeVersion, install: true, locked: true)
+      .withRun(script: "check")
       .stdout
 
     assert { output.contains("node-ok") }

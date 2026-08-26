@@ -13,7 +13,7 @@ type Tests {
   ) {
     self.dioxusVersion = (version ?? Dagger.github.releases("DioxusLabs/dioxus").latest.tagName).trimPrefix("v")
     self.source = Dagger.git("https://github.com/DioxusLabs/dioxus.git").tag("v" + self.dioxusVersion).tree
-    self.wasmBindgenVersion = Dagger.cargoLock(self.source.asWorkspace).findOne("wasm-bindgen")!.version
+    self.wasmBindgenVersion = Dagger.cargoLock(ws: self.source.asWorkspace).findOne("wasm-bindgen")!.version
 
     self
   }
@@ -22,8 +22,9 @@ type Tests {
     `dioxus = { version = "${self.dioxusVersion}", features = ["web"] }` + "\n" + `wasm-bindgen = "=${self.wasmBindgenVersion}"`
   }
 
-  let dioxus: Dioxus! {
+  let dioxus(ws: Workspace!): Dioxus! {
     Dagger.dioxus(
+      ws: ws,
       version: self.dioxusVersion,
       wasmBindgenVersion: self.wasmBindgenVersion,
       rustVersion: rustVersion,
@@ -32,8 +33,8 @@ type Tests {
 
   let buildExample(source: Directory!): Directory! {
     let output = self
-      .dioxus
-      .bundle(ws: source.asWorkspace, platform: DioxusPlatform.WEB)
+      .dioxus(source.asWorkspace)
+      .bundle(platform: DioxusPlatform.WEB)
       .directory("public")
 
     assert { output.file("index.html").contents.contains("main") }
@@ -45,7 +46,7 @@ type Tests {
     let template = Dagger.git("https://github.com/DioxusLabs/dioxus-template.git").branch("v0.7").tree
 
     self
-      .dioxus
+      .dioxus(Dagger.directory.asWorkspace)
       .init("test", template, "Bare-Bones")
       .withOption("default_platform", "web")
       .withOption("is_tailwind", "true")
@@ -54,8 +55,8 @@ type Tests {
 
   build: Container! @check {
     Dagger
-      .dioxus(rustVersion: rustVersion)
-      .container(ws: init.asWorkspace)
+      .dioxus(ws: init.asWorkspace, rustVersion: rustVersion)
+      .container
       .withExec(["dx", "build"])
   }
 
@@ -117,8 +118,8 @@ type Tests {
 
   serve: Void @check {
     let service = Dagger
-      .dioxus(rustVersion: rustVersion)
-      .serve(ws: init.asWorkspace)
+      .dioxus(ws: init.asWorkspace, rustVersion: rustVersion)
+      .serve
 
     let response = Dagger.http(service.endpoint(scheme: "http"), experimentalServiceHost: service)
 

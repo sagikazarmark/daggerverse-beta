@@ -2,7 +2,6 @@ type CargoLock {
   let file: File!
 
   new(
-    # TODO: make this nullable (or maybe even remove?)
     ws: Workspace!,
     """
     Cargo.lock file to use.

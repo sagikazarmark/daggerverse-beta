@@ -1,5 +1,7 @@
 type BuildEnvironment {
   mountPath: String!
+  let source: Directory!
+  let cwd: String!
 
   let defaultContainer: Container!
 
@@ -8,11 +10,8 @@ type BuildEnvironment {
   let envVariables: [EnvVariable!]! = []
   let sourceDateEpoch: String
 
-  let gitignore: Boolean
-  let include: [String!]
-  let exclude: [String!]
-
   new(
+    ws: Workspace!,
     """
     Default container.
     """
@@ -47,16 +46,19 @@ type BuildEnvironment {
     mountPath: String! = "/work/src",
   ) {
     self.mountPath = mountPath
+    self.source = ws.directory(
+      "/",
+      exclude: exclude,
+      include: include,
+      gitignore: gitignore,
+    )
+    self.cwd = ws.cwd
 
     self.defaultContainer = container
 
     self.overlay = overlay
     self.envFile = envFile
     self.sourceDateEpoch = sourceDateEpoch
-
-    self.gitignore = gitignore
-    self.include = include
-    self.exclude = exclude
 
     self
   }
@@ -88,7 +90,6 @@ type BuildEnvironment {
   Returns a container with the configured environment.
   """
   container(
-    ws: Workspace,
     """
     Custom base container to use.
     """
@@ -97,62 +98,13 @@ type BuildEnvironment {
     Additional overlay to apply to the container.
     """
     overlay: Overlay,
-    """
-    Ignore paths included in the gitignore file.
-    """
-    gitignore: Boolean,
-    """
-    Include only artifacts that match the given pattern (e.g., ["app/", "package.*"]).
-    """
-    include: [String!],
-    """
-    Exclude artifacts that match the given pattern (e.g., ["node_modules/", ".git*"]).
-    """
-    exclude: [String!],
   ): Container! {
     (base ?? self.defaultContainer)
       .{ self.withOverlay(_, overlay) }
       .{ self.withEnvFile(_) }
       .{ self.withEpoch(_) }
       .{ self.withEnv(_) }
-      .{
-        self.withSource(
-          _,
-          ws.directory(
-            "/",
-            exclude: exclude ?? self.exclude,
-            include: include ?? self.include,
-            gitignore: gitignore ?? self.gitignore,
-          ),
-          ws.cwd,
-        )
-      }
-  }
-
-  """
-  Returns the source.
-  """
-  source(
-    ws: Workspace!,
-    """
-    Ignore paths included in the gitignore file.
-    """
-    gitignore: Boolean,
-    """
-    Include only artifacts that match the given pattern (e.g., ["app/", "package.*"]).
-    """
-    include: [String!],
-    """
-    Exclude artifacts that match the given pattern (e.g., ["node_modules/", ".git*"]).
-    """
-    exclude: [String!],
-  ): Directory! {
-    ws.directory(
-      "/",
-      exclude: exclude ?? self.exclude,
-      include: include ?? self.include,
-      gitignore: gitignore ?? self.gitignore,
-    )
+      .{ self.withSource(_, self.source, self.cwd) }
   }
 
   let withOverlay(container: Container!, overlay: Overlay): Container! {

@@ -48,10 +48,11 @@ type Tests {
   detectsDenoFirst: Void @check {
     let output = Dagger
       .javascriptEnvironment(
+        ws: denoProject.asWorkspace,
         install: true,
         denoVersion: denoVersion,
       )
-      .withRun(denoProject.asWorkspace, "check")
+      .withRun("check")
       .stdout
 
     assert { output.contains("deno-auto") }
@@ -60,10 +61,11 @@ type Tests {
   detectsBunBeforeNode: Void @check {
     let output = Dagger
       .javascriptEnvironment(
+        ws: bunProject.asWorkspace,
         install: true,
         bunVersion: bunVersion,
       )
-      .withRun(bunProject.asWorkspace, "check")
+      .withRun("check")
       .stdout
 
     assert { output.contains("bun-auto") }
@@ -72,10 +74,11 @@ type Tests {
   detectsNode: Void @check {
     let output = Dagger
       .javascriptEnvironment(
+        ws: nodeProject.asWorkspace,
         install: true,
         nodeVersion: nodeVersion,
       )
-      .withRun(nodeProject.asWorkspace, "check")
+      .withRun("check")
       .stdout
 
     assert { output.contains("node-auto") }
@@ -84,10 +87,11 @@ type Tests {
   sourceAndCwd: Void @check {
     let output = Dagger
       .javascriptEnvironment(
+        ws: nestedNodeProject.asWorkspace("/app"),
         install: true,
         nodeVersion: nodeVersion,
       )
-      .withRun(nestedNodeProject.asWorkspace("/app"), "check")
+      .withRun("check")
       .stdout
 
     assert { output.contains("node-auto") }
@@ -96,10 +100,11 @@ type Tests {
   runtimeOverrideWithoutSource: Void @check {
     let output = Dagger
       .javascriptEnvironment(
+        ws: Dagger.directory.asWorkspace,
         runtime: JavascriptEnvironmentRuntime.NODE,
         nodeVersion: nodeVersion,
       )
-      .container(ws: null)
+      .container
       .withExec(["node", "--version"])
       .stdout
 
@@ -109,12 +114,13 @@ type Tests {
   envFileAndEpoch: Void @check {
     let container = Dagger
       .javascriptEnvironment(
+        ws: Dagger.directory.asWorkspace,
         runtime: JavascriptEnvironmentRuntime.NODE,
         envFile: envFile,
         sourceDateEpoch: "1234567890",
         nodeVersion: nodeVersion,
       )
-      .container(ws: null)
+      .container
 
     assert { container.envVariable("JAVASCRIPT_ENV_TEST") == "from-env-file" }
     assert { container.envVariable("SOURCE_DATE_EPOCH") == "1234567890" }
@@ -123,11 +129,12 @@ type Tests {
   runtimeOverride: Void @check {
     let output = Dagger
       .javascriptEnvironment(
+        ws: mixedProject.asWorkspace("/node"),
         runtime: JavascriptEnvironmentRuntime.NODE,
         install: true,
         nodeVersion: nodeVersion,
       )
-      .withRun(ws: mixedProject.asWorkspace("/node"), task: "check")
+      .withRun(task: "check")
       .stdout
 
     assert { output.contains("node-auto") }
@@ -136,12 +143,13 @@ type Tests {
   locked: Void @check {
     let output = Dagger
       .javascriptEnvironment(
+        ws: nodeLockedProject.asWorkspace,
         runtime: JavascriptEnvironmentRuntime.NODE,
         install: true,
         locked: true,
         nodeVersion: nodeVersion,
       )
-      .withRun(ws: nodeLockedProject.asWorkspace, task: "check")
+      .withRun(task: "check")
       .stdout
 
     assert { output.contains("node-auto") }
@@ -150,10 +158,11 @@ type Tests {
   tailwindBun: Void @check {
     let css = Dagger
       .javascriptEnvironment(
+        ws: tailwindBunProject.asWorkspace,
         install: true,
         bunVersion: bunVersion,
       )
-      .withRun(tailwindBunProject.asWorkspace, "build")
+      .withRun("build")
       .file("/work/src/assets/tailwind.css")
       .contents
 
@@ -164,10 +173,11 @@ type Tests {
   tailwindNode: Void @check {
     let css = Dagger
       .javascriptEnvironment(
+        ws: tailwindProject.asWorkspace,
         install: true,
         nodeVersion: nodeVersion,
       )
-      .withRun(tailwindProject.asWorkspace, "build")
+      .withRun("build")
       .file("/work/src/assets/tailwind.css")
       .contents
 

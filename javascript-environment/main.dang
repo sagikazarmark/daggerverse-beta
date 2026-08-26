@@ -1,29 +1,11 @@
 type JavascriptEnvironment {
-  let runtime: Runtime
-
-  let gitignore: Boolean
-  let include: [String!]
-  let exclude: [String!]
-
-  let envFile: File
-  let sourceDateEpoch: String
-
-  let install: Boolean!
-  let locked: Boolean!
-
-  let nodeVersion: String!
-  let nodeContainer: Container!
-  let nodeCache: CacheVolume
-
-  let bunVersion: String!
-  let bunContainer: Container!
-  let bunCache: CacheVolume
-
-  let denoVersion: String!
-  let denoContainer: Container!
-  let denoCache: CacheVolume
+  let runtime: Runtime!
+  let nodeEnv: NodeEnvironment
+  let bunEnv: BunEnvironment
+  let denoEnv: DenoEnvironment
 
   new(
+    ws: Workspace!,
     """
     Runtime to use. If unset, the runtime is detected from package files starting at the workspace cwd.
     """
@@ -97,29 +79,54 @@ type JavascriptEnvironment {
     """
     denoCache: CacheVolume = if (!noCache) { Dagger.cacheVolume("deno") } else null,
   ) {
-    self.runtime = runtime
+    self.runtime = runtime ?? detectRuntime(ws)
 
-    self.gitignore = gitignore
-    self.include = include
-    self.exclude = exclude
+    case (self.runtime) {
+      Runtime.DENO => {
+        self.denoEnv = Dagger.denoEnvironment(
+          ws: ws,
+          container: denoContainer,
+          envFile: envFile,
+          sourceDateEpoch: sourceDateEpoch,
+          gitignore: gitignore,
+          include: include,
+          exclude: exclude,
+          install: install,
+          locked: locked,
+          cache: denoCache,
+        )
+      }
 
-    self.envFile = envFile
-    self.sourceDateEpoch = sourceDateEpoch
+      Runtime.BUN => {
+        self.bunEnv = Dagger.bunEnvironment(
+          ws: ws,
+          container: bunContainer,
+          envFile: envFile,
+          sourceDateEpoch: sourceDateEpoch,
+          gitignore: gitignore,
+          include: include,
+          exclude: exclude,
+          install: install,
+          locked: locked,
+          cache: bunCache,
+        )
+      }
 
-    self.install = install
-    self.locked = locked
-
-    self.nodeVersion = nodeVersion
-    self.nodeContainer = nodeContainer
-    self.nodeCache = nodeCache
-
-    self.bunVersion = bunVersion
-    self.bunContainer = bunContainer
-    self.bunCache = bunCache
-
-    self.denoVersion = denoVersion
-    self.denoContainer = denoContainer
-    self.denoCache = denoCache
+      Runtime.NODE => {
+        self.nodeEnv = Dagger.nodeEnvironment(
+          ws: ws,
+          container: nodeContainer,
+          envFile: envFile,
+          sourceDateEpoch: sourceDateEpoch,
+          gitignore: gitignore,
+          include: include,
+          exclude: exclude,
+          install: install,
+          locked: locked,
+          cache: nodeCache,
+        )
+      }
+    }
 
     self
   }
@@ -128,52 +135,17 @@ type JavascriptEnvironment {
   Container for the detected or configured JavaScript runtime.
   """
   container(
-    ws: Workspace,
     """
     Custom base container to use.
     """
     base: Container,
-    """
-    Ignore paths included in the gitignore file.
-    """
-    gitignore: Boolean,
-    """
-    Include only artifacts that match the given pattern (e.g., ["app/", "package.*"]).
-    """
-    include: [String!],
-    """
-    Exclude artifacts that match the given pattern (e.g., ["node_modules/", ".git*"]).
-    """
-    exclude: [String!],
   ): Container! {
-    let runtime = self.resolveRuntime(ws)
+    case (self.runtime) {
+      Runtime.DENO => self.denoEnv!.container(base: base)
+      Runtime.BUN => self.bunEnv!.container(base: base)
+      Runtime.NODE => self.nodeEnv!.container(base: base)
 
-    case (runtime) {
-      Runtime.DENO => self.denoEnv.container(
-        ws: ws,
-        base: base,
-        gitignore: gitignore ?? self.gitignore,
-        include: include ?? self.include,
-        exclude: exclude ?? self.exclude,
-      )
-
-      Runtime.BUN => self.bunEnv.container(
-        ws: ws,
-        base: base,
-        gitignore: gitignore ?? self.gitignore,
-        include: include ?? self.include,
-        exclude: exclude ?? self.exclude,
-      )
-
-      Runtime.NODE => self.nodeEnv.container(
-        ws: ws,
-        base: base,
-        gitignore: gitignore ?? self.gitignore,
-        include: include ?? self.include,
-        exclude: exclude ?? self.exclude,
-      )
-
-      else => raise "unsupported JavaScript runtime: " + toString(runtime)
+      else => raise "unsupported JavaScript runtime: " + toString(self.runtime)
     }
   }
 
@@ -181,7 +153,6 @@ type JavascriptEnvironment {
   Run a task with the selected JavaScript runtime.
   """
   withRun(
-    ws: Workspace!,
     """
     Runtime task or package script to run.
     """
@@ -191,61 +162,13 @@ type JavascriptEnvironment {
     """
     args: [String!]! = [],
   ): Container! {
-    let runtime = self.resolveRuntime(ws)
+    case (self.runtime) {
+      Runtime.DENO => self.denoEnv!.withRun(task: task, args: args)
+      Runtime.BUN => self.bunEnv!.withRun(script: task, args: args)
+      Runtime.NODE => self.nodeEnv!.withRun(script: task, args: args)
 
-    case (runtime) {
-      Runtime.DENO => self.denoEnv.withRun(ws: ws, task: task, args: args)
-      Runtime.BUN => self.bunEnv.withRun(ws: ws, script: task, args: args)
-      Runtime.NODE => self.nodeEnv.withRun(ws: ws, script: task, args: args)
-
-      else => raise "unsupported JavaScript runtime: " + toString(runtime)
+      else => raise "unsupported JavaScript runtime: " + toString(self.runtime)
     }
-  }
-
-  let nodeEnv: NodeEnvironment! {
-    Dagger.nodeEnvironment(
-      container: self.nodeContainer,
-      envFile: self.envFile,
-      sourceDateEpoch: self.sourceDateEpoch,
-      install: self.install,
-      locked: self.locked,
-      cache: self.nodeCache,
-    )
-  }
-
-  let bunEnv: BunEnvironment! {
-    Dagger.bunEnvironment(
-      container: self.bunContainer,
-      envFile: self.envFile,
-      sourceDateEpoch: self.sourceDateEpoch,
-      install: self.install,
-      locked: self.locked,
-      cache: self.bunCache,
-    )
-  }
-
-  let denoEnv: DenoEnvironment! {
-    Dagger.denoEnvironment(
-      container: self.denoContainer,
-      envFile: self.envFile,
-      sourceDateEpoch: self.sourceDateEpoch,
-      install: self.install,
-      locked: self.locked,
-      cache: self.denoCache,
-    )
-  }
-
-  let resolveRuntime(ws: Workspace): Runtime! {
-    let runtime = self.runtime
-    if (runtime != null) {
-      return runtime
-    }
-
-    if (ws == null) {
-      raise "No Deno, Bun, or npm package file found: no workspace was provided"
-    }
-
-    detectRuntime(ws)
   }
 }
 

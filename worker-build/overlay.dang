@@ -26,13 +26,9 @@ let moduleOverlay(
 }
 
 let moduleSourceOverlay(
-  ws: Workspace,
   workerBuildVersion: String,
   wasmBindgenVersion: String,
 ): OverlaysList! {
-  workerBuildVersion = workerBuildVersion ?? packageVersion(ws, "worker")
-  wasmBindgenVersion = wasmBindgenVersion ?? packageVersion(ws, "wasm-bindgen")
-
   let installArgs: [String!]! = ["cargo", "install", "worker-build", "--locked"]
   if (workerBuildVersion != null and workerBuildVersion != "") {
     installArgs += ["--version", workerBuildVersion]

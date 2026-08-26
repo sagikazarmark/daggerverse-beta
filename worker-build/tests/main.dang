@@ -26,8 +26,9 @@ type Tests {
     self
   }
 
-  let workerBuild: WorkerBuild! {
+  let workerBuild(ws: Workspace!): WorkerBuild! {
     Dagger.workerBuild(
+      ws: ws,
       rustVersion: rustVersion,
       container: self.container,
     )
@@ -40,30 +41,32 @@ type Tests {
     let ws = Dagger.directory.asWorkspace
     let defaultContainer = Dagger
       .workerBuild(
+        ws: ws,
         version: "0.8.5",
         rustVersion: rustVersion,
         container: self.container,
       )
-      .container(ws: ws)
+      .container
 
     assert { defaultContainer.envVariable("WASM_OPT_BIN") == null }
 
     let overriddenContainer = Dagger
       .workerBuild(
+        ws: ws,
         version: "0.8.5",
         binaryenVersion: "version_130",
         rustVersion: rustVersion,
         container: self.container,
       )
-      .container(ws: ws)
+      .container
 
     assert { overriddenContainer.envVariable("WASM_OPT_BIN") == "wasm-opt" }
   }
 
   let buildExample(source: Directory! = self.source, name: String!): Directory! {
     let output = self
-      .workerBuild
-      .build(ws: source.asWorkspace("examples/" + name))
+      .workerBuild(source.asWorkspace("examples/" + name))
+      .build
       .withFile(
         "wrangler.toml",
         Dagger

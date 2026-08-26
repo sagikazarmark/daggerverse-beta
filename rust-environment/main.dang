@@ -1,14 +1,21 @@
 type RustEnvironment {
   let defaultContainer: Container!
 
-  let cargoRegistryIndexCache: CacheVolume
-  let cargoRegistryArchiveCache: CacheVolume
-  let cargoGitDbCache: CacheVolume
+  let toolchainFile: File
+  let toolchainPath: String
+
+  let cwd: String!
+
   let overlay: Overlay
   let targets: [String!]!
   let components: [String!]!
 
+  let cargoRegistryIndexCache: CacheVolume
+  let cargoRegistryArchiveCache: CacheVolume
+  let cargoGitDbCache: CacheVolume
+
   new(
+    ws: Workspace!,
     """
     Version (image tag) to use from the official Rust image repository as the default container.
     """
@@ -55,12 +62,21 @@ type RustEnvironment {
   ) {
     self.defaultContainer = container
 
-    self.cargoRegistryIndexCache = cargoRegistryIndexCache
-    self.cargoRegistryArchiveCache = cargoRegistryArchiveCache
-    self.cargoGitDbCache = cargoGitDbCache
+    let toolchainPath = ws.findUp("rust-toolchain.toml")
+    self.toolchainPath = toolchainPath
+    if (toolchainPath != null) {
+      self.toolchainFile = ws.file(toolchainPath)
+    }
+
+    self.cwd = ws.cwd
+
     self.overlay = overlay
     self.targets = targets
     self.components = components
+
+    self.cargoRegistryIndexCache = cargoRegistryIndexCache
+    self.cargoRegistryArchiveCache = cargoRegistryArchiveCache
+    self.cargoGitDbCache = cargoGitDbCache
 
     self
   }
@@ -69,7 +85,6 @@ type RustEnvironment {
   Returns a container with the configured Rust environment.
   """
   container(
-    ws: Workspace,
     """
     Custom base container to use.
     """
@@ -78,7 +93,7 @@ type RustEnvironment {
     (base ?? self.defaultContainer)
       .{ self.withDefaults(_) }
       .{ self.withCache(_) }
-      .{ self.rustup(ws, _) }
+      .{ self.rustup(_) }
       .{ self.withOverlay(_) }
   }
 
@@ -94,6 +109,7 @@ type RustEnvironment {
           _.withEnvVariable("CARGO_TARGET_DIR", "/target")
         } else _
       }
+      .withEnvVariable("CARGO_INCREMENTAL", "0")
       .withExec(["rustup", "set", "auto-self-update", "disable"])
       .withExec(["rustup", "set", "auto-install", "disable"])
   }
@@ -106,6 +122,7 @@ type RustEnvironment {
             "${CARGO_HOME}/registry/index",
             cargoRegistryIndexCache,
             expand: true,
+            sharing: Dagger.CacheSharingMode.LOCKED,
           )
         } else _
       }
@@ -115,6 +132,7 @@ type RustEnvironment {
             "${CARGO_HOME}/registry/cache",
             cargoRegistryArchiveCache,
             expand: true,
+            sharing: Dagger.CacheSharingMode.LOCKED,
           )
         } else _
       }
@@ -124,31 +142,33 @@ type RustEnvironment {
             "${CARGO_HOME}/git/db",
             cargoGitDbCache,
             expand: true,
+            sharing: Dagger.CacheSharingMode.LOCKED,
           )
         } else _
       }
   }
 
-  let rustup(ws: Workspace, container: Container!): Container! {
-    let toolchainFile = ws.findUp("rust-toolchain.toml")
-
+  let rustup(container: Container!): Container! {
     let sourceDir = "/tmp/rust-environment/src"
+
+    let toolchainFile = self.toolchainFile
+    let toolchainPath = self.toolchainPath
 
     container
       .{
-        if (ws != null and toolchainFile != null) {
+        if (toolchainFile != null) {
           _
-            .withWorkdir(sourceDir + ws.cwd)
-            .withMountedFile(sourceDir + toolchainFile, ws.file(toolchainFile))
+            .withWorkdir(sourceDir + self.cwd)
+            .withMountedFile(sourceDir + toolchainPath!, toolchainFile!)
             .withExec(["rustup", "toolchain", "install", "--no-self-update"])
         } else _
       }
       .{ self.withTargets(_) }
       .{ self.withComponents(_) }
       .{
-        if (ws != null and toolchainFile != null) {
+        if (toolchainFile != null) {
           _
-            .withoutMount(sourceDir + toolchainFile)
+            .withoutMount(sourceDir + toolchainPath!)
             .withoutWorkdir
         } else _
       }

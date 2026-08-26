@@ -15,6 +15,7 @@ type WasmPack {
   defaultTestArgs: [String!]!
 
   new(
+    ws: Workspace!,
     """
     wasm-pack version to use (default: latest).
     """
@@ -105,7 +106,10 @@ type WasmPack {
       Dagger.cacheVolume("cargo-git-db")
     } else null,
   ) {
+    wasmBindgenVersion = wasmBindgenVersion ?? packageVersion(ws, "wasm-bindgen")
+
     self.rustEnv = Dagger.rustEnvironment(
+      ws: ws,
       container: container,
       cargoRegistryIndexCache: cargoRegistryIndexCache,
       cargoRegistryArchiveCache: cargoRegistryArchiveCache,
@@ -117,7 +121,11 @@ type WasmPack {
     )
 
     self.buildEnv = Dagger.buildEnvironment(
-      overlay: moduleOverlay(version, installBrowsers, overlay),
+      ws: ws,
+      overlay: Dagger.overlays.combine([
+        moduleOverlay(version, installBrowsers, overlay),
+        moduleSourceOverlay(wasmBindgenVersion),
+      ]),
       envFile: envFile,
       sourceDateEpoch: sourceDateEpoch,
       gitignore: gitignore,
@@ -137,44 +145,21 @@ type WasmPack {
   Container with the Rust toolchain and wasm-pack installed.
   """
   container(
-    ws: Workspace,
     """
     Custom base container to use.
     """
     base: Container,
-    """
-    Ignore paths included in the gitignore file.
-    """
-    gitignore: Boolean,
-    """
-    Include only artifacts that match the given pattern (e.g., ["app/", "Cargo.*"]).
-    """
-    include: [String!],
-    """
-    Exclude artifacts that match the given pattern (e.g., ["target/", ".git*"]).
-    """
-    exclude: [String!],
   ): Container! {
     self
       .rustEnv
-      .container(ws, base)
-      .{
-        self.buildEnv.container(
-          ws,
-          _,
-          moduleSourceOverlay(ws, self.wasmBindgenVersion),
-          gitignore,
-          include,
-          exclude,
-        )
-      }
+      .container(base: base)
+      .{ self.buildEnv.container(base: _) }
   }
 
   """
   Run wasm-pack tests.
   """
   test(
-    ws: Workspace!,
     """
     Runs wasm-pack tests using the specified browsers.
     """
@@ -194,7 +179,7 @@ type WasmPack {
       _args += args
     }
 
-    self.container(ws).withExec(_args, experimentalPrivilegedNesting: true)
+    self.container.withExec(_args, experimentalPrivilegedNesting: true)
   }
 }
 

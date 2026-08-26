@@ -14,9 +14,7 @@ let moduleOverlay(
   ])
 }
 
-let moduleSourceOverlay(ws: Workspace, wasmBindgenVersion: String): OverlaysList! {
-  wasmBindgenVersion = wasmBindgenVersion ?? packageVersion(ws, "wasm-bindgen")
-
+let moduleSourceOverlay(wasmBindgenVersion: String): OverlaysList! {
   Dagger.overlays.combine([
     Dagger.wasmTools.withTool(WasmToolsTool.WASM_BINDGEN, wasmBindgenVersion),
   ])

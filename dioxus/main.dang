@@ -6,6 +6,7 @@ type Dioxus {
   let wasmBindgenVersion: String
 
   new(
+    ws: Workspace!,
     """
     Dioxus CLI version to use (default: auto-detect from Cargo.lock).
     """
@@ -102,25 +103,35 @@ type Dioxus {
       Dagger.cacheVolume("cargo-git-db")
     } else null,
   ) {
+    version = version ?? packageVersion(ws, "dioxus")
+    wasmBindgenVersion = wasmBindgenVersion ?? packageVersion(ws, "wasm-bindgen")
+
     self.rustEnv = Dagger.rustEnvironment(
+      ws: ws,
       container: container,
-      cargoRegistryIndexCache: cargoRegistryIndexCache,
-      cargoRegistryArchiveCache: cargoRegistryArchiveCache,
-      cargoGitDbCache: cargoGitDbCache,
 
       overlay: rustOverlay,
       targets: ["wasm32-unknown-unknown"] + targets,
       components: ["rust-std"] + components,
+
+      cargoRegistryIndexCache: cargoRegistryIndexCache,
+      cargoRegistryArchiveCache: cargoRegistryArchiveCache,
+      cargoGitDbCache: cargoGitDbCache,
     )
 
     self.buildEnv = Dagger.buildEnvironment(
-      overlay: moduleOverlay(
-        wasmPackVersion,
-        binaryenVersion,
-        esbuildVersion,
-        tailwindVersion,
-        overlay,
-      ),
+      ws: ws,
+      overlay: Dagger.overlays.combine([
+        moduleOverlay(
+          wasmPackVersion,
+          binaryenVersion,
+          esbuildVersion,
+          tailwindVersion,
+          overlay,
+        ),
+
+        moduleSourceOverlay(version, wasmBindgenVersion),
+      ]),
       envFile: envFile,
       sourceDateEpoch: sourceDateEpoch,
       gitignore: gitignore,
@@ -161,44 +172,21 @@ type Dioxus {
   Container with the Rust and Dioxus toolchains installed.
   """
   container(
-    ws: Workspace,
     """
     Custom base container to use.
     """
     base: Container,
-    """
-    Ignore paths included in the gitignore file.
-    """
-    gitignore: Boolean,
-    """
-    Include only artifacts that match the given pattern (e.g., ["app/", "Cargo.*"]).
-    """
-    include: [String!],
-    """
-    Exclude artifacts that match the given pattern (e.g., ["target/", ".git*"]).
-    """
-    exclude: [String!],
   ): Container! {
     self
       .rustEnv
-      .container(ws, base)
-      .{
-        self.buildEnv.container(
-          ws,
-          _,
-          moduleSourceOverlay(ws, self.dioxusVersion, self.wasmBindgenVersion),
-          gitignore,
-          include,
-          exclude,
-        )
-      }
+      .container(base: base)
+      .{ self.buildEnv.container(base: _) }
   }
 
   """
   Bundle the Dioxus app into a shippable object.
   """
   bundle(
-    ws: Workspace!,
     """
     Package types to bundle.
     """
@@ -378,7 +366,7 @@ type Dioxus {
     )
 
     self
-      .container(ws)
+      .container
       .withExec(args)
       .directory("/work/out")
   }
@@ -387,7 +375,6 @@ type Dioxus {
   Build and serve the Dioxus app.
   """
   serve(
-    ws: Workspace!,
     """
     The port the server will run on.
     """
@@ -531,7 +518,7 @@ type Dioxus {
     )
 
     self
-      .container(ws)
+      .container
       .withExposedPort(port)
       .asService(args: args)
   }
@@ -559,7 +546,7 @@ type Dioxus {
       name: name,
       template: template,
       subtemplate: subtemplate,
-      container: self.container(ws: null),
+      container: self.container,
     )
   }
 }

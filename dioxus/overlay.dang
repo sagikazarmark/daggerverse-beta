@@ -22,13 +22,9 @@ let moduleOverlay(
 }
 
 let moduleSourceOverlay(
-  ws: Workspace,
   dioxusVersion: String,
   wasmBindgenVersion: String,
 ): OverlaysList! {
-  dioxusVersion = dioxusVersion ?? packageVersion(ws, "dioxus")
-  wasmBindgenVersion = wasmBindgenVersion ?? packageVersion(ws, "wasm-bindgen")
-
   Dagger.overlays.combine([
     Dagger.overlays.withEnvVariable("NO_DOWNLOADS", "1"), # Prevent dioxus CLI from downloading tool dependencies
     withDioxus(dioxusVersion),

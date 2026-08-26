@@ -1,25 +1,25 @@
 type Fix {
   let parent: Rust!
 
-  let exec(ws: Workspace!, args: [String!]!): Changeset! {
+  let exec(args: [String!]!): Changeset! {
     parent
-      .container(ws)
+      .container
       .withExec(args)
       .directory("/work/src")
       .filter(gitignore: true)
-      .changes(parent.buildEnv.source(ws))
+      .changes(parent.buildEnv.source)
   }
 
   """
   Run clippy and fix any warnings.
   """
-  clippy(ws: Workspace!): Changeset! @generate {
+  clippy: Changeset! @generate {
     let args = [
       "cargo", "clippy", "--fix",
       "--allow-dirty", "--allow-staged", "--allow-no-vcs", "--all-targets",
       "--", "-D", "warnings",
     ]
 
-    self.exec(ws, args)
+    self.exec(args)
   }
 }

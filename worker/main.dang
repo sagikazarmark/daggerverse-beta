@@ -21,6 +21,33 @@ type Worker {
     Dagger.wrangler.dev(self.devBundle)
   }
 
+  new(
+    """
+    Compiled bundle of the Worker.
+    """
+    bundle: Directory,
+    bundleAsContainer: Container,
+    """
+    Optional `.dev.vars` file for `wrangler dev` environment variables.
+    """
+    vars: File,
+    """
+    Optional Wrangler configuration file.
+    """
+    config: File,
+  ) {
+    if (bundle == null and bundleAsContainer == null) {
+      raise "bundle or bundleAsContainer must be provided"
+    }
+
+    self.bundle = bundle ?? bundleAsContainer.directory("") ?? Dagger.directory
+
+    self.vars = vars
+    self.config = config
+
+    self
+  }
+
   """
   Deploys the Cloudflare Worker.
   """

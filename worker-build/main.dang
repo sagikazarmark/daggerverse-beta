@@ -266,4 +266,38 @@ type WorkerBuild {
       .withExec(buildArgs)
       .directory("/work/out")
   }
+
+  """
+  Run worker-build and return the generated Worker output as a container.
+
+  This is a workaround until module wiring supports Directory.
+  """
+  buildAsContainer(
+    ws: Workspace!,
+    """
+    Build in release mode.
+    """
+    release: Boolean = self.release,
+    """
+    Create a development build. Enables debug info and disables optimizations.
+    """
+    dev: Boolean! = self.dev,
+    """
+    Skip optimization with wasm-opt.
+    """
+    noOpt: Boolean! = self.noOpt,
+    """
+    Enable panic=unwind support.
+    """
+    panicUnwind: Boolean! = self.panicUnwind,
+    """
+    Additional arguments to pass to `cargo build`.
+    """
+    args: [String!]! = self.args,
+  ): Container! {
+    Dagger.container.withDirectory(
+      "",
+      self.build(ws, release, dev, noOpt, panicUnwind, args),
+    )
+  }
 }

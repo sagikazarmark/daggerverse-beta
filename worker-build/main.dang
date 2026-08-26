@@ -5,6 +5,12 @@ type WorkerBuild {
   let workerBuildVersion: String
   let wasmBindgenVersion: String
 
+  let release: Boolean
+  let dev: Boolean! = false
+  let noOpt: Boolean! = false
+  let panicUnwind: Boolean! = false
+  let args: [String!]! = []
+
   new(
     """
     worker-build version to install (default: auto-detect from Cargo.lock worker crate, then latest).
@@ -93,6 +99,26 @@ type WorkerBuild {
     cargoGitDbCache: CacheVolume = if (!noCache) {
       Dagger.cacheVolume("cargo-git-db")
     } else null,
+    """
+    Build in release mode.
+    """
+    release: Boolean,
+    """
+    Create a development build. Enables debug info and disables optimizations.
+    """
+    dev: Boolean! = false,
+    """
+    Skip optimization with wasm-opt.
+    """
+    noOpt: Boolean! = false,
+    """
+    Enable panic=unwind support.
+    """
+    panicUnwind: Boolean! = false,
+    """
+    Additional arguments to pass to `cargo build`.
+    """
+    args: [String!]! = [],
   ) {
     self.rustEnv = Dagger.rustEnvironment(
       container: container,
@@ -120,6 +146,12 @@ type WorkerBuild {
 
     self.workerBuildVersion = version
     self.wasmBindgenVersion = wasmBindgenVersion
+
+    self.release = release
+    self.dev = dev
+    self.noOpt = noOpt
+    self.panicUnwind = panicUnwind
+    self.args = args
 
     self
   }
@@ -192,23 +224,23 @@ type WorkerBuild {
     """
     Build in release mode.
     """
-    release: Boolean,
+    release: Boolean = self.release,
     """
     Create a development build. Enables debug info and disables optimizations.
     """
-    dev: Boolean! = false,
+    dev: Boolean! = self.dev,
     """
     Skip optimization with wasm-opt.
     """
-    noOpt: Boolean! = false,
+    noOpt: Boolean! = self.noOpt,
     """
     Enable panic=unwind support.
     """
-    panicUnwind: Boolean! = false,
+    panicUnwind: Boolean! = self.panicUnwind,
     """
     Additional arguments to pass to `cargo build`.
     """
-    args: [String!]! = [],
+    args: [String!]! = self.args,
   ): Directory! @check {
     let buildArgs = ["worker-build"]
     if (dev) {

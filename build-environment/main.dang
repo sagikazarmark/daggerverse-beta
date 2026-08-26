@@ -1,7 +1,7 @@
 type BuildEnvironment {
   mountPath: String!
-  let source: Directory!
-  let cwd: String!
+  source: Directory!
+  cwd: String!
 
   let defaultContainer: Container!
 

@@ -454,6 +454,197 @@ type Dioxus {
   }
 
   """
+  Bundle the Dioxus app into a shippable object.
+  """
+  bundleAsContainer(
+    """
+    Package types to bundle.
+    """
+    packageTypes: [PackageType!]! = [],
+    """
+    Enable fullstack mode.
+    """
+    fullstack: Boolean = self.fullstack,
+    """
+    Pre-render all routes returned from the app's /static_routes endpoint.
+    """
+    ssg: Boolean! = false,
+    """
+    Use verbose output.
+    """
+    verbose: Boolean! = false,
+    """
+    Use trace output.
+    """
+    trace: Boolean! = false,
+    """
+    Output logs in JSON format.
+    """
+    jsonOutput: Boolean! = false,
+    """
+    Manually set the platform.
+    """
+    platform: Platform = self.platform,
+    """
+    Which renderer to use? By default, this is usually inferred from the platform.
+    """
+    renderer: Renderer,
+    """
+    The bundle format to target for the build: supports web, macos, windows, linux, ios, android, and server.
+    """
+    bundle: Bundle,
+    """
+    Build in release mode.
+    """
+    release: Boolean! = self.release,
+    """
+    The package to build.
+    """
+    package: String,
+    """
+    Build a specific binary.
+    """
+    bin: String,
+    """
+    Build a specific example.
+    """
+    example: String,
+    """
+    Build the app with custom a profile.
+    """
+    profile: String = self.profile,
+    """
+    List of features to activate.
+    """
+    features: [String!]! = self.features,
+    """
+    Don't include the default features in the build.
+    """
+    noDefaultFeatures: Boolean! = self.noDefaultFeatures,
+    """
+    Include all features in the build.
+    """
+    allFeatures: Boolean! = self.allFeatures,
+    """
+    Rustc platform triple.
+    """
+    target: String,
+    """
+    Extra arguments passed to cargo.
+
+    To see a list of args, run cargo rustc --help.
+
+    Note that dx sets many of these args directly from other args in this command.
+    """
+    cargoArgs: String,
+    """
+    Extra arguments passed to rustc. This can be used to customize the linker, or other flags.
+
+    For example, specifying dx build --rustc-args "-Clink-arg=-Wl,-blah" will pass -Clink-arg=-Wl,-blah to the underlying cargo rustc command.
+    """
+    rustcArgs: String,
+    """
+    Skip collecting assets from dependencies.
+    """
+    skipAssets: Boolean! = false,
+    """
+    Inject scripts to load the wasm and js files for your Dioxus app if they are not already present.
+    """
+    injectLoadingScripts: Boolean,
+    """
+    Bundle split the wasm binary into multiple chunks based on #[wasm_split] annotations.
+    """
+    wasmSplit: Boolean! = false,
+    """
+    Generate debug symbols for the wasm binary.
+
+    This will make the binary larger and take longer to compile, but will allow you to debug the wasm binary.
+    """
+    debugSymbols: Boolean = self.debugSymbols,
+    """
+    Keep the name section in the wasm binary, useful for profiling and debugging.
+
+    Unlike --debug-symbols which preserves DWARF debug info, the name section allows tools like console_error_panic_hook to print backtraces with human-readable function names without any browser extension.
+    """
+    keepNames: Boolean! = false,
+    """
+    The base path the build will fetch assets relative to. This will override the base path set in the dioxus config.
+    """
+    basePath: String,
+    """
+    Should dx attempt to codesign the app bundle?
+    """
+    codesign: Boolean,
+    """
+    The path to the Apple entitlements file to used to sign the resulting app bundle.
+
+    On iOS, this is required for deploy to a device and some configurations in the simulator.
+    """
+    appleEntitlements: String,
+    """
+    The Apple team ID to use when signing the app bundle.
+
+    Usually this is an email or name associated with your Apple Developer account, usually in the format Signing Name (GXTEAMID123). This is passed directly to the codesign tool.
+    """
+    appleTeamId: String,
+    """
+    The target for the client build, used for specifying which target the server should end up in when merging @client and @server targets together.
+    """
+    clientTarget: String,
+    """
+    Specify the arguments for the client build.
+    """
+    clientArgs: [String!]! = self.clientArgs,
+    """
+    Specify the arguments for the server build.
+    """
+    serverArgs: [String!]! = self.serverArgs,
+  ): Container! {
+    let args = DioxusCommand.bundle(
+      packageTypes: packageTypes,
+      fullstack: fullstack,
+      ssg: ssg,
+      verbose: verbose,
+      trace: trace,
+      jsonOutput: jsonOutput,
+      platform: platform,
+      renderer: renderer,
+      bundle: bundle,
+      release: release,
+      package: package,
+      bin: bin,
+      example: example,
+      profile: profile,
+      features: features,
+      noDefaultFeatures: noDefaultFeatures,
+      allFeatures: allFeatures,
+      target: target,
+      cargoArgs: cargoArgs,
+      rustcArgs: rustcArgs,
+      skipAssets: skipAssets,
+      injectLoadingScripts: injectLoadingScripts,
+      wasmSplit: wasmSplit,
+      debugSymbols: debugSymbols,
+      keepNames: keepNames,
+      basePath: basePath,
+      codesign: codesign,
+      appleEntitlements: appleEntitlements,
+      appleTeamId: appleTeamId,
+      clientTarget: clientTarget,
+      clientArgs: clientArgs,
+      serverArgs: serverArgs,
+    )
+
+    Dagger.container.withDirectory(
+      "",
+      self
+        .buildContainer
+        .withExec(args)
+        .directory("/work/out"),
+    )
+  }
+
+  """
   Build and serve the Dioxus app.
   """
   serve(

@@ -5,6 +5,8 @@ type Dioxus {
   let dioxusVersion: String
   let wasmBindgenVersion: String
 
+  let preBuildExec: [[String!]!]! = []
+
   new(
     ws: Workspace!,
     """
@@ -102,6 +104,10 @@ type Dioxus {
     cargoGitDbCache: CacheVolume = if (!noCache) {
       Dagger.cacheVolume("cargo-git-db")
     } else null,
+    """
+    A list of commands to run before the build.
+    """
+    preBuildExec: [[String!]!]! = [],
   ) {
     version = version ?? packageVersion(ws, "dioxus")
     wasmBindgenVersion = wasmBindgenVersion ?? packageVersion(ws, "wasm-bindgen")
@@ -142,6 +148,8 @@ type Dioxus {
     self.dioxusVersion = version
     self.wasmBindgenVersion = wasmBindgenVersion
 
+    self.preBuildExec = preBuildExec
+
     self
   }
 
@@ -181,6 +189,16 @@ type Dioxus {
       .rustEnv
       .container(base: base)
       .{ self.buildEnv.container(base: _) }
+  }
+
+  let buildContainer: Container! {
+    self.preBuildExec.reduce(self.container) { _, args =>
+      if (args.isEmpty) {
+        return _
+      }
+
+      _.withExec(args, expand: true)
+    }
   }
 
   """
@@ -366,7 +384,7 @@ type Dioxus {
     )
 
     self
-      .container
+      .buildContainer
       .withExec(args)
       .directory("/work/out")
   }
@@ -518,7 +536,7 @@ type Dioxus {
     )
 
     self
-      .container
+      .buildContainer
       .withExposedPort(port)
       .asService(args: args)
   }

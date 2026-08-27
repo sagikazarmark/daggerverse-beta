@@ -1,0 +1,12 @@
+name = "node-setup"
+engineVersion = "v1.0.0"
+runtime.source = "dang"
+include = ["!tests"]
+
+[[dependencies]]
+name = "github"
+source = "../github"
+
+[[dependencies]]
+name = "overlays"
+source = "github.com/sagikazarmark/daggerverse-beta/overlays"

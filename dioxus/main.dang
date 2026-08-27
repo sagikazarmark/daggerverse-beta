@@ -5,7 +5,16 @@ type Dioxus {
   let dioxusVersion: String
   let wasmBindgenVersion: String
 
-  let preBuildExec: [[String!]!]! = []
+  let preBuildExec: [[String!]!]!
+
+  let fullstack: Boolean
+  let release: Boolean!
+  let features: [String!]!
+  let noDefaultFeatures: Boolean!
+  let allFeatures: Boolean!
+  let debugSymbols: Boolean
+  let clientArgs: [String!]!
+  let serverArgs: [String!]!
 
   new(
     ws: Workspace!,
@@ -108,6 +117,40 @@ type Dioxus {
     A list of commands to run before the build.
     """
     preBuildExec: [[String!]!]! = [],
+    """
+    Enable fullstack mode.
+    """
+    fullstack: Boolean,
+    """
+    Build in release mode.
+    """
+    release: Boolean! = false,
+    """
+    List of features to activate.
+    """
+    features: [String!]! = [],
+    """
+    Don't include the default features in the build.
+    """
+    noDefaultFeatures: Boolean! = false,
+    """
+    Include all features in the build.
+    """
+    allFeatures: Boolean! = false,
+    """
+    Generate debug symbols for the wasm binary.
+
+    This will make the binary larger and take longer to compile, but will allow you to debug the wasm binary.
+    """
+    debugSymbols: Boolean,
+    """
+    Specify the arguments for the client build.
+    """
+    clientArgs: [String!]! = [],
+    """
+    Specify the arguments for the server build.
+    """
+    serverArgs: [String!]! = [],
   ) {
     version = version ?? packageVersion(ws, "dioxus")
     wasmBindgenVersion = wasmBindgenVersion ?? packageVersion(ws, "wasm-bindgen")
@@ -149,6 +192,15 @@ type Dioxus {
     self.wasmBindgenVersion = wasmBindgenVersion
 
     self.preBuildExec = preBuildExec
+
+    self.fullstack = fullstack
+    self.release = release
+    self.features = features
+    self.noDefaultFeatures = noDefaultFeatures
+    self.allFeatures = allFeatures
+    self.debugSymbols = debugSymbols
+    self.clientArgs = clientArgs
+    self.serverArgs = serverArgs
 
     self
   }
@@ -212,7 +264,7 @@ type Dioxus {
     """
     Enable fullstack mode.
     """
-    fullstack: Boolean,
+    fullstack: Boolean = self.fullstack,
     """
     Pre-render all routes returned from the app's /static_routes endpoint.
     """
@@ -244,7 +296,7 @@ type Dioxus {
     """
     Build in release mode.
     """
-    release: Boolean! = false,
+    release: Boolean! = self.release,
     """
     The package to build.
     """
@@ -264,15 +316,15 @@ type Dioxus {
     """
     List of features to activate.
     """
-    features: [String!]! = [],
+    features: [String!]! = self.features,
     """
     Don't include the default features in the build.
     """
-    noDefaultFeatures: Boolean! = false,
+    noDefaultFeatures: Boolean! = self.noDefaultFeatures,
     """
     Include all features in the build.
     """
-    allFeatures: Boolean! = false,
+    allFeatures: Boolean! = self.allFeatures,
     """
     Rustc platform triple.
     """
@@ -308,7 +360,7 @@ type Dioxus {
 
     This will make the binary larger and take longer to compile, but will allow you to debug the wasm binary.
     """
-    debugSymbols: Boolean,
+    debugSymbols: Boolean = self.debugSymbols,
     """
     Keep the name section in the wasm binary, useful for profiling and debugging.
 
@@ -342,11 +394,11 @@ type Dioxus {
     """
     Specify the arguments for the client build.
     """
-    clientArgs: [String!]! = [],
+    clientArgs: [String!]! = self.clientArgs,
     """
     Specify the arguments for the server build.
     """
-    serverArgs: [String!]! = [],
+    serverArgs: [String!]! = self.serverArgs,
   ): Directory! @check {
     let args = DioxusCommand.bundle(
       packageTypes: packageTypes,
@@ -400,7 +452,7 @@ type Dioxus {
     """
     Enable fullstack mode.
     """
-    fullstack: Boolean,
+    fullstack: Boolean = self.fullstack,
     """
     Pre-render all routes returned from the app's /static_routes endpoint.
     """
@@ -420,7 +472,7 @@ type Dioxus {
     """
     Build in release mode.
     """
-    release: Boolean! = false,
+    release: Boolean! = self.release,
     """
     The package to build.
     """
@@ -440,15 +492,15 @@ type Dioxus {
     """
     List of features to activate.
     """
-    features: [String!]! = [],
+    features: [String!]! = self.features,
     """
     Don't include the default features in the build.
     """
-    noDefaultFeatures: Boolean! = false,
+    noDefaultFeatures: Boolean! = self.noDefaultFeatures,
     """
     Include all features in the build.
     """
-    allFeatures: Boolean! = false,
+    allFeatures: Boolean! = self.allFeatures,
     """
     Rustc platform triple.
     """
@@ -482,7 +534,7 @@ type Dioxus {
 
     This will make the binary larger and take longer to compile, but will allow you to debug the wasm binary.
     """
-    debugSymbols: Boolean,
+    debugSymbols: Boolean = self.debugSymbols,
     """
     Keep the name section in the wasm binary, useful for profiling and debugging.
 
@@ -500,11 +552,11 @@ type Dioxus {
     """
     Specify the arguments for the client build.
     """
-    clientArgs: [String!]! = [],
+    clientArgs: [String!]! = self.clientArgs,
     """
     Specify the arguments for the server build.
     """
-    serverArgs: [String!]! = [],
+    serverArgs: [String!]! = self.serverArgs,
   ): Service! {
     let args = DioxusCommand.serve(
       port: port,

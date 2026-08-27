@@ -8,7 +8,9 @@ type Dioxus {
   let preBuildExec: [[String!]!]!
 
   let fullstack: Boolean
+  let platform: Platform
   let release: Boolean!
+  let profile: String
   let features: [String!]!
   let noDefaultFeatures: Boolean!
   let allFeatures: Boolean!
@@ -122,9 +124,17 @@ type Dioxus {
     """
     fullstack: Boolean,
     """
+    Manually set the platform.
+    """
+    platform: Platform,
+    """
     Build in release mode.
     """
     release: Boolean! = false,
+    """
+    Build the app with custom a profile.
+    """
+    profile: String,
     """
     List of features to activate.
     """
@@ -194,7 +204,9 @@ type Dioxus {
     self.preBuildExec = preBuildExec
 
     self.fullstack = fullstack
+    self.platform = platform
     self.release = release
+    self.profile = profile
     self.features = features
     self.noDefaultFeatures = noDefaultFeatures
     self.allFeatures = allFeatures
@@ -284,7 +296,7 @@ type Dioxus {
     """
     Manually set the platform.
     """
-    platform: Platform,
+    platform: Platform = self.platform,
     """
     Which renderer to use? By default, this is usually inferred from the platform.
     """
@@ -312,7 +324,7 @@ type Dioxus {
     """
     Build the app with custom a profile.
     """
-    profile: String,
+    profile: String = self.profile,
     """
     List of features to activate.
     """
@@ -488,7 +500,7 @@ type Dioxus {
     """
     Build the app with custom a profile.
     """
-    profile: String,
+    profile: String = self.profile,
     """
     List of features to activate.
     """

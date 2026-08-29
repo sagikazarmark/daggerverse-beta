@@ -6,30 +6,14 @@ let moduleOverlay(
   wasmPackVersion: String,
   binaryenVersion: String,
   esbuildVersion: String,
-  tailwindVersion: String,
-  overlay: Overlay,
-): OverlaysList! {
-  Dagger.overlays.combine([
-    Dagger
-      .wasmTools
-      .withTool(WasmToolsTool.WASM_PACK, wasmPackVersion)
-      .withTool(WasmToolsTool.BINARYEN, binaryenVersion)
-      .withTool(WasmToolsTool.ESBUILD, esbuildVersion),
-
-    withTailwind(tailwindVersion),
-    overlay,
-  ])
-}
-
-let moduleSourceOverlay(
-  dioxusVersion: String,
   wasmBindgenVersion: String,
-): OverlaysList! {
-  Dagger.overlays.combine([
-    Dagger.overlays.withEnvVariable("NO_DOWNLOADS", "1"), # Prevent dioxus CLI from downloading tool dependencies
-    withDioxus(dioxusVersion),
-    Dagger.wasmTools.withTool(WasmToolsTool.WASM_BINDGEN, wasmBindgenVersion),
-  ])
+): WasmTools! {
+  Dagger
+    .wasmTools
+    .withTool(WasmToolsTool.WASM_PACK, wasmPackVersion)
+    .withTool(WasmToolsTool.BINARYEN, binaryenVersion)
+    .withTool(WasmToolsTool.ESBUILD, esbuildVersion)
+    .withTool(WasmToolsTool.WASM_BINDGEN, wasmBindgenVersion)
 }
 
 let packageVersion(ws: Workspace, name: String!): String {

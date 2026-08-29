@@ -1,70 +1,85 @@
 type BuildEnvironment {
-  mountPath: String!
-  source: Directory!
-  cwd: String!
+  new { self }
 
-  let defaultContainer: Container!
+  """
+  Absolute path where the source is mounted in the container.
+  """
+  sourceRoot: Path! = Path("/work/src")
 
-  let overlay: Overlay
-  let envFile: File
-  let envVariables: [EnvVariable!]! = []
-  let sourceDateEpoch: String
+  """
+  Relative path (current directory) within the source.
+  """
+  let sourcePath: Path! = Path("")
 
-  new(
-    ws: Workspace!,
-    """
-    Default container.
-    """
-    container: Container! = Dagger.container,
-    """
-    Overlay to apply to the container.
-    """
-    overlay: Overlay,
-    """
-    Environment file to load into the container.
-    """
-    envFile: File,
-    """
-    Source date epoch to set in the container.
-    """
-    sourceDateEpoch: String,
-    """
-    Ignore paths included in the gitignore file.
-    """
-    gitignore: Boolean,
-    """
-    Include only artifacts that match the given pattern (e.g., ["app/", "package.*"]).
-    """
-    include: [String!],
-    """
-    Exclude artifacts that match the given pattern (e.g., ["node_modules/", ".git*"]).
-    """
-    exclude: [String!],
-    """
-    Path to the mounted source directory.
-    """
-    mountPath: String! = "/work/src",
-  ) {
-    self.mountPath = mountPath
-    self.source = ws.directory(
-      "/",
-      exclude: exclude,
-      include: include,
-      gitignore: gitignore,
-    )
-    self.cwd = ws.cwd
+  """
+  Current working directory (absolute path) within the container.
+  """
+  workdir: Path! { self.sourceRoot.join(sourcePath) }
 
-    self.defaultContainer = container
+  """
+  Configured source directory.
 
-    self.overlay = overlay
-    self.envFile = envFile
-    self.sourceDateEpoch = sourceDateEpoch
+  Raises an error if no source has been configured.
+  """
+  source: Directory! {
+    let source = self._source
+
+    if (source == null) {
+      raise "build environment source is not configured; call withSource first"
+    }
+
+    source
+  }
+
+  let _source: Directory
+
+  """
+  Set the source directory to mount in the container.
+  """
+  withSource(
+    """
+    Source directory to mount in the container.
+    """
+    source: Directory!,
+    """
+    Relative path (current directory) within the source.
+    """
+    path: Path! = Path(""),
+  ): BuildEnvironment! {
+    let sourcePath = Path(path)
+
+    if (!Path(".").contains(sourcePath)) {
+      raise "invalid source path: escapes the source root"
+    }
+
+    self._source = source
+    self.sourcePath = sourcePath
 
     self
   }
 
+  let envFile: File
+
   """
-  Set an environment variable in the container.
+  Set an environment file in the build environment.
+  """
+  withEnvFile(
+    """
+    Environment file to load into the container.
+    """
+    file: File,
+  ): BuildEnvironment! {
+    if (file != null) {
+      self.envFile = file
+    }
+
+    self
+  }
+
+  let envVariables: [EnvVariable!]! = []
+
+  """
+  Set an environment variable in the build environment.
   """
   withEnvVariable(
     """
@@ -86,68 +101,56 @@ type BuildEnvironment {
     self
   }
 
+  let sourceDateEpoch: String
+
   """
-  Returns a container with the configured environment.
+  Set the source date epoch in the build environment.
   """
-  container(
+  withSourceDateEpoch(
+    """
+    Source date epoch to set in the container.
+    """
+    epoch: String,
+  ): BuildEnvironment! {
+    if (epoch != null) {
+      self.sourceDateEpoch = epoch
+    }
+
+    self
+  }
+
+  """
+  Returns a container with the configured build environment.
+  """
+  apply(
     """
     Custom base container to use.
     """
-    base: Container,
-    """
-    Additional overlay to apply to the container.
-    """
-    overlay: Overlay,
+    container: Container!,
   ): Container! {
-    (base ?? self.defaultContainer)
-      .{ self.withOverlay(_, overlay) }
-      .{ self.withEnvFile(_) }
-      .{ self.withEpoch(_) }
-      .{ self.withEnv(_) }
-      .{ self.withSource(_, self.source, self.cwd) }
-  }
-
-  let withOverlay(container: Container!, overlay: Overlay): Container! {
     container
-      .{ self.overlay.apply(_) ?? _ }
-      .{ overlay.apply(_) ?? _ }
+      .{
+        let envFile = self.envFile
+        if (envFile != null) {
+          _.withEnvFileVariables(envFile.asEnvFile)
+        } else _
+      }
+      .{
+        let epoch = self.sourceDateEpoch
+        if (epoch != null) {
+          _.withEnvVariable("SOURCE_DATE_EPOCH", epoch)
+        } else _
+      }
+      .{ self.envVariables.reduce(_) { _, env => env.apply(_) } }
+      .{
+        let source = self._source
+        if (source != null) {
+          _
+            .withMountedDirectory(self.sourceRoot, source)
+            .withWorkdir(self.workdir)
+        } else _
+      }
   }
-
-  let withEnvFile(container: Container!): Container! {
-    let envFile = self.envFile
-    if (envFile == null) {
-      return container
-    }
-
-    container.withEnvFileVariables(envFile.asEnvFile)
-  }
-
-  let withEnv(container: Container!): Container! {
-    self.envVariables.reduce(container) { container, env => env.apply(container) }
-  }
-
-  let withEpoch(container: Container!): Container! {
-    let epoch = self.sourceDateEpoch
-    if (epoch == null) {
-      return container
-    }
-
-    container.withEnvVariable("SOURCE_DATE_EPOCH", epoch)
-  }
-
-  let withSource(container: Container!, source: Directory, cwd: String): Container! {
-    if (source == null or cwd == null) {
-      return container
-    }
-
-    container
-      .withMountedDirectory(self.mountPath, source)
-      .withWorkdir(Path(self.mountPath).join(Path(cwd)).string)
-  }
-}
-
-interface Overlay {
-  apply(container: Container!): Container!
 }
 
 type EnvVariable {

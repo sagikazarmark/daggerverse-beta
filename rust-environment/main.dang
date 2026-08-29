@@ -1,33 +1,18 @@
 type RustEnvironment {
-  let defaultContainer: Container!
-
   let toolchainFile: File
-  let toolchainPath: String
 
-  let cwd: String!
-
-  let overlay: Overlay
   let targets: [String!]!
   let components: [String!]!
 
-  let cargoRegistryIndexCache: CacheVolume
-  let cargoRegistryArchiveCache: CacheVolume
-  let cargoGitDbCache: CacheVolume
+  let noCache: Boolean!
+
+  """
+  Directory containing the project's .cargo directory.
+  """
+  dotCargo: Directory! = Dagger.directory
 
   new(
     ws: Workspace!,
-    """
-    Version (image tag) to use from the official Rust image repository as the default container.
-    """
-    version: String! = "latest",
-    """
-    Custom container to use as the default container.
-    """
-    container: Container! = Dagger.container.from("rust:" + version),
-    """
-    Overlay to apply to the container after the initial setup.
-    """
-    overlay: Overlay,
     """
     Targets to install with rustup.
     """
@@ -41,42 +26,21 @@ type RustEnvironment {
     Useful if you want to mount cache volumes manually or use a different cache volume strategy.
     """
     noCache: Boolean! = false,
-    """
-    Cache volume for cargo registry index.
-    """
-    cargoRegistryIndexCache: CacheVolume = if (!noCache) {
-      Dagger.cacheVolume("cargo-registry-index")
-    } else null,
-    """
-    Cache volume for cargo registry archive.
-    """
-    cargoRegistryArchiveCache: CacheVolume = if (!noCache) {
-      Dagger.cacheVolume("cargo-registry-cache")
-    } else null,
-    """
-    Cache volume for cargo git db.
-    """
-    cargoGitDbCache: CacheVolume = if (!noCache) {
-      Dagger.cacheVolume("cargo-git-db")
-    } else null,
   ) {
-    self.defaultContainer = container
-
     let toolchainPath = ws.findUp("rust-toolchain.toml")
-    self.toolchainPath = toolchainPath
     if (toolchainPath != null) {
       self.toolchainFile = ws.file(toolchainPath)
     }
 
-    self.cwd = ws.cwd
-
-    self.overlay = overlay
     self.targets = targets
     self.components = components
 
-    self.cargoRegistryIndexCache = cargoRegistryIndexCache
-    self.cargoRegistryArchiveCache = cargoRegistryArchiveCache
-    self.cargoGitDbCache = cargoGitDbCache
+    self.noCache = noCache
+
+    let dotCargo = ws.findUp(".cargo")
+    if (dotCargo != null) {
+      self.dotCargo = ws.directory(dotCargo, gitignore: true)
+    }
 
     self
   }
@@ -84,20 +48,19 @@ type RustEnvironment {
   """
   Returns a container with the configured Rust environment.
   """
-  container(
+  apply(
     """
     Custom base container to use.
     """
-    base: Container,
+    container: Container!,
   ): Container! {
-    (base ?? self.defaultContainer)
-      .{ self.withDefaults(_) }
-      .{ self.withCache(_) }
+    container
+      .{ self.defaults(_) }
+      .{ self.cache(_) }
       .{ self.rustup(_) }
-      .{ self.withOverlay(_) }
   }
 
-  let withDefaults(container: Container!): Container! {
+  let defaults(container: Container!): Container! {
     container
       .{
         if (_.envVariable("CARGO_HOME") == null or _.envVariable("CARGO_HOME") == "") {
@@ -114,87 +77,57 @@ type RustEnvironment {
       .withExec(["rustup", "set", "auto-install", "disable"])
   }
 
-  let withCache(container: Container!): Container! {
+  let cache(container: Container!): Container! {
+    if (self.noCache) {
+      return container
+    }
+
     container
-      .{
-        if (cargoRegistryIndexCache != null) {
-          _.withMountedCache(
-            "${CARGO_HOME}/registry/index",
-            cargoRegistryIndexCache,
-            expand: true,
-            sharing: Dagger.CacheSharingMode.LOCKED,
-          )
-        } else _
-      }
-      .{
-        if (cargoRegistryArchiveCache != null) {
-          _.withMountedCache(
-            "${CARGO_HOME}/registry/cache",
-            cargoRegistryArchiveCache,
-            expand: true,
-            sharing: Dagger.CacheSharingMode.LOCKED,
-          )
-        } else _
-      }
-      .{
-        if (cargoGitDbCache != null) {
-          _.withMountedCache(
-            "${CARGO_HOME}/git/db",
-            cargoGitDbCache,
-            expand: true,
-            sharing: Dagger.CacheSharingMode.LOCKED,
-          )
-        } else _
-      }
+      .withMountedCache(
+        "${CARGO_HOME}/registry/index",
+        Dagger.cacheVolume("cargo-registry-index"),
+        expand: true,
+        sharing: Dagger.CacheSharingMode.LOCKED,
+      )
+      .withMountedCache(
+        "${CARGO_HOME}/registry/cache",
+        Dagger.cacheVolume("cargo-registry-cache"),
+        expand: true,
+        sharing: Dagger.CacheSharingMode.LOCKED,
+      )
+      .withMountedCache(
+        "${CARGO_HOME}/git/db",
+        Dagger.cacheVolume("cargo-git-db"),
+        expand: true,
+        sharing: Dagger.CacheSharingMode.LOCKED,
+      )
   }
 
   let rustup(container: Container!): Container! {
-    let sourceDir = "/tmp/rust-environment/src"
-
-    let toolchainFile = self.toolchainFile
-    let toolchainPath = self.toolchainPath
-
     container
       .{
+        let toolchainFile = self.toolchainFile
         if (toolchainFile != null) {
           _
-            .withWorkdir(sourceDir + self.cwd)
-            .withMountedFile(sourceDir + toolchainPath!, toolchainFile!)
+            .withWorkdir("/tmp/rust-environment/src")
+            .withFile("rust-toolchain.toml", toolchainFile)
             .withExec(["rustup", "toolchain", "install", "--no-self-update"])
         } else _
       }
-      .{ self.withTargets(_) }
-      .{ self.withComponents(_) }
       .{
-        if (toolchainFile != null) {
-          _
-            .withoutMount(sourceDir + toolchainPath!)
-            .withoutWorkdir
+        let targets = self.targets.uniq.filter { _ != "" }
+
+        if (!targets.isEmpty) {
+          _.withExec(["rustup", "target", "add"] + targets)
         } else _
       }
+      .{
+        let components = self.components.uniq.filter { _ != "" }
+
+        if (!components.isEmpty) {
+          _.withExec(["rustup", "component", "add"] + components)
+        } else _
+      }
+      .withoutWorkdir # in case there was a toolchain file
   }
-
-  let withTargets(container: Container!): Container! {
-    if (self.targets.isEmpty) {
-      return container
-    }
-
-    container.withExec(["rustup", "target", "add"] + self.targets.uniq)
-  }
-
-  let withComponents(container: Container!): Container! {
-    if (self.components.isEmpty) {
-      return container
-    }
-
-    container.withExec(["rustup", "component", "add"] + self.components.uniq)
-  }
-
-  let withOverlay(container: Container!): Container! {
-    self.overlay.apply(container) ?? container
-  }
-}
-
-interface Overlay {
-  apply(container: Container!): Container!
 }

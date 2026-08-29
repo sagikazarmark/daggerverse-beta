@@ -5,7 +5,3 @@ runtime.source = "dang"
 [[dependencies]]
 name = "build-environment"
 source = ".."
-
-[[dependencies]]
-name = "overlays"
-source = "../../overlays"

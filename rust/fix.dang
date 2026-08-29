@@ -3,7 +3,7 @@ type Fix {
 
   let exec(args: [String!]!): Changeset! {
     parent
-      .container
+      .buildContainer
       .withExec(args)
       .directory("/work/src")
       .filter(gitignore: true)

@@ -1,22 +1,15 @@
 type Dioxus {
+  let base: Container!
+
   let rustEnv: RustEnvironment!
   let buildEnv: BuildEnvironment!
 
   let dioxusVersion: String
   let wasmBindgenVersion: String
 
-  let preBuildExec: [[String!]!]!
+  let overlay: OverlaysOverlay
 
-  let fullstack: Boolean
-  let platform: Platform
-  let release: Boolean!
-  let profile: String
-  let features: [String!]!
-  let noDefaultFeatures: Boolean!
-  let allFeatures: Boolean!
-  let debugSymbols: Boolean
-  let clientArgs: [String!]!
-  let serverArgs: [String!]!
+  let prefetch: Boolean!
 
   new(
     ws: Workspace!,
@@ -41,10 +34,6 @@ type Dioxus {
     """
     esbuildVersion: String,
     """
-    Version of Tailwind CSS to use.
-    """
-    tailwindVersion: String,
-    """
     Version (image tag) to use from the official Rust image repository as a base container.
     """
     rustVersion: String! = "latest",
@@ -52,22 +41,6 @@ type Dioxus {
     Custom container to use as a base container.
     """
     container: Container! = Dagger.container.from("rust:" + rustVersion),
-    """
-    Ignore paths included in the gitignore file.
-    """
-    gitignore: Boolean = true,
-    """
-    Include only artifacts that match the given pattern (e.g., ["app/", "package.*"]).
-    """
-    include: [String!],
-    """
-    Exclude artifacts that match the given pattern (e.g., ["node_modules/", ".git*"]).
-    """
-    exclude: [String!],
-    """
-    Overlay to apply to the base container before the Rust toolchain is installed.
-    """
-    rustOverlay: Overlay,
     """
     Targets to install for cross-compilation.
     """
@@ -82,8 +55,6 @@ type Dioxus {
     overlay: Overlay,
     """
     Env file to load into the container.
-
-    Relative paths are resolved from the working directory absolute paths are resolved from the root.
     """
     envFile: File,
     """
@@ -98,121 +69,50 @@ type Dioxus {
     """
     noCache: Boolean! = false,
     """
-    Cache volume for cargo registry index.
+    Whether to prefetch Cargo dependencies before building.
     """
-    cargoRegistryIndexCache: CacheVolume = if (!noCache) {
-      Dagger.cacheVolume("cargo-registry-index")
-    } else null,
-    """
-    Cache volume for cargo registry archive.
-    """
-    cargoRegistryArchiveCache: CacheVolume = if (!noCache) {
-      Dagger.cacheVolume("cargo-registry-cache")
-    } else null,
-    """
-    Cache volume for cargo git db.
-    """
-    cargoGitDbCache: CacheVolume = if (!noCache) {
-      Dagger.cacheVolume("cargo-git-db")
-    } else null,
-    """
-    A list of commands to run before the build.
-    """
-    preBuildExec: [[String!]!]! = [],
-    """
-    Enable fullstack mode.
-    """
-    fullstack: Boolean,
-    """
-    Manually set the platform.
-    """
-    platform: Platform,
-    """
-    Build in release mode.
-    """
-    release: Boolean! = false,
-    """
-    Build the app with custom a profile.
-    """
-    profile: String,
-    """
-    List of features to activate.
-    """
-    features: [String!]! = [],
-    """
-    Don't include the default features in the build.
-    """
-    noDefaultFeatures: Boolean! = false,
-    """
-    Include all features in the build.
-    """
-    allFeatures: Boolean! = false,
-    """
-    Generate debug symbols for the wasm binary.
-
-    This will make the binary larger and take longer to compile, but will allow you to debug the wasm binary.
-    """
-    debugSymbols: Boolean,
-    """
-    Specify the arguments for the client build.
-    """
-    clientArgs: [String!]! = [],
-    """
-    Specify the arguments for the server build.
-    """
-    serverArgs: [String!]! = [],
+    prefetch: Boolean! = false,
   ) {
     version = version ?? packageVersion(ws, "dioxus")
     wasmBindgenVersion = wasmBindgenVersion ?? packageVersion(ws, "wasm-bindgen")
 
+    self.base = container
+
     self.rustEnv = Dagger.rustEnvironment(
       ws: ws,
-      container: container,
 
-      overlay: rustOverlay,
       targets: ["wasm32-unknown-unknown"] + targets,
       components: ["rust-std"] + components,
 
-      cargoRegistryIndexCache: cargoRegistryIndexCache,
-      cargoRegistryArchiveCache: cargoRegistryArchiveCache,
-      cargoGitDbCache: cargoGitDbCache,
+      noCache: noCache,
     )
 
-    self.buildEnv = Dagger.buildEnvironment(
-      ws: ws,
-      overlay: Dagger.overlays.combine([
-        moduleOverlay(
-          wasmPackVersion,
-          binaryenVersion,
-          esbuildVersion,
-          tailwindVersion,
-          overlay,
-        ),
-
-        moduleSourceOverlay(version, wasmBindgenVersion),
-      ]),
-      envFile: envFile,
-      sourceDateEpoch: sourceDateEpoch,
-      gitignore: gitignore,
-      include: include,
-      exclude: exclude,
-    )
+    self.buildEnv = Dagger
+      .buildEnvironment
+      .withSource(
+        ws.directory("/", gitignore: true),
+        path: Path(ws.cwd).parts.join("/"),
+      )
+      .withEnvFile(envFile)
+      .withSourceDateEpoch(sourceDateEpoch)
 
     self.dioxusVersion = version
     self.wasmBindgenVersion = wasmBindgenVersion
 
-    self.preBuildExec = preBuildExec
+    self.overlay = Dagger.overlays.combine([
+      moduleOverlay(
+        wasmPackVersion,
+        binaryenVersion,
+        esbuildVersion,
+        wasmBindgenVersion,
+      ),
 
-    self.fullstack = fullstack
-    self.platform = platform
-    self.release = release
-    self.profile = profile
-    self.features = features
-    self.noDefaultFeatures = noDefaultFeatures
-    self.allFeatures = allFeatures
-    self.debugSymbols = debugSymbols
-    self.clientArgs = clientArgs
-    self.serverArgs = serverArgs
+      Dagger.overlays.withEnvVariable("NO_DOWNLOADS", "1"), # Prevent dioxus CLI from downloading tool dependencies
+      withDioxus(dioxusVersion),
+      overlay,
+    ])
+
+    self.prefetch = prefetch
 
     self
   }
@@ -241,28 +141,33 @@ type Dioxus {
   }
 
   """
-  Container with the Rust and Dioxus toolchains installed.
+  Container with the Rust toolchain and common components installed.
   """
-  container(
-    """
-    Custom base container to use.
-    """
-    base: Container,
-  ): Container! {
+  container: Container! {
+    self._container { _ }
+  }
+
+  _container(&fn(c: Container!): Container!): Container! {
     self
-      .rustEnv
-      .container(base: base)
-      .{ self.buildEnv.container(base: _) }
+      .base
+      .{ self.rustEnv.apply(_) }
+      .{ self.overlay.apply(_) ?? _ }
+      .{ fn(_) }
+      .{ self.buildEnv.apply(_) }
+  }
+
+  let extendContainer(&fn(c: Container!): Container!): Container! {
+    self
+      ._container { fn(_) }
+      .{
+        if (self.prefetch) {
+          _.withExec(["cargo", "fetch", "--locked"])
+        } else _
+      }
   }
 
   let buildContainer: Container! {
-    self.preBuildExec.reduce(self.container) { _, args =>
-      if (args.isEmpty) {
-        return _
-      }
-
-      _.withExec(args, expand: true)
-    }
+    self.extendContainer { _ }
   }
 
   """
@@ -276,7 +181,7 @@ type Dioxus {
     """
     Enable fullstack mode.
     """
-    fullstack: Boolean = self.fullstack,
+    fullstack: Boolean,
     """
     Pre-render all routes returned from the app's /static_routes endpoint.
     """
@@ -296,7 +201,7 @@ type Dioxus {
     """
     Manually set the platform.
     """
-    platform: Platform = self.platform,
+    platform: Platform,
     """
     Which renderer to use? By default, this is usually inferred from the platform.
     """
@@ -308,7 +213,7 @@ type Dioxus {
     """
     Build in release mode.
     """
-    release: Boolean! = self.release,
+    release: Boolean! = false,
     """
     The package to build.
     """
@@ -324,19 +229,19 @@ type Dioxus {
     """
     Build the app with custom a profile.
     """
-    profile: String = self.profile,
+    profile: String,
     """
     List of features to activate.
     """
-    features: [String!]! = self.features,
+    features: [String!]! = [],
     """
     Don't include the default features in the build.
     """
-    noDefaultFeatures: Boolean! = self.noDefaultFeatures,
+    noDefaultFeatures: Boolean! = false,
     """
     Include all features in the build.
     """
-    allFeatures: Boolean! = self.allFeatures,
+    allFeatures: Boolean! = false,
     """
     Rustc platform triple.
     """
@@ -372,7 +277,7 @@ type Dioxus {
 
     This will make the binary larger and take longer to compile, but will allow you to debug the wasm binary.
     """
-    debugSymbols: Boolean = self.debugSymbols,
+    debugSymbols: Boolean,
     """
     Keep the name section in the wasm binary, useful for profiling and debugging.
 
@@ -406,11 +311,11 @@ type Dioxus {
     """
     Specify the arguments for the client build.
     """
-    clientArgs: [String!]! = self.clientArgs,
+    clientArgs: [String!]! = [],
     """
     Specify the arguments for the server build.
     """
-    serverArgs: [String!]! = self.serverArgs,
+    serverArgs: [String!]! = [],
   ): Directory! @check {
     let args = DioxusCommand.bundle(
       packageTypes: packageTypes,
@@ -464,7 +369,7 @@ type Dioxus {
     """
     Enable fullstack mode.
     """
-    fullstack: Boolean = self.fullstack,
+    fullstack: Boolean,
     """
     Pre-render all routes returned from the app's /static_routes endpoint.
     """
@@ -484,7 +389,7 @@ type Dioxus {
     """
     Manually set the platform.
     """
-    platform: Platform = self.platform,
+    platform: Platform,
     """
     Which renderer to use? By default, this is usually inferred from the platform.
     """
@@ -496,7 +401,7 @@ type Dioxus {
     """
     Build in release mode.
     """
-    release: Boolean! = self.release,
+    release: Boolean! = false,
     """
     The package to build.
     """
@@ -512,19 +417,19 @@ type Dioxus {
     """
     Build the app with custom a profile.
     """
-    profile: String = self.profile,
+    profile: String,
     """
     List of features to activate.
     """
-    features: [String!]! = self.features,
+    features: [String!]! = [],
     """
     Don't include the default features in the build.
     """
-    noDefaultFeatures: Boolean! = self.noDefaultFeatures,
+    noDefaultFeatures: Boolean! = false,
     """
     Include all features in the build.
     """
-    allFeatures: Boolean! = self.allFeatures,
+    allFeatures: Boolean! = false,
     """
     Rustc platform triple.
     """
@@ -560,7 +465,7 @@ type Dioxus {
 
     This will make the binary larger and take longer to compile, but will allow you to debug the wasm binary.
     """
-    debugSymbols: Boolean = self.debugSymbols,
+    debugSymbols: Boolean,
     """
     Keep the name section in the wasm binary, useful for profiling and debugging.
 
@@ -594,11 +499,11 @@ type Dioxus {
     """
     Specify the arguments for the client build.
     """
-    clientArgs: [String!]! = self.clientArgs,
+    clientArgs: [String!]! = [],
     """
     Specify the arguments for the server build.
     """
-    serverArgs: [String!]! = self.serverArgs,
+    serverArgs: [String!]! = [],
   ): Container! {
     let args = DioxusCommand.bundle(
       packageTypes: packageTypes,
@@ -655,7 +560,7 @@ type Dioxus {
     """
     Enable fullstack mode.
     """
-    fullstack: Boolean = self.fullstack,
+    fullstack: Boolean,
     """
     Pre-render all routes returned from the app's /static_routes endpoint.
     """
@@ -675,7 +580,7 @@ type Dioxus {
     """
     Build in release mode.
     """
-    release: Boolean! = self.release,
+    release: Boolean! = false,
     """
     The package to build.
     """
@@ -691,19 +596,19 @@ type Dioxus {
     """
     Build the app with custom a profile.
     """
-    profile: String = self.profile,
+    profile: String,
     """
     List of features to activate.
     """
-    features: [String!]! = self.features,
+    features: [String!]! = [],
     """
     Don't include the default features in the build.
     """
-    noDefaultFeatures: Boolean! = self.noDefaultFeatures,
+    noDefaultFeatures: Boolean! = false,
     """
     Include all features in the build.
     """
-    allFeatures: Boolean! = self.allFeatures,
+    allFeatures: Boolean! = false,
     """
     Rustc platform triple.
     """
@@ -737,7 +642,7 @@ type Dioxus {
 
     This will make the binary larger and take longer to compile, but will allow you to debug the wasm binary.
     """
-    debugSymbols: Boolean = self.debugSymbols,
+    debugSymbols: Boolean,
     """
     Keep the name section in the wasm binary, useful for profiling and debugging.
 
@@ -755,11 +660,11 @@ type Dioxus {
     """
     Specify the arguments for the client build.
     """
-    clientArgs: [String!]! = self.clientArgs,
+    clientArgs: [String!]! = [],
     """
     Specify the arguments for the server build.
     """
-    serverArgs: [String!]! = self.serverArgs,
+    serverArgs: [String!]! = [],
   ): Service! {
     let args = DioxusCommand.serve(
       port: port,

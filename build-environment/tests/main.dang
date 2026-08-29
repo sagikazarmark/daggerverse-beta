@@ -6,8 +6,6 @@ let source: Directory! {
   Dagger
     .directory
     .withNewFile("app/marker.txt", "source-ok")
-    .withNewFile("app/drop.txt", "drop")
-    .withNewFile("keep.txt", "keep")
 }
 
 let envFile: File! {
@@ -18,29 +16,28 @@ let envFile: File! {
 }
 
 type Tests {
-  sourceMountAndCwd: Void @check {
+  sourceMountAndWorkdir: Void @check {
     let container = Dagger
-      .buildEnvironment(ws: source.asWorkspace("/app"), mountPath: "/workspace")
-      .container(base: alpine)
+      .buildEnvironment
+      .withSource(source, path: "app")
+      .apply(alpine)
 
-    assert { container.mounts.contains("/workspace") or container.mounts.contains("/workspace/") }
-    assert { container.file("/workspace/app/marker.txt").contents == "source-ok" }
+    assert { container.mounts.contains("/work/src") or container.mounts.contains("/work/src/") }
+    assert { container.file("/work/src/app/marker.txt").contents == "source-ok" }
 
     let output = container
       .withExec(["sh", "-c", "printf '%s|%s' \"$(pwd)\" \"$(cat marker.txt)\""])
       .stdout
 
-    assert { output == "/workspace/app|source-ok" }
+    assert { output == "/work/src/app|source-ok" }
   }
 
   envFileAndEpoch: Void @check {
     let container = Dagger
-      .buildEnvironment(
-        ws: Dagger.directory.asWorkspace,
-        envFile: envFile,
-        sourceDateEpoch: "1234567890",
-      )
-      .container(base: alpine)
+      .buildEnvironment
+      .withEnvFile(envFile)
+      .withSourceDateEpoch("1234567890")
+      .apply(alpine)
 
     assert { container.envVariable("BUILD_ENV_TEST") == "from-env-file" }
     assert { container.envVariable("BUILD_ENV_EQUALS") == "a=b" }
@@ -53,34 +50,42 @@ type Tests {
     assert { output == "from-env-file|a=b|1234567890" }
   }
 
-  overlay: Void @check {
+  envVariable: Void @check {
     let container = Dagger
-      .buildEnvironment(
-        ws: Dagger.directory.asWorkspace,
-        overlay: overlays.withEnvVariable("BUILD_ENV_OVERLAY", "overlay-ok"),
-      )
-      .container(base: alpine)
+      .buildEnvironment
+      .withEnvVariable("BUILD_ENV_VARIABLE", "variable-ok")
+      .apply(alpine)
 
-    assert { container.envVariable("BUILD_ENV_OVERLAY") == "overlay-ok" }
-    assert { container.withExec(["printenv", "BUILD_ENV_OVERLAY"]).stdout.trimSpace == "overlay-ok" }
+    assert { container.envVariable("BUILD_ENV_VARIABLE") == "variable-ok" }
+    assert { container.withExec(["printenv", "BUILD_ENV_VARIABLE"]).stdout.trimSpace == "variable-ok" }
   }
 
-  workspace: Void @check {
-    let container = Dagger
-      .buildEnvironment(
-        ws: source.asWorkspace("/app"),
-        mountPath: "/src",
-        include: ["app/**"],
-        exclude: ["app/drop.txt"],
-      )
-      .container(base: alpine)
+  sourcePathValidation: Void @check {
+    assert { invalidSourcePath("../escape") }
+    assert { invalidSourcePath("/absolute") }
+    assert { Dagger.buildEnvironment.withSource(source, path: "app/../app").workdir == "/work/src/app" }
+  }
 
-    assert { container.directory("/src/app").entries == ["marker.txt"] }
+  sourceAccessor: Void @check {
+    assert { Dagger.buildEnvironment.withSource(source).source.entries == ["app/"] }
+    assert { missingSourceFails }
+  }
+}
 
-    let output = container
-      .withExec(["sh", "-c", "printf '%s|%s' \"$(pwd)\" \"$(cat marker.txt)\""])
-      .stdout
+let invalidSourcePath(path: Path!): Boolean! {
+  {
+    Dagger.buildEnvironment.withSource(source, path: path).workdir
+    false
+  } rescue {
+    err: Error => err.message.contains("invalid source path: escapes the source root")
+  }
+}
 
-    assert { output == "/src/app|source-ok" }
+let missingSourceFails: Boolean! {
+  {
+    Dagger.buildEnvironment.source.entries
+    false
+  } rescue {
+    err: Error => err.message.contains("build environment source is not configured; call withSource first")
   }
 }

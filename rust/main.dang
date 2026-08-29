@@ -1,6 +1,12 @@
 type Rust {
+  let base: Container!
+
   let env: RustEnvironment!
   let buildEnv: BuildEnvironment!
+
+  let overlay: Overlay
+
+  let prefetch: Boolean!
 
   new(
     ws: Workspace!,
@@ -13,18 +19,6 @@ type Rust {
     """
     container: Container! = Dagger.container.from("rust:" + version),
     """
-    Ignore paths included in the gitignore file.
-    """
-    gitignore: Boolean = true,
-    """
-    Include only artifacts that match the given pattern (e.g., ["app/", "package.*"]).
-    """
-    include: [String!],
-    """
-    Exclude artifacts that match the given pattern (e.g., ["node_modules/", ".git*"]).
-    """
-    exclude: [String!],
-    """
     Targets to install for cross-compilation.
     """
     targets: [String!]! = [],
@@ -33,13 +27,11 @@ type Rust {
     """
     components: [String!]! = [],
     """
-    Overlay to apply to the base container.
+    Overlay to apply to the base container (after Rust toolchain is installed).
     """
     overlay: Overlay,
     """
     Env file to load into the container.
-
-    Relative paths are resolved from the working directory absolute paths are resolved from the root.
     """
     envFile: File,
     """
@@ -54,49 +46,31 @@ type Rust {
     """
     noCache: Boolean! = false,
     """
-    Cache volume for cargo registry index.
+    Whether to prefetch Cargo dependencies before building.
     """
-    cargoRegistryIndexCache: CacheVolume = if (!noCache) {
-      Dagger.cacheVolume("cargo-registry-index")
-    } else null,
-    """
-    Cache volume for cargo registry archive.
-    """
-    cargoRegistryArchiveCache: CacheVolume = if (!noCache) {
-      Dagger.cacheVolume("cargo-registry-cache")
-    } else null,
-    """
-    Cache volume for cargo git db.
-    """
-    cargoGitDbCache: CacheVolume = if (!noCache) {
-      Dagger.cacheVolume("cargo-git-db")
-    } else null,
+    prefetch: Boolean! = false,
   ) {
+    self.base = container
+
     self.env = Dagger.rustEnvironment(
-      ws: ws,
-      container: container,
-
-      targets: targets,
-      components: ["rustfmt", "clippy"] + components,
-
-      cargoRegistryIndexCache: cargoRegistryIndexCache,
-      cargoRegistryArchiveCache: cargoRegistryArchiveCache,
-      cargoGitDbCache: cargoGitDbCache,
+      ws,
+      targets,
+      ["rustfmt", "clippy"] + components,
+      noCache,
     )
 
-    self.buildEnv = Dagger.buildEnvironment(
-      ws: ws,
-      overlay: moduleOverlay(
-        cargoArtifactsVersion: "v0.2.0",
-        cargoAuditVersion: "0.22.0",
-        overlay: overlay,
-      ),
-      gitignore: gitignore,
-      include: include,
-      exclude: exclude,
-      envFile: envFile,
-      sourceDateEpoch: sourceDateEpoch,
-    )
+    self.buildEnv = Dagger
+      .buildEnvironment
+      .withSource(
+        ws.directory("/", gitignore: true),
+        path: Path(ws.cwd).parts.join("/"),
+      )
+      .withEnvFile(envFile)
+      .withSourceDateEpoch(sourceDateEpoch)
+
+    self.overlay = overlay
+
+    self.prefetch = prefetch
 
     self
   }
@@ -127,16 +101,31 @@ type Rust {
   """
   Container with the Rust toolchain and common components installed.
   """
-  container(
-    """
-    Custom base container to use.
-    """
-    base: Container,
-  ): Container! {
+  container: Container! {
+    self._container { _ }
+  }
+
+  _container(&fn(c: Container!): Container!): Container! {
     self
-      .env
-      .container(base: base)
-      .{ self.buildEnv.container(base: _) }
+      .base
+      .{ self.env.apply(_) }
+      .{ moduleOverlay("v0.2.0", self.overlay).apply(_) }
+      .{ fn(_) }
+      .{ self.buildEnv.apply(_) }
+  }
+
+  let extendContainer(&fn(c: Container!): Container!): Container! {
+    self
+      ._container { fn(_) }
+      .{
+        if (self.prefetch) {
+          _.withExec(["cargo", "fetch", "--locked"])
+        } else _
+      }
+  }
+
+  let buildContainer: Container! {
+    self.extendContainer { _ }
   }
 
   """
@@ -151,16 +140,23 @@ type Rust {
     Advisory id to ignore (can be specified multiple times).
     """
     ignore: [String!]! = [],
-    """
-    Directory containing the advisory database.
-    """
-    db: Directory! = Dagger.git("https://github.com/rustsec/advisory-db.git").head.tree,
   ): String! @check {
-    let DB_PATH = "/var/cargo-audit/advisory-db"
+    let advisoryDb = Dagger.git("https://github.com/rustsec/advisory-db.git").head.tree
+
+    if (self.env.dotCargo.exists("audit.toml", expectedType: ExistsType.DIRECTORY_TYPE)) {
+      let config = TOML.decode(self.env.dotCargo.file("audit.toml").contents) :: CargoAuditConfig
+
+      let url = config.database.url
+      if (url != null) {
+        advisoryDb = Dagger.git(url).head.tree
+      }
+    }
+
+    let ADVISORY_DB_PATH = "/opt/rustsec/advisory-db"
 
     let args = [
       "cargo", "audit",
-      "--no-fetch", "--stale", "--db", DB_PATH,
+      "--no-fetch", "--db", ADVISORY_DB_PATH,
     ]
 
     if (deny != null) {
@@ -171,10 +167,15 @@ type Rust {
       args += ["--ignore", advisory]
     }
 
+    # This is necessary, because --no-fetch also skips fetching cargo index
+    self.prefetch = true
+
     self
-      .container
-      .withMountedDirectory(DB_PATH, db)
-      .withExec(["cargo", "fetch", "--locked"]) # This is necessary, because --no-fetch also skips fetching cargo index
+      .extendContainer {
+        _
+          .withFile("/usr/local/bin/cargo-audit", cargoAuditBinary("0.22.0"))
+          .withMountedDirectory(ADVISORY_DB_PATH, advisoryDb)
+      }
       .withExec(args)
       .stdout
   }
@@ -293,7 +294,7 @@ type Rust {
     }
 
     self
-      .container
+      .buildContainer
       .withExec(
         args,
         expand: true,
@@ -427,7 +428,7 @@ type Rust {
       profile,
     )
 
-    self.container.withExec(args).combinedOutput
+    self.buildContainer.withExec(args).combinedOutput
   }
 
   """
@@ -435,7 +436,7 @@ type Rust {
   """
   fmt: Changeset! @generate {
     self
-      .container
+      .buildContainer
       .withExec(["cargo", "fmt", "--", "--check"])
       .directory("/work/src")
       .filter(gitignore: true)
@@ -479,7 +480,7 @@ type Rust {
     deny.each { d => args += ["--deny", d] }
     forbid.each { f => args += ["--forbid", f] }
 
-    self.container.withExec(args).stdout
+    self.buildContainer.withExec(args).stdout
   }
 
   """
@@ -561,7 +562,7 @@ type Rust {
     )
 
     self
-      .container
+      .buildContainer
       .withEnvVariable("RUSTDOCFLAGS", "-D warnings")
       .withExec(args)
       .stdout

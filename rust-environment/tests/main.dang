@@ -1,5 +1,9 @@
 let rustVersion: String! = "1.96.0-slim-trixie@sha256:082a5849a6870672b5f7a5bf4eddc71723fce38756fd834a0d734a5306a310ab"
 
+let rustContainer: Container! {
+  Dagger.container.from("rust:" + rustVersion)
+}
+
 let realProject: Directory! {
   Dagger
     .git("https://github.com/sagikazarmark/cargo-artifacts.git")
@@ -12,19 +16,13 @@ type Tests {
 
   toolchain: ToolchainTests! { ToolchainTests }
 
-  overlay: Void @check {
-    let container = Dagger.container.from("rust:" + rustVersion)
+  apply: Void @check {
+    let container = rustContainer.withEnvVariable("FOO", "bar")
 
-    assert { container.envVariable("FOO") == null }
-
-    container = Dagger
-      .rustEnvironment(
-        ws: Dagger.directory.asWorkspace,
-        overlay: overlays.withEnvVariable("FOO", "bar"),
-      )
-      .container(base: container)
+    container = Dagger.rustEnvironment(ws: Dagger.directory.asWorkspace).apply(container)
 
     assert { container.envVariable("FOO") == "bar" }
+    assert { container.envVariable("CARGO_INCREMENTAL") == "0" }
   }
 
   workspace: Void @check {

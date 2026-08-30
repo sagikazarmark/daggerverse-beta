@@ -5,9 +5,13 @@ interface Overlay implements OverlaysOverlay {
 let moduleOverlay(
   binaryenVersion: String,
   esbuildVersion: String,
-  overlay: Overlay,
+  wasmBindgenVersion: String,
 ): OverlaysList! {
-  let wasmTools = Dagger.wasmTools.withTool(WasmToolsTool.ESBUILD, esbuildVersion)
+  let wasmTools = Dagger
+    .wasmTools
+    .withTool(WasmToolsTool.ESBUILD, esbuildVersion)
+    .withTool(WasmToolsTool.WASM_BINDGEN, wasmBindgenVersion)
+
   let customBinaryen = binaryenVersion != null and binaryenVersion != ""
   if (customBinaryen) {
     wasmTools = wasmTools.withTool(WasmToolsTool.BINARYEN, binaryenVersion)
@@ -21,24 +25,16 @@ let moduleOverlay(
     } else null,
 
     Dagger.overlays.withEnvVariable("ESBUILD_BIN", "esbuild"),
-    overlay,
   ])
 }
 
-let moduleSourceOverlay(
-  workerBuildVersion: String,
-  wasmBindgenVersion: String,
-): OverlaysList! {
+let workerBuildOverlay(version: String): OverlaysWithExec! {
   let installArgs: [String!]! = ["cargo", "install", "worker-build", "--locked"]
-  if (workerBuildVersion != null and workerBuildVersion != "") {
-    installArgs += ["--version", workerBuildVersion]
+  if (version != null and version != "") {
+    installArgs += ["--version", version]
   }
 
-  Dagger.overlays.combine([
-    Dagger.wasmTools.withTool(WasmToolsTool.WASM_BINDGEN, wasmBindgenVersion),
-    Dagger.overlays.withEnvVariable("WASM_BINDGEN_BIN", "wasm-bindgen"),
-    Dagger.overlays.withExec(installArgs),
-  ])
+  Dagger.overlays.withExec(installArgs)
 }
 
 let packageVersion(ws: Workspace, name: String!): String {

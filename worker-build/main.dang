@@ -1,15 +1,10 @@
 type WorkerBuild {
+  let base: Container!
+
   let rustEnv: RustEnvironment!
   let buildEnv: BuildEnvironment!
 
-  let workerBuildVersion: String
-  let wasmBindgenVersion: String
-
-  let release: Boolean
-  let dev: Boolean! = false
-  let noOpt: Boolean! = false
-  let panicUnwind: Boolean! = false
-  let args: [String!]! = []
+  let overlay: OverlaysOverlay
 
   new(
     ws: Workspace!,
@@ -37,22 +32,6 @@ type WorkerBuild {
     Custom container to use as a base container.
     """
     container: Container! = Dagger.container.from("rust:" + rustVersion),
-    """
-    Ignore paths included in the gitignore file.
-    """
-    gitignore: Boolean = true,
-    """
-    Include only artifacts that match the given pattern (e.g., ["app/", "package.*"]).
-    """
-    include: [String!],
-    """
-    Exclude artifacts that match the given pattern (e.g., ["node_modules/", ".git*"]).
-    """
-    exclude: [String!],
-    """
-    Overlay to apply to the base container before the Rust toolchain is installed.
-    """
-    rustOverlay: Overlay,
     """
     Targets to install for cross-compilation.
     """
@@ -82,85 +61,38 @@ type WorkerBuild {
     Useful if you want to mount cache volumes manually or use a different cache volume strategy.
     """
     noCache: Boolean! = false,
-    """
-    Cache volume for cargo registry index.
-    """
-    cargoRegistryIndexCache: CacheVolume = if (!noCache) {
-      Dagger.cacheVolume("cargo-registry-index")
-    } else null,
-    """
-    Cache volume for cargo registry archive.
-    """
-    cargoRegistryArchiveCache: CacheVolume = if (!noCache) {
-      Dagger.cacheVolume("cargo-registry-cache")
-    } else null,
-    """
-    Cache volume for cargo git db.
-    """
-    cargoGitDbCache: CacheVolume = if (!noCache) {
-      Dagger.cacheVolume("cargo-git-db")
-    } else null,
-    """
-    Build in release mode.
-    """
-    release: Boolean,
-    """
-    Create a development build. Enables debug info and disables optimizations.
-    """
-    dev: Boolean! = false,
-    """
-    Skip optimization with wasm-opt.
-    """
-    noOpt: Boolean! = false,
-    """
-    Enable panic=unwind support.
-    """
-    panicUnwind: Boolean! = false,
-    """
-    Additional arguments to pass to `cargo build`.
-    """
-    args: [String!]! = [],
   ) {
     version = version ?? packageVersion(ws, "worker")
     wasmBindgenVersion = wasmBindgenVersion ?? packageVersion(ws, "wasm-bindgen")
 
+    self.base = container
+
     self.rustEnv = Dagger.rustEnvironment(
       ws: ws,
-      container: container,
-      cargoRegistryIndexCache: cargoRegistryIndexCache,
-      cargoRegistryArchiveCache: cargoRegistryArchiveCache,
-      cargoGitDbCache: cargoGitDbCache,
 
-      overlay: rustOverlay,
       targets: ["wasm32-unknown-unknown"] + targets,
       components: ["rust-std"] + components,
+
+      noCache: noCache,
     )
 
-    self.buildEnv = Dagger.buildEnvironment(
-      ws: ws,
-      overlay: Dagger.overlays.combine([
-        moduleOverlay(
-          binaryenVersion,
-          esbuildVersion,
-          overlay,
-        ),
-        moduleSourceOverlay(version, wasmBindgenVersion),
-      ]),
-      envFile: envFile,
-      sourceDateEpoch: sourceDateEpoch,
-      gitignore: gitignore,
-      include: include,
-      exclude: exclude,
-    )
+    self.buildEnv = Dagger
+      .buildEnvironment
+      .withSource(ws.directory("/", gitignore: true), ws.cwd)
+      .withEnvFile(envFile)
+      .withSourceDateEpoch(sourceDateEpoch)
 
-    self.workerBuildVersion = version
-    self.wasmBindgenVersion = wasmBindgenVersion
+    self.overlay = Dagger.overlays.combine([
+      moduleOverlay(
+        binaryenVersion,
+        esbuildVersion,
+        wasmBindgenVersion,
+      ),
 
-    self.release = release
-    self.dev = dev
-    self.noOpt = noOpt
-    self.panicUnwind = panicUnwind
-    self.args = args
+      workerBuildOverlay(version),
+
+      overlay,
+    ])
 
     self
   }
@@ -191,16 +123,12 @@ type WorkerBuild {
   """
   Container with the Rust toolchain and worker-build installed.
   """
-  container(
-    """
-    Custom base container to use.
-    """
-    base: Container,
-  ): Container! {
+  container: Container! {
     self
-      .rustEnv
-      .container(base: base)
-      .{ self.buildEnv.container(base: _) }
+      .base
+      .{ self.rustEnv.apply(_) }
+      .{ self.overlay.apply(_) ?? _ }
+      .{ self.buildEnv.apply(_) }
   }
 
   """
@@ -210,23 +138,23 @@ type WorkerBuild {
     """
     Build in release mode.
     """
-    release: Boolean = self.release,
+    release: Boolean,
     """
     Create a development build. Enables debug info and disables optimizations.
     """
-    dev: Boolean! = self.dev,
+    dev: Boolean! = false,
     """
     Skip optimization with wasm-opt.
     """
-    noOpt: Boolean! = self.noOpt,
+    noOpt: Boolean! = false,
     """
     Enable panic=unwind support.
     """
-    panicUnwind: Boolean! = self.panicUnwind,
+    panicUnwind: Boolean! = false,
     """
     Additional arguments to pass to `cargo build`.
     """
-    args: [String!]! = self.args,
+    args: [String!]! = [],
   ): Directory! @check {
     let buildArgs = ["worker-build"]
     if (dev) {
@@ -243,9 +171,7 @@ type WorkerBuild {
       buildArgs += ["--panic-unwind"]
     }
 
-    buildArgs += ["--out-dir", "/work/out"]
-    buildArgs += [Path("/work/src").join(Path(self.buildEnv.cwd)).string]
-    buildArgs += args
+    buildArgs += ["--out-dir", "/work/out", self.buildEnv.workdir] + args
 
     self
       .container
@@ -262,23 +188,23 @@ type WorkerBuild {
     """
     Build in release mode.
     """
-    release: Boolean = self.release,
+    release: Boolean,
     """
     Create a development build. Enables debug info and disables optimizations.
     """
-    dev: Boolean! = self.dev,
+    dev: Boolean! = false,
     """
     Skip optimization with wasm-opt.
     """
-    noOpt: Boolean! = self.noOpt,
+    noOpt: Boolean! = false,
     """
     Enable panic=unwind support.
     """
-    panicUnwind: Boolean! = self.panicUnwind,
+    panicUnwind: Boolean! = false,
     """
     Additional arguments to pass to `cargo build`.
     """
-    args: [String!]! = self.args,
+    args: [String!]! = [],
   ): Container! {
     Dagger.container.withDirectory(
       "",

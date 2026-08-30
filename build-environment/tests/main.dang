@@ -62,7 +62,9 @@ type Tests {
 
   sourcePathValidation: Void @check {
     assert { invalidSourcePath("../escape") }
-    assert { invalidSourcePath("/absolute") }
+    assert { invalidSourcePath("app/../../escape") }
+    assert { Dagger.buildEnvironment.withSource(source, path: "/").workdir == "/work/src" }
+    assert { Dagger.buildEnvironment.withSource(source, path: "/absolute").workdir == "/work/src/absolute" }
     assert { Dagger.buildEnvironment.withSource(source, path: "app/../app").workdir == "/work/src/app" }
   }
 

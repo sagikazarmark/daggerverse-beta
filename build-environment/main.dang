@@ -7,7 +7,9 @@ type BuildEnvironment {
   sourceRoot: Path! = Path("/work/src")
 
   """
-  Relative path (current directory) within the source.
+  Path (current directory) within the source.
+
+  Absolute paths are interpreted relative to the source root.
   """
   let sourcePath: Path! = Path("")
 
@@ -42,13 +44,15 @@ type BuildEnvironment {
     """
     source: Directory!,
     """
-    Relative path (current directory) within the source.
+    Path (current directory) within the source.
+
+    Absolute paths are interpreted relative to the source root.
     """
     path: Path! = Path(""),
   ): BuildEnvironment! {
     let sourcePath = Path(path)
 
-    if (!Path(".").contains(sourcePath)) {
+    if (!self.sourceRoot.contains(self.sourceRoot.join(sourcePath))) {
       raise "invalid source path: escapes the source root"
     }
 

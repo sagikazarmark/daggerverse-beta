@@ -61,10 +61,7 @@ type Rust {
 
     self.buildEnv = Dagger
       .buildEnvironment
-      .withSource(
-        ws.directory("/", gitignore: true),
-        path: Path(ws.cwd).parts.join("/"),
-      )
+      .withSource(ws.directory("/", gitignore: true), ws.cwd)
       .withEnvFile(envFile)
       .withSourceDateEpoch(sourceDateEpoch)
 

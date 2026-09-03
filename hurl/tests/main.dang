@@ -15,6 +15,28 @@ type Tests {
   }
 
   """
+  Every Hurl variable is exposed, not only the last one.
+  """
+  variables: [String!]! @check {
+    let container = Dagger
+      .hurl(container: Dagger.container.from("alpine:3.23.4"))
+      .withVariable("base_url", "http://api:8000")
+      .withVariable("first", "1")
+      .withVariable("second", "2")
+      .container
+
+    assert { container.envVariable("HURL_VARIABLE_base_url") == "http://api:8000" }
+    assert { container.envVariable("HURL_VARIABLE_first") == "1" }
+    assert { container.envVariable("HURL_VARIABLE_second") == "2" }
+
+    [
+      container.envVariable("HURL_VARIABLE_base_url")!,
+      container.envVariable("HURL_VARIABLE_first")!,
+      container.envVariable("HURL_VARIABLE_second")!,
+    ]
+  }
+
+  """
   Dagger file and secret integrations configure fixed internal paths.
   """
   fileOptionEnv: [String!]! @check {
@@ -86,12 +108,12 @@ type Tests {
   Invalid variable names are rejected before running Hurl.
   """
   invalidVariable: Void @check {
-    try {
+    {
       Dagger.hurl.withVariable("missing-equals", "value").container.envVariable("HURL_VARIABLE_missing-equals")
 
       raise "expected invalid variable to be rejected"
-    } catch {
-      err => assert { err.message.containsMatch(`.*invalid.*variable.*`) }
+    } rescue {
+      err: Error => assert { err.message.containsMatch(`.*invalid.*variable.*`) }
     }
   }
 
@@ -190,12 +212,44 @@ type Tests {
   }
 
   """
+  Every secret variable is exposed to Hurl, not only the last one.
+  """
+  secretVariables: Int! @check @cache(policy: FunctionCachePolicy.Never) {
+    let result = Dagger
+      .hurl
+      .withServiceBinding(self.api, port: 8000)
+      .withVariable("base_url", self.api.endpoint(scheme: "http", port: 8000))
+      .withSecretVariable("token", Dagger.setSecret(
+        "hurl-secret-variables-token",
+        "abc",
+      ))
+      .withSecretVariable("other", Dagger.setSecret(
+        "hurl-secret-variables-other",
+        "def",
+      ))
+      .run(
+        source: self.source,
+        test: true,
+        inputs: ["tests/secrets.hurl"],
+        retry: 10,
+        retryInterval: "250ms",
+      )
+
+    assert { result.exitCode == 0 }
+
+    result.exitCode
+  }
+
+  """
   A Dagger File can be mounted and used as Hurl's variables file.
   """
   variablesFile: Int! @check @cache(policy: FunctionCachePolicy.Never) {
     let variablesFile = Dagger
       .directory
-      .withNewFile("variables.env", "base_url=" + self.api.endpoint(scheme: "http", port: 8000))
+      .withNewFile("variables.env", "base_url=" + self.api.endpoint(
+        scheme: "http",
+        port: 8000,
+      ))
       .file("variables.env")
 
     let result = Dagger
@@ -221,7 +275,10 @@ type Tests {
   constructorVariablesFile: Int! @check @cache(policy: FunctionCachePolicy.Never) {
     let variablesFile = Dagger
       .directory
-      .withNewFile("variables.env", "base_url=" + self.api.endpoint(scheme: "http", port: 8000))
+      .withNewFile("variables.env", "base_url=" + self.api.endpoint(
+        scheme: "http",
+        port: 8000,
+      ))
       .file("variables.env")
 
     let result = Dagger
@@ -250,7 +307,10 @@ type Tests {
       .file("variables.env")
     let variablesFile = Dagger
       .directory
-      .withNewFile("variables.env", "base_url=" + self.api.endpoint(scheme: "http", port: 8000))
+      .withNewFile("variables.env", "base_url=" + self.api.endpoint(
+        scheme: "http",
+        port: 8000,
+      ))
       .file("variables.env")
 
     let result = Dagger
@@ -388,6 +448,7 @@ type Tests {
       .withNewFile("tests/ok.hurl", self.okHurl)
       .withNewFile("tests/fail.hurl", self.failHurl)
       .withNewFile("tests/secret.hurl", self.secretHurl)
+      .withNewFile("tests/secrets.hurl", self.secretsHurl)
       .withNewFile("tests/cookie.hurl", self.cookieHurl)
   }
 
@@ -409,36 +470,40 @@ type Tests {
       .withWorkdir("/srv")
       .withNewFile("server.py", """from http.server import BaseHTTPRequestHandler, HTTPServer
 
-class Handler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Set-Cookie", "session=abc; Path=/")
-        self.end_headers()
-        self.wfile.write(b'{"ok":true}')
+      class Handler(BaseHTTPRequestHandler):
+          def do_GET(self):
+              self.send_response(200)
+              self.send_header("Content-Type", "application/json")
+              self.send_header("Set-Cookie", "session=abc; Path=/")
+              self.end_headers()
+              self.wfile.write(b'{"ok":true}')
 
-    def log_message(self, format, *args):
-        pass
+          def log_message(self, format, *args):
+              pass
 
-HTTPServer(("0.0.0.0", 8000), Handler).serve_forever()
-""")
+      HTTPServer(("0.0.0.0", 8000), Handler).serve_forever()
+      """)
       .withExposedPort(8000)
       .asService(["python", "server.py"])
   }
 
   let okHurl: String! = """GET {{base_url}}/ok.json
-HTTP 200
-"""
+  HTTP 200
+  """
 
   let failHurl: String! = """GET {{base_url}}/missing.json
-HTTP 204
-"""
+  HTTP 204
+  """
 
   let secretHurl: String! = """GET {{base_url}}/ok.json?token={{token}}
-HTTP 200
-"""
+  HTTP 200
+  """
+
+  let secretsHurl: String! = """GET {{base_url}}/ok.json?token={{token}}&other={{other}}
+  HTTP 200
+  """
 
   let cookieHurl: String! = """GET {{base_url}}/cookie
-HTTP 200
-"""
+  HTTP 200
+  """
 }

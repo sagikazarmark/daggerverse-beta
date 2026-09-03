@@ -148,12 +148,12 @@ type Hurl {
       .{ self.envVariables.reduce(_) { container, env => env.apply(container) } }
       .{
         self.variables.keys.reduce(_) { container, name =>
-          _.withEnvVariable("HURL_VARIABLE_" + name, self.variables[name]!)
+          container.withEnvVariable("HURL_VARIABLE_" + name, self.variables[name]!)
         }
       }
       .{
         self.secretVariables.keys.reduce(_) { container, name =>
-          _.withSecretVariable("HURL_SECRET_" + name, self.secretVariables[name]!)
+          container.withSecretVariable("HURL_SECRET_" + name, self.secretVariables[name]!)
         }
       }
       .{ self.serviceBindings.reduce(_) { container, binding => binding.apply(container) } }

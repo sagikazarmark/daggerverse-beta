@@ -29,20 +29,45 @@ type Tests {
 
   """
   Worker is accessible and working.
+
+  Deployments are registered when the service is initialized, so this check has to keep passing
+  in a new session too: a `Restate.service` result reused from a previous session would point at a
+  fresh server without the deployment and the worker call would fail with a 404.
+
+  The check uses its own server so that no other check registers the deployment on its behalf,
+  and busts the exec cache so that the call is made in every run.
   """
   worker: String @check @cache(policy: FunctionCachePolicy.Never) {
     Dagger
       .container
       .from("alpine/curl")
-      .withServiceBinding("restate", self.restate.service)
+      .withServiceBinding("restate", self.workerRestate.service)
+      .withEnvVariable("__DAGGER_CACHE_BUST", Random.string)
       .withExec(["curl", "--fail-with-body", "http://restate:8080/Greeter/greet", "--json", "\"Sarah\""])
       .stdout
+  }
+
+  let workerRestate: Restate! {
+    Dagger
+      .restate(
+        container: Dagger.container.from("ghcr.io/restatedev/restate:latest").withLabel(
+          "test",
+          "worker",
+        ),
+      )
+      .withDeployment(exampleWorker)
   }
 }
 
 type ClientTests {
   let parent: Tests!
 
+  """
+  The deployment is registered exactly once.
+
+  Both `Restate.service` and `Restate.client` initialize the server within a session, so the
+  registration runs more than once; the repeated registration must be a no-op.
+  """
   sql: Void @check @cache(policy: FunctionCachePolicy.Never) {
     let expectedEndpoint = parent.exampleWorker.endpoint(scheme: "http")
 
@@ -51,7 +76,7 @@ type ClientTests {
       format: RestateSqlResultFormat.JSON,
     ).output) :: [DeploymentQueryResult!]!
 
-    assert { !deployments.isEmpty }
+    assert { deployments.length == 1 }
     assert { deployments[0].endpoint.trimSuffix("/") == expectedEndpoint }
   }
 

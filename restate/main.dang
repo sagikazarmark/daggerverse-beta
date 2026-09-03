@@ -63,8 +63,11 @@ type Restate {
 
   """
   Service endpoint for the Restate server.
+
+  Deployments are registered while the service is initialized, so the result must not be
+  reused across sessions: a cached Service ID would come without the registration side effect.
   """
-  service: Service! {
+  service: Service! @cache(policy: FunctionCachePolicy.PerSession) {
     self.init.service
   }
 

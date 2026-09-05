@@ -125,4 +125,17 @@ type Tests {
 
     assert { response.contents.contains("<html") }
   }
+
+  """
+  With chef enabled, the dependencies are compiled on the skeleton before the real bundle.
+  """
+  chefBundle: Directory! @check {
+    let output = Dagger
+      .dioxus(ws: init.asWorkspace, rustVersion: rustVersion, chef: true)
+      .bundle(platform: DioxusPlatform.WEB)
+
+    assert { output.directory("public").file("index.html").contents.contains("main") }
+
+    output
+  }
 }

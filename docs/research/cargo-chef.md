@@ -43,6 +43,9 @@ base → rustEnv.apply → overlay → hook → buildEnv.applyEnvironment ─┬
 - Cook arguments are **derived per command** (selection, features, profile,
   target, mode) so cargo's fingerprints match exactly; a fixed `chefArgs`
   override is the escape hatch. `--all-features` is never a valid superset.
+  Where a tool drives cargo itself (dx), hydrate the skeleton with
+  `cook --no-build` and let the tool compile it: the flags match by
+  construction.
 - Pin the cargo-chef version (`0.1.78` today) and make it settable. The binary
   is upstream of the cook exec, so "latest" would invalidate every consumer's
   dependency layer whenever upstream releases.
@@ -231,11 +234,32 @@ profile.X.inherits=...`, `strip=false`, and `opt-level="s"` for web release;
 plus `--target <triple> --no-default-features --features ... -p <pkg> --bin
 <pkg>`.[^dx-args][^dx-profile-name][^dx-profile-args] It sets
 `RUSTC_WORKSPACE_WRAPPER=dx`, which affects workspace members only, not
-dependencies.[^dx-wrapper] chef has no `--config`, so the ad hoc profile must be
-reproduced through `CARGO_PROFILE_<NAME>_INHERITS/STRIP/OPT_LEVEL` environment
-variables, and `--cfg getrandom_backend="wasm_js"` mirrored when enabled.
-Feasible but fragile across dx versions: run a spike that counts `Compiling`
-lines in `dx bundle --verbose` after a cook before exposing the flag there.
+dependencies.[^dx-wrapper]
+
+Mirroring those flags in `cargo chef cook` would mean reproducing dx internals
+(chef has no `--config`; the ad hoc profile would have to be rebuilt through
+`CARGO_PROFILE_*` environment variables) and would drift with dx versions.
+**Instead, let dx supply its own flags:** `cargo chef cook --no-build` only
+hydrates the skeleton (`--no-build` exists for exactly this: "projects that
+rely on a custom build system"[^cook-flags]); then `dx build` runs on the
+skeleton with the same options as the real `bundle`/`serve` command. dx
+compiles every dependency with exactly the flags it will use later, then fails
+on the dummy binary (wasm-bindgen finds no bindings) — harmless, the artifacts
+are in `/target`, so the step runs with `expect: ANY`. Version masking keeps
+the skeleton's own artifacts from colliding with the real ones. `Dioxus.toml`
+is not part of the recipe and is embedded by content alongside the skeleton.
+
+Measured on the `dx init` Bare-Bones web template (253 crates, dx 0.7.10):
+the skeleton `dx build` compiles 175 crates in ~18s; the real `dx bundle`
+afterwards compiles **only the workspace crate** (`Compiled [175/253]: test`)
+and finishes in 2.3s. With a source-only change, `cook --no-build` and the
+skeleton `dx build` are both `CACHED [0.0s]`; the bundle again compiles only
+the workspace crate (3.2s).
+
+Not covered: fixtures without a `Cargo.lock` (chef requires one; dx generates
+it in-container otherwise), and fullstack builds (client + server are two dx
+invocations; the skeleton `dx build` mirrors whatever the command passes, so
+it should follow, but it is unmeasured).
 
 ## Design summary
 
@@ -254,7 +278,10 @@ lines in `dx bundle --verbose` after a cook before exposing the flag there.
   `--check` for `doc`; `fmt`/`audit` don't cook); cook slotted between
   `applyEnvironment` and `applySource` per command. The plain `container`
   accessor cooks only when `chefArgs` is set.
-- **`dioxus`**: spike first, then expose with hand-specified `chefArgs`.
+- **`dioxus`**: `chef`/`chefVersion` constructor arguments; the cook is
+  `rustEnv.cook(..., ["--no-build"])` followed by `dx build` with the
+  command's options (`DioxusCommand.build`), for `bundle`, `bundleAsContainer`
+  and `serve`. No `chefArgs`: dx derives the flags itself.
 
 ## Verification (2026-09-05, Dagger v1.0.0-beta.11)
 
@@ -267,6 +294,9 @@ lines in `dx bundle --verbose` after a cook before exposing the flag there.
   source-only change: cook `CACHED [0.0s]`, `cargo build --release` compiles
   only `cargo-artifacts v0.2.0` and finishes in 1.56s (all 33 dependencies
   reused).
+- End to end through `dioxus.bundle(platform: WEB)` on the `dx init` template
+  with a source-only change: skeleton `dx build` `CACHED [0.0s]`, `dx bundle`
+  compiles only the workspace crate (see "Dioxus").
 
 ## Primary sources
 

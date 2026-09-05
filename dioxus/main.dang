@@ -8,6 +8,9 @@ type Dioxus {
 
   let prefetch: Boolean!
 
+  let dioxusConfig: File
+  let dioxusConfigPath: String
+
   new(
     ws: Workspace!,
     """
@@ -69,6 +72,18 @@ type Dioxus {
     Whether to prefetch Cargo dependencies before building.
     """
     prefetch: Boolean! = false,
+    """
+    Cache compiled dependencies in a separate layer using cargo-chef.
+
+    Requires a Cargo.lock. Before each dx command, the dependencies are compiled from the
+    manifests alone by running `dx build` (with the command's options) on a skeleton of the
+    project, so source edits only recompile the workspace crates.
+    """
+    chef: Boolean! = false,
+    """
+    cargo-chef version to install when `chef` is enabled.
+    """
+    chefVersion: String,
   ) {
     version = version ?? packageVersion(ws, "dioxus")
     wasmBindgenVersion = wasmBindgenVersion ?? packageVersion(ws, "wasm-bindgen")
@@ -82,6 +97,9 @@ type Dioxus {
       components: ["rust-std"] + components,
 
       noCache: noCache,
+
+      chef: chef,
+      chefVersion: chefVersion,
     )
 
     self.buildEnv = Dagger
@@ -105,6 +123,12 @@ type Dioxus {
     ])
 
     self.prefetch = prefetch
+
+    let dioxusConfigPath = ws.findUp("Dioxus.toml")
+    if (dioxusConfigPath != null) {
+      self.dioxusConfig = ws.file(dioxusConfigPath)
+      self.dioxusConfigPath = dioxusConfigPath
+    }
 
     self
   }
@@ -136,21 +160,57 @@ type Dioxus {
   Container with the Rust toolchain and common components installed.
   """
   container: Container! {
-    self._container { _ }
+    self.assemble(null) { _ }
   }
 
-  _container(&fn(c: Container!): Container!): Container! {
+  """
+  Assemble the build container: base, Rust environment, overlays, caller hook,
+  build environment variables, dependency cook (optional), then the source.
+  """
+  let assemble(cookArgs: [String!], &fn(c: Container!): Container!): Container! {
     self
       .base
       .{ self.rustEnv.apply(_) }
       .{ self.overlay.apply(_) ?? _ }
       .{ fn(_) }
-      .{ self.buildEnv.apply(_) }
+      .{ self.buildEnv.applyEnvironment(_) }
+      .{ self.cook(_, cookArgs) }
+      .{ self.buildEnv.applySource(_) }
   }
 
-  let extendContainer(&fn(c: Container!): Container!): Container! {
+  """
+  Compile the dependencies in a separate layer, when enabled.
+
+  cargo-chef hydrates a skeleton of the project (manifests, lockfile, dummy sources) from the
+  recipe; `dx build` is then run on the skeleton with the same options as the real command,
+  so the dependencies are compiled with exactly the flags dx uses (profile, target, features,
+  rustflags). The skeleton's own artifacts are harmless: cargo-chef masks workspace crate
+  versions, so they never collide with the real ones.
+  """
+  let cook(container: Container!, dxArgs: [String!]): Container! {
+    if (!self.rustEnv.chef or dxArgs == null) {
+      return container
+    }
+
+    self.rustEnv
+      .cook(container, self.buildEnv.source, self.buildEnv.sourceRoot, ["--no-build"])
+      .{
+        # Dioxus.toml is not part of the recipe; dx reads it for build settings.
+        let config = self.dioxusConfig
+        let path = self.dioxusConfigPath
+        if (config != null and path != null) {
+          _.withNewFile(Path(self.buildEnv.sourceRoot).join(Path(path)).string, config.contents)
+        } else _
+      }
+      .withWorkdir(self.buildEnv.workdir)
+      # dx compiles the dependencies, then fails on the dummy binary (e.g. wasm-bindgen finds
+      # no bindings). The compiled dependencies are what matters; the real build reports real errors.
+      .withExec(dxArgs, expect: ReturnType.ANY)
+  }
+
+  let extendContainer(cookArgs: [String!], &fn(c: Container!): Container!): Container! {
     self
-      ._container { fn(_) }
+      .assemble(cookArgs) { fn(_) }
       .{
         if (self.prefetch) {
           _.withExec(["cargo", "fetch", "--locked"])
@@ -158,8 +218,8 @@ type Dioxus {
       }
   }
 
-  let buildContainer: Container! {
-    self.extendContainer { _ }
+  let buildContainer(cookArgs: [String!]): Container! {
+    self.extendContainer(cookArgs) { _ }
   }
 
   """
@@ -344,8 +404,39 @@ type Dioxus {
       serverArgs: serverArgs,
     )
 
+    let cookArgs = DioxusCommand.build(
+      fullstack: fullstack,
+      ssg: ssg,
+      verbose: verbose,
+      trace: trace,
+      jsonOutput: jsonOutput,
+      platform: platform,
+      renderer: renderer,
+      bundle: bundle,
+      release: release,
+      package: package,
+      bin: bin,
+      example: example,
+      profile: profile,
+      features: features,
+      noDefaultFeatures: noDefaultFeatures,
+      allFeatures: allFeatures,
+      target: target,
+      cargoArgs: cargoArgs,
+      rustcArgs: rustcArgs,
+      skipAssets: skipAssets,
+      injectLoadingScripts: injectLoadingScripts,
+      wasmSplit: wasmSplit,
+      debugSymbols: debugSymbols,
+      keepNames: keepNames,
+      basePath: basePath,
+      clientTarget: clientTarget,
+      clientArgs: clientArgs,
+      serverArgs: serverArgs,
+    )
+
     self
-      .buildContainer
+      .buildContainer(cookArgs)
       .withExec(args)
       .directory("/work/out")
   }
@@ -532,10 +623,41 @@ type Dioxus {
       serverArgs: serverArgs,
     )
 
+    let cookArgs = DioxusCommand.build(
+      fullstack: fullstack,
+      ssg: ssg,
+      verbose: verbose,
+      trace: trace,
+      jsonOutput: jsonOutput,
+      platform: platform,
+      renderer: renderer,
+      bundle: bundle,
+      release: release,
+      package: package,
+      bin: bin,
+      example: example,
+      profile: profile,
+      features: features,
+      noDefaultFeatures: noDefaultFeatures,
+      allFeatures: allFeatures,
+      target: target,
+      cargoArgs: cargoArgs,
+      rustcArgs: rustcArgs,
+      skipAssets: skipAssets,
+      injectLoadingScripts: injectLoadingScripts,
+      wasmSplit: wasmSplit,
+      debugSymbols: debugSymbols,
+      keepNames: keepNames,
+      basePath: basePath,
+      clientTarget: clientTarget,
+      clientArgs: clientArgs,
+      serverArgs: serverArgs,
+    )
+
     Dagger.container.withDirectory(
       "",
       self
-        .buildContainer
+        .buildContainer(cookArgs)
         .withExec(args)
         .directory("/work/out"),
     )
@@ -687,8 +809,37 @@ type Dioxus {
       serverArgs: serverArgs,
     )
 
+    let cookArgs = DioxusCommand.build(
+      web: true,
+      fullstack: fullstack,
+      ssg: ssg,
+      verbose: verbose,
+      trace: trace,
+      jsonOutput: jsonOutput,
+      release: release,
+      package: package,
+      bin: bin,
+      example: example,
+      profile: profile,
+      features: features,
+      noDefaultFeatures: noDefaultFeatures,
+      allFeatures: allFeatures,
+      target: target,
+      cargoArgs: cargoArgs,
+      rustcArgs: rustcArgs,
+      skipAssets: skipAssets,
+      injectLoadingScripts: injectLoadingScripts,
+      wasmSplit: wasmSplit,
+      debugSymbols: debugSymbols,
+      keepNames: keepNames,
+      basePath: basePath,
+      clientTarget: clientTarget,
+      clientArgs: clientArgs,
+      serverArgs: serverArgs,
+    )
+
     self
-      .buildContainer
+      .buildContainer(cookArgs)
       .withExposedPort(port)
       .asService(args: args)
   }
@@ -907,6 +1058,83 @@ type DioxusCommand {
       basePath: basePath,
       clientTarget: clientTarget,
     )
+    args += self.buildCommands(clientArgs, serverArgs)
+
+    args
+  }
+
+  """
+  `dx build` with the same target options as a `bundle`/`serve` command.
+  Used to compile the dependencies on the cargo-chef skeleton.
+  """
+  build(
+    fullstack: Boolean,
+    ssg: Boolean! = false,
+    verbose: Boolean! = false,
+    trace: Boolean! = false,
+    jsonOutput: Boolean! = false,
+    platform: Platform,
+    renderer: Renderer,
+    bundle: Bundle,
+    web: Boolean! = false,
+    release: Boolean! = false,
+    package: String,
+    bin: String,
+    example: String,
+    profile: String,
+    features: [String!]! = [],
+    noDefaultFeatures: Boolean! = false,
+    allFeatures: Boolean! = false,
+    target: String,
+    cargoArgs: String,
+    rustcArgs: String,
+    skipAssets: Boolean! = false,
+    injectLoadingScripts: Boolean,
+    wasmSplit: Boolean! = false,
+    debugSymbols: Boolean,
+    keepNames: Boolean! = false,
+    basePath: String,
+    clientTarget: String,
+    clientArgs: [String!]! = [],
+    serverArgs: [String!]! = [],
+  ): [String!]! {
+    let args = ["dx", "build"]
+
+    if (web) { args += ["--web"] }
+
+    args += self.options(
+      fullstack: fullstack,
+      ssg: ssg,
+      verbose: verbose,
+      trace: trace,
+      jsonOutput: jsonOutput,
+    )
+
+    if (platform != null) { args += ["--platform", toString(platform).toLower] }
+    if (renderer != null) { args += ["--renderer", toString(renderer).toLower] }
+    if (bundle != null) { args += ["--bundle", toString(bundle).toLower] }
+
+    args += self.targetOptions(
+      release: release,
+      package: package,
+      bin: bin,
+      example: example,
+      profile: profile,
+      features: features,
+      noDefaultFeatures: noDefaultFeatures,
+      allFeatures: allFeatures,
+      target: target,
+      cargoArgs: cargoArgs,
+      rustcArgs: rustcArgs,
+      skipAssets: skipAssets,
+      injectLoadingScripts: injectLoadingScripts,
+      wasmSplit: wasmSplit,
+      debugSymbols: debugSymbols,
+      keepNames: keepNames,
+      basePath: basePath,
+      clientTarget: clientTarget,
+    )
+
     args += self.buildCommands(clientArgs, serverArgs)
 
     args

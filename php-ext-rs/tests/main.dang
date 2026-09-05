@@ -87,12 +87,6 @@ type Tests {
       sourceBuildPath,
     )
 
-    let output = Dagger.directory
-
-    let iniName = "zz-" + extensionName + ".ini"
-    let extensionDir = "/opt/php/extensions/"
-    let extensionPath = extensionDir + extensionName + ".so"
-
     selectedPhpVersions.each { phpVersion =>
       variants.each { variant =>
         let tag = phpVersion
@@ -101,54 +95,72 @@ type Tests {
           tag += "-zts"
         }
 
-        let extensionFilePath = "php-" + tag + "/" + defaultTarget + "/" + extensionName + ".so"
-        let extensionFile = result.file(extensionFilePath)
-
-        let test = Dagger
-          .container
-          .from("php:" + tag)
-          .withFile(extensionPath, extensionFile)
-          .withFile(
-            "/usr/local/etc/php/conf.d/" + iniName,
-            Dagger.file(iniName, "extension=" + extensionPath + "\n"),
-          )
-          .withExec(["php", "--ri", extensionName])
-          .withExec(["php", "-m"])
-
-        result = result.withFile(extensionFilePath, extensionFile)
+        assertLoads(tag, extensionName, result.file("php-" + tag + "/" + defaultTarget + "/" + extensionName + ".so"))
       }
     }
 
     result
   }
 
+  """
+  Load the extension in the official PHP image for the tag and fail unless exactly one new module appears.
+
+  PHP reports an extension it cannot load as a startup warning (on stdout by default) and still exits 0,
+  so `php -m` is compared against the pristine image with errors routed to stderr. `php --ri` is not
+  used: ext-php-rs registers the module under the crate name, which need not match the composer
+  extension name (e.g. `ammonia-php-rs` vs `ammonia`).
+  """
+  let assertLoads(tag: String!, extensionName: String!, extension: File!): Void {
+    let php = Dagger.container.from("php:" + tag)
+    let listModules = ["php", "-d", "display_errors=stderr", "-m"]
+
+    let extensionPath = "/opt/php/extensions/" + extensionName + ".so"
+    let iniName = "zz-" + extensionName + ".ini"
+
+    let before = php.withExec(listModules).stdout.split("\n")
+
+    let loaded = php
+      .withFile(extensionPath, extension)
+      .withFile("/usr/local/etc/php/conf.d/" + iniName, Dagger.file(iniName, "extension=" + extensionPath + "\n"))
+      .withExec(listModules)
+
+    let startupErrors = loaded.stderr.trimSpace
+    if (startupErrors != "") {
+      raise `php:${tag} failed to load ${extensionName}: ${startupErrors}`
+    }
+
+    let added = loaded.stdout.split("\n").reject { before.contains(_) }
+    if (added.length != 1) {
+      raise `expected php:${tag} to load exactly one new module from ${extensionName}, got ${toString(added)}`
+    }
+  }
+
   let phpVersionsForSuite(suite: TestSuite!): [String!]! {
     case (suite) {
       TestSuite.MINIMAL => ["8.5.6"]
       TestSuite.FULL => ["8.4.21", "8.5.6"]
+      else => raise "unsupported test suite"
     }
   }
 
   let targetsForSuite(suite: TestSuite!): [String!]! {
-    [
-      "x86_64-unknown-linux-gnu",
-      "aarch64-unknown-linux-gnu",
-      "aarch64-apple-darwin",
-    ]
-    # case (suite) {
-    #   TestSuite.MINIMAL => ["aarch64-apple-darwin"]
-    #   TestSuite.FULL => [
-    #     "x86_64-unknown-linux-gnu",
-    #     "aarch64-unknown-linux-gnu",
-    #     "aarch64-apple-darwin",
-    #   ]
-    # }
+    case (suite) {
+      # `test` always adds the host target; Darwin covers cargo-zigbuild and the macOS SDK.
+      TestSuite.MINIMAL => ["aarch64-apple-darwin"]
+      TestSuite.FULL => [
+        "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-gnu",
+        "aarch64-apple-darwin",
+      ]
+      else => raise "unsupported test suite"
+    }
   }
 
   let targetForPlatform(platform: Platform!): String! {
     case (platform) {
       "linux/amd64" => "x86_64-unknown-linux-gnu"
       "linux/arm64" => "aarch64-unknown-linux-gnu"
+      else => raise "unsupported platform"
     }
   }
 
@@ -232,6 +244,15 @@ type Tests {
 
   pub spikard: Directory! @check {
     let source = Dagger.git("https://github.com/Goldziher/spikard.git").commit("8b41d5ffd54974e76726331b993715e0bc1dba0c").tree
+
+    # TODO: remove once Spikard stops pinning tungstenite below axum-test's version.
+    source = source.withFile(
+      "crates/spikard-http/Cargo.toml",
+      source.file("crates/spikard-http/Cargo.toml").withReplaced(
+        "tungstenite = \"=0.28.0\"",
+        "tungstenite = \"0.29\"",
+      ),
+    )
 
     test(source, [PhpExtRsPhpVariant.NTS], ["8.4.21"], "crates/spikard-php", [targetForPlatform(Dagger.defaultPlatform)])
   }

@@ -3,29 +3,48 @@ enum PhpVariant {
   ZTS
 }
 
+"""
+Build PHP extensions written in Rust (ext-php-rs) for multiple PHP versions, variants and targets.
+
+PHP is cross-compiled with Zig to obtain headers for each target; the extension itself is built
+with rust-cross, which cross-compiles with cargo-zigbuild.
+"""
 type PhpExtRs {
-  let rustVersion: String!
+  let base: Container!
+
   let zigVersion: String!
-  let zigBuildVersion: String
+  let cargoZigbuildVersion: String!
   let macosSdkVersion: String!
   let macosDeploymentTarget: String!
-  let container: Container!
+
+  let components: [String!]!
+  let overlay: Overlay
+  let envFile: File
+  let sourceDateEpoch: String
+  let noCache: Boolean!
 
   new(
     """
-    Version (image tag) to use from the official image repository as a build container.
+    Version (image tag) to use from the official Rust image repository as a base container.
     """
-    rustVersion: String! = "1.95-slim-trixie",
+    rustVersion: String! = "latest",
     """
-    Version of Zig to use.
+    Custom container to use as a base container.
+    """
+    container: Container! = Dagger.container.from("rust:" + rustVersion),
+    """
+    Zig version to use as the cross-compilation C compiler and linker.
     """
     zigVersion: String! = "0.16.0",
     """
-    Version of cargo-zigbuild to use.
+    cargo-zigbuild version to use.
+
+    Pinned below 0.23.4 like rust-cross: https://github.com/rust-cross/cargo-zigbuild/pull/477
+    breaks linking cdylibs for Apple targets.
     """
-    zigBuildVersion: String = null,
+    cargoZigbuildVersion: String! = "0.23.3",
     """
-    Version of the macOS SDK to use.
+    macOS SDK version to use for Darwin targets.
     """
     macosSdkVersion: String! = "15.5",
     """
@@ -33,95 +52,47 @@ type PhpExtRs {
     """
     macosDeploymentTarget: String! = "15.0",
     """
-    Custom container to use as a build container.
+    Additional Rust components to install.
     """
-    container: Container! = Dagger.container.from("rust:" + rustVersion),
+    components: [String!]! = [],
+    """
+    Overlay to apply to the Rust build container (after the toolchains are installed).
+    """
+    overlay: Overlay,
+    """
+    Env file to load into the Rust build container.
+    """
+    envFile: File,
+    """
+    Override the source date epoch for reproducible builds.
+    """
+    sourceDateEpoch: String,
+    """
+    Whether to disable automatically mounted cache volumes.
+    Useful if you want to mount cache volumes manually or use a different cache volume strategy.
+    """
+    noCache: Boolean! = false,
   ) {
-    self.rustVersion = rustVersion
+    self.base = container
+
     self.zigVersion = zigVersion
-    self.zigBuildVersion = zigBuildVersion
+    self.cargoZigbuildVersion = cargoZigbuildVersion
     self.macosSdkVersion = macosSdkVersion
     self.macosDeploymentTarget = macosDeploymentTarget
-    self.container = container
+
+    self.components = components
+    self.overlay = overlay
+    self.envFile = envFile
+    self.sourceDateEpoch = sourceDateEpoch
+    self.noCache = noCache
 
     self
-  }
-
-  let phpContainer: Container! {
-    let deps = ["autoconf", "bison", "build-essential", "ca-certificates", "clang", "libclang-dev", "curl", "file", "git", "make", "pkg-config", "re2c", "unzip", "xz-utils", "zip"]
-
-    debianSetup(installBase(Dagger.container.from("debian:trixie-slim")), deps)
-  }
-
-  let rustContainer(ws: Workspace!): Container! {
-    let deps = ["build-essential", "ca-certificates", "clang", "libclang-dev"]
-
-    let container = Dagger
-      .rust(
-        workspace: ws,
-        container: debianSetup(installBase(self.container), deps),
-        targets: ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "aarch64-apple-darwin"],
-      )
-      .container
-
-    withZigbuild(container, zigBuildVersion)
-  }
-
-  let installBase(container: Container!): Container! {
-    container = Dagger.zigDist(self.zigVersion).install(container)
-    container = Dagger.macosSdk(self.macosSdkVersion).install(container)
-
-    container
-  }
-
-  let debianSetup(container: Container!, packages: [String!]!): Container! {
-    container
-      .withMountedCache("/var/cache/apt/archives", Dagger.cacheVolume("debian-apt-archives"))
-      # .withMountedCache("/var/lib/apt/lists", Dagger.cacheVolume("debian-apt-lists"))
-      .withEnvVariable("DEBIAN_FRONTEND", "noninteractive")
-      .withExec(["apt-get", "update"])
-      .withExec(["apt-get", "install", "-y", "--no-install-recommends"] + packages)
-  }
-
-  let withZigbuild(container: Container!, version: String): Container! {
-    let release = Dagger.github.release(version, "rust-cross/cargo-zigbuild")
-
-    let name = "cargo-zigbuild"
-    let fileName = "cargo-zigbuild-" + arch + "-unknown-linux-gnu.tar.xz"
-
-    let binary = release
-      .asset(fileName)
-      .extracted(true)
-      .file(name)
-
-    if (binary == null) {
-      raise "failed to download cargo-zigbuild binary"
-    }
-
-    container.withFile("/usr/local/bin/" + name, binary)
-  }
-
-  let arch: String! {
-    case (Dagger.defaultPlatform) {
-      "linux/amd64" => "x86_64"
-      "linux/arm64" => "aarch64"
-      else => raise "unsupported platform: " + toString(Dagger.defaultPlatform).trim("\"")
-    }
-  }
-
-  let defaultDarwinArgs: [String!]! {
-    [
-      "-isysroot", "${SDKROOT}",
-      "-isystem", "${SDKROOT}/usr/include",
-      "-iframework", "${SDKROOT}/System/Library/Frameworks",
-      "-mmacosx-version-min=" + self.macosDeploymentTarget,
-    ]
   }
 
   """
   Builds a matrix of PHP extension builds for the given source directory.
   """
-  pub buildExtensionMatrix(
+  buildExtensionMatrix(
     """
     Source directory containing the PHP extension to build.
     """
@@ -177,127 +148,122 @@ type PhpExtRs {
   Builds a single PHP extension for the given source directory, PHP version, variant, and target.
   """
   let buildExtension(
-    """
-    Source directory containing the PHP extension to build.
-    """
     source: Directory!,
-    """
-    Name of the PHP extension to build.
-    """
     extensionName: String!,
-    """
-    PHP version to build for.
-    """
     phpVersion: String!,
-    """
-    PHP variant to build for.
-    """
     variant: PhpVariant!,
-    """
-    Target to build for.
-    """
     target: String!,
-    """
-    Path to the build directory.
-    """
-    buildPath: String! = "",
+    buildPath: String!,
   ): Directory! {
     let target = Target(target)
 
-    let container = withPhpHeaders(
-      self.rustContainer(source.asWorkspace),
+    let rustCross = self.rustCross(
+      source.asWorkspace(buildPath),
       phpVersion,
       variant,
       target,
     )
+
+    let container = rustCross.container
 
     let clangResourceDir = container
       .withExec(["clang", "-print-resource-dir"])
       .stdout
       .trimSpace
 
-    let libclangFile = container
-      .withExec(["find", "/usr/lib", "-path", "*/lib/libclang.so", "-print", "-quit"])
+    let phpIncludes = container
+      .withExec(["php-config", "--includes"])
       .stdout
       .trimSpace
+      .split(" ")
 
-    let args = ["-resource-dir", clangResourceDir]
+    let clangArgs = ["-resource-dir", clangResourceDir]
 
     if (target.isDarwin) {
-      args += [
+      clangArgs += [
         "-nostdinc",
         "-isystem", clangResourceDir + "/include",
-      ] + defaultDarwinArgs
+      ] + self.defaultDarwinArgs
     }
 
-    # target.zigLibcIncludeDirs.each { dir => args += ["-isystem", "${ZIG_ROOT}/lib/libc/include/" + dir] }
-    # target.systemIncludeDirs.each { dir => args += ["-isystem", dir] }
+    clangArgs += phpIncludes
 
-    let phpIncludes = container.withExec(["php-config", "--includes"]).stdout.trimSpace.split(" ")
-    args += phpIncludes
+    # Native builds compile C with the system toolchain, which already knows its own include paths.
+    let isHost = rustCross.hostTarget == target.toString
+    let cflags = if (isHost) { phpIncludes } else { clangArgs }
 
-    let cflagsArgs = if (target.isDefaultPlatform) { phpIncludes } else { args }
-
-    let bindgenArgs = args + target.extraBindgenArgs
-    # let bindgenArgs = ["--target=" + target.toClangTarget] + args + target.extraBindgenArgs
-    let cargoCommand = if (target.isDefaultPlatform) { "build" } else { "zigbuild" }
-
-    # Drop configure-time compiler env before Cargo selects per-target settings.
-    let result = container
-      .withoutEnvVariable("CC")
-      .withoutEnvVariable("CXX")
-      .withoutEnvVariable("CFLAGS")
-      .withoutEnvVariable("CPPFLAGS")
+    let output = rustCross
       .withEnvVariable("AR", "zig ar")
-      #.withEnvVariable(target.env("TARGET_TRIPLE"), target.toString)
-      #.withEnvVariable("LIBCLANG_PATH", libclangFile)
-      .withEnvVariable(
-        target.cargoTargetEnv("RUSTFLAGS"),
-        target.rustArgs.join(" "),
-        expand: true,
-      )
-      .withEnvVariable(
-        target.env("BINDGEN_EXTRA_CLANG_ARGS"),
-        bindgenArgs.join(" "),
-        expand: true,
-      )
-      .withEnvVariable(target.env("CFLAGS"), cflagsArgs.join(" "), expand: true)
-      .withDirectory("/work/src", source)
-      .withWorkdir("/work/src/" + buildPath)
-      # .withExec(["rustup", "target", "add", target.toString])
-      .withExec(
-        [
-          "cargo", cargoCommand,
-          "--release",
-          "--target", target.toString,
-          "--message-format", "json-render-diagnostics",
-        ],
-        redirectStdout: "/work/stdout.json",
-      )
-      .withExec(["mkdir", "-p", "/work/out"])
-      .withExec(["cargo", "artifacts", "copy", "-i", "/work/stdout.json", "--out-dir", "/work/out"])
-      .directory("/work/out")
+      .withEnvVariable(target.cargoTargetEnv("RUSTFLAGS"), target.rustArgs.join(" "), expand: true)
+      .withEnvVariable(target.env("BINDGEN_EXTRA_CLANG_ARGS"), clangArgs.join(" "), expand: true)
+      .withEnvVariable(target.env("CFLAGS"), cflags.join(" "), expand: true)
+      .build(target: [target.toString], release: true)
 
-    # let artifactPath = jq
-    #   .eval(
-    #     expr: """([.[] | select(.reason == "compiler-artifact" and (.package_id | startswith("path+file://")) and .target.name == $cdylibName and ((.target.kind // []) | any(. == "cdylib"))) | .filenames[] | select(endswith("." + $fileExtension))] | first) // error("cdylib artifact not found")""",
-    #     input: result.file("/work/stdout.json"),
-    #     args: [
-    #       jq.arg("cdylibName", cargoCdylibName(source, buildPath)),
-    #       jq.arg("fileExtension", target.fileExtension),
-    #     ],
-    #     slurp: true,
-    #   )
-    #   .contents
-    #   .trimSpace
+    let artifacts = output.glob("*." + target.fileExtension)
+    if (artifacts.isEmpty) {
+      raise `no ${target.fileExtension} artifact found for target ${target.toString}`
+    }
 
-    # result
-    #   .withExec(["cp", artifactPath, "/work/result/" + extensionName + ".so"])
-    #   .directory("/work/result")
+    # PHP loads extensions as .so on every platform, including macOS.
+    Dagger.directory.withFile(extensionName + ".so", output.file(artifacts[0]!))
   }
 
+  """
+  rust-cross instance whose base container has the PHP headers for the given build installed.
+  """
+  let rustCross(
+    ws: Workspace!,
+    phpVersion: String!,
+    variant: PhpVariant!,
+    target: Target!,
+  ): RustCross! {
+    # clang and libclang are required by bindgen
+    let deps = ["build-essential", "ca-certificates", "clang", "libclang-dev"]
+
+    let base = self
+      .base
+      .{ debianSetup(_, deps) }
+      .{ self.withPhpHeaders(_, phpVersion, variant, target) }
+
+    Dagger.rustCross(
+      ws: ws,
+      container: base,
+      zigVersion: self.zigVersion,
+      cargoZigbuildVersion: self.cargoZigbuildVersion,
+      macosSdkVersion: self.macosSdkVersion,
+      components: self.components,
+      overlay: self.overlay,
+      envFile: self.envFile,
+      sourceDateEpoch: self.sourceDateEpoch,
+      noCache: self.noCache,
+    )
+  }
+
+  """
+  Container used to cross-compile PHP for target headers.
+  """
+  let phpContainer: Container! {
+    let deps = ["autoconf", "bison", "build-essential", "ca-certificates", "clang", "libclang-dev", "curl", "file", "git", "make", "pkg-config", "re2c", "unzip", "xz-utils", "zip"]
+
+    debianSetup(Dagger.container.from("debian:trixie-slim"), deps)
+      .{ withPhpToolchain(_, self.zigVersion, self.macosSdkVersion) }
+  }
+
+  let defaultDarwinArgs: [String!]! {
+    [
+      "-isysroot", "${SDKROOT}",
+      "-isystem", "${SDKROOT}/usr/include",
+      "-iframework", "${SDKROOT}/System/Library/Frameworks",
+      "-mmacosx-version-min=" + self.macosDeploymentTarget,
+    ]
+  }
+
+  """
+  Cross-compile PHP (configure only) for the target and install its headers and php-config
+  into the given container, along with a php shim answering the queries ext-php-rs makes.
+  """
   let withPhpHeaders(
-    rcontainer: Container!,
+    container: Container!,
     phpVersion: String!,
     variant: PhpVariant!,
     target: Target!,
@@ -306,20 +272,20 @@ type PhpExtRs {
     let cppflags = []
 
     if (target.isDarwin) {
-      cflags += defaultDarwinArgs
-      cppflags += defaultDarwinArgs
+      cflags += self.defaultDarwinArgs
+      cppflags += self.defaultDarwinArgs
     }
 
-    let container = self
+    let phpContainer = self
       .phpContainer
-      .withEnvVariable("CC", ["zig", "cc", "-target", target.toZigTarget].join(" "))
-      .withEnvVariable("CXX", ["zig", "c++", "-target", target.toZigTarget].join(" "))
+      .withEnvVariable("CC", "zig cc -target " + target.toZigTarget)
+      .withEnvVariable("CXX", "zig c++ -target " + target.toZigTarget)
       .withEnvVariable("CFLAGS", cflags.join(" "), expand: true)
       .withEnvVariable("CPPFLAGS", cppflags.join(" "), expand: true)
 
     let configureArgs = [
       "--host=" + target.toString,
-      "--build=" + container.withExec(["gcc", "-dumpmachine"]).stdout.trimSpace,
+      "--build=" + phpContainer.withExec(["gcc", "-dumpmachine"]).stdout.trimSpace,
       "--disable-all",
       "--disable-cgi",
       "--disable-cli",
@@ -342,8 +308,9 @@ type PhpExtRs {
       ztsSuffix = "-zts"
     }
 
-    let build = phpDist
-      .fromVersion(phpVersion, container)
+    let build = Dagger
+      .phpDist
+      .fromVersion(phpVersion, phpContainer)
       .buildconf(force: true)
       .configure(configureArgs)
 
@@ -357,37 +324,17 @@ type PhpExtRs {
       .withReplaced("@@PHP_ZTS_SUFFIX@@", ztsSuffix)
 
     build
-      .install(
-        rcontainer,
-        [PhpDistComponent.HEADERS, PhpDistComponent.PROGRAMS],
-      )
+      .install(container, [PhpDistComponent.HEADERS, PhpDistComponent.PROGRAMS])
       .withFile(build.config.prefix + "/bin/php", phpShim, permissions: 755)
   }
+}
 
-  # let cargoCdylibName(source: Directory!, buildPath: String!): String! {
-  #   let workdir = ("/work/src/" + buildPath).trimSuffix("/")
-
-  #   let metadata = self
-  #     .container
-  #     .withDirectory("/work/src", source)
-  #     .withWorkdir(workdir)
-  #     .withExec(
-  #       ["cargo", "metadata", "--no-deps", "--format-version", "1"],
-  #       redirectStdout: "/work/cargo-metadata.json",
-  #     )
-  #     .file("/work/cargo-metadata.json")
-
-  #   jq.eval(
-  #     expr: """
-  #     ([.packages[] | select(.manifest_path == $manifestPath) | .targets[] | select(.kind | index("cdylib")) | .name | gsub("-"; "_")] | first)
-  #       // ([.workspace_default_members[] as $id | .packages[] | select(.id == $id) | .targets[] | select(.kind | index("cdylib")) | .name | gsub("-"; "_")] | first)
-  #       // ([.packages[] | .targets[] | select(.kind | index("cdylib")) | .name | gsub("-"; "_")] | first)
-  #       // error("cdylib target not found")
-  #     """,
-  #     input: metadata,
-  #     args: [jq.arg("manifestPath", workdir + "/Cargo.toml")],
-  #   ).contents.trimSpace
-  # }
+let debianSetup(container: Container!, packages: [String!]!): Container! {
+  container
+    .withMountedCache("/var/cache/apt/archives", Dagger.cacheVolume("debian-apt-archives"))
+    .withEnvVariable("DEBIAN_FRONTEND", "noninteractive")
+    .withExec(["apt-get", "update"])
+    .withExec(["apt-get", "install", "-y", "--no-install-recommends"] + packages)
 }
 
 type Target {
@@ -412,112 +359,49 @@ type Target {
   """
   Returns the target as a string.
   """
-  pub toString: String! {
+  toString: String! {
     self.value
   }
 
-  let envTarget: String! {
-    self.value
-  }
-
-  let cargoEnvTarget: String! {
-    case (self.value) {
-      "x86_64-unknown-linux-gnu" => "X86_64_UNKNOWN_LINUX_GNU"
-      "aarch64-unknown-linux-gnu" => "AARCH64_UNKNOWN_LINUX_GNU"
-      "aarch64-apple-darwin" => "AARCH64_APPLE_DARWIN"
-    }
-  }
-
   """
-  Returns a target-suffixed environment variable name.
+  Returns a target-suffixed environment variable name (e.g. CFLAGS_x86_64-unknown-linux-gnu).
   """
-  pub env(name: String!): String! {
+  env(name: String!): String! {
     name + "_" + self.value
   }
 
   """
-  Returns a Cargo target configuration environment variable name.
+  Returns a Cargo target configuration environment variable name (e.g. CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_RUSTFLAGS).
   """
-  pub cargoTargetEnv(name: String!): String! {
-    "CARGO_TARGET_" + self.cargoEnvTarget + "_" + name
+  cargoTargetEnv(name: String!): String! {
+    "CARGO_TARGET_" + self.value.toUpper.replace("-", "_") + "_" + name
   }
 
   """
   Returns whether the target is a Darwin target (macOS).
   """
-  pub isDarwin: Boolean! {
+  isDarwin: Boolean! {
     self.value.hasSuffix("-apple-darwin")
-  }
-
-  pub isDefaultPlatform: Boolean! {
-    case (Dagger.defaultPlatform) {
-      "linux/amd64" => self.value == "x86_64-unknown-linux-gnu"
-      "linux/arm64" => self.value == "aarch64-unknown-linux-gnu"
-    }
-  }
-
-  pub osFamily: String! {
-    if (isDarwin) {
-      "darwin"
-    } else {
-      "linux"
-    }
   }
 
   """
   Returns the target as a Zig target string.
   """
-  pub toZigTarget: String! {
+  toZigTarget: String! {
     case (self.value) {
       "x86_64-unknown-linux-gnu" => "x86_64-linux-gnu"
       "aarch64-unknown-linux-gnu" => "aarch64-linux-gnu"
       "aarch64-apple-darwin" => "aarch64-macos"
+      else => raise "unsupported target: " + self.value
     }
   }
 
   """
-  Returns the target as a Clang target string.
+  Rust flags for the target.
   """
-  pub toClangTarget: String! {
-    case (self.value) {
-      "x86_64-unknown-linux-gnu" => "x86_64-linux-gnu"
-      "aarch64-unknown-linux-gnu" => "aarch64-linux-gnu"
-      "aarch64-apple-darwin" => "arm64-apple-macosx"
-    }
-  }
-
-  """
-  Returns the Zig libc include directories for the target.
-  """
-  pub zigLibcIncludeDirs: [String!]! {
-    let defaults = ["generic-glibc", "any-linux-any"]
-
-    case (self.value) {
-      "x86_64-unknown-linux-gnu" => ["x86-linux-any", "x86-linux-gnu"] + defaults
-      "aarch64-unknown-linux-gnu" => ["aarch64-linux-any", "aarch64-linux-gnu"] + defaults
-      "aarch64-apple-darwin" => []
-    }
-  }
-
-  pub systemIncludeDirs: [String!]! {
-    case (self.value) {
-      "x86_64-unknown-linux-gnu" => ["/usr/include/x86_64-linux-gnu"]
-      "aarch64-unknown-linux-gnu" => ["/usr/include/aarch64-linux-gnu"]
-      "aarch64-apple-darwin" => []
-    }
-  }
-
-  pub extraBindgenArgs: [String!]! {
-    if (self.value == "aarch64-unknown-linux-gnu") {
-      # ["-U__aarch64__", "-U_M_ARM64"]
-      []
-    } else {
-      []
-    }
-  }
-
   let rustArgs: [String!]! {
     if (isDarwin) {
+      # PHP symbols are resolved by the host process at load time.
       ["-C", "link-arg=-undefined", "-C", "link-arg=dynamic_lookup"]
     } else {
       []
@@ -525,9 +409,9 @@ type Target {
   }
 
   """
-  Returns the target file extension string.
+  Returns the shared library file extension produced by Cargo for the target.
   """
-  pub fileExtension: String! {
+  fileExtension: String! {
     if (isDarwin) {
       "dylib"
     } else {

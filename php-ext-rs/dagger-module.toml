@@ -1,24 +1,24 @@
 name = "php-ext-rs"
-engineVersion = "v1.0.0-beta.3"
+engineVersion = "v1.0.0"
 runtime.source = "dang"
 include = ["!tests"]
 
 [[dependencies]]
-name = "macos-sdk"
-source = "../macos-sdk"
+name = "rust-cross"
+source = "../rust-cross"
 
 [[dependencies]]
 name = "php-dist"
 source = "../php-dist"
 
 [[dependencies]]
-name = "zig-dist"
-source = "../zig-dist"
+name = "zig-environment"
+source = "../zig-environment"
 
 [[dependencies]]
-name = "rust"
-source = "../rust"
+name = "macos-sdk"
+source = "../macos-sdk"
 
 [[dependencies]]
-name = "github"
-source = "../github"
+name = "overlays"
+source = "../overlays"

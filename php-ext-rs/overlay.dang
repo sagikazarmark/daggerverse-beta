@@ -1,0 +1,24 @@
+interface Overlay implements OverlaysOverlay {
+  apply(container: Container!): Container!
+}
+
+"""
+Install the toolchain used to cross-compile PHP itself (for target headers):
+Zig as the C compiler and the macOS SDK for Darwin targets.
+
+The Rust side of the build gets the same tools from rust-cross.
+
+Both are applied with direct calls rather than combined through overlays.List: an object
+from one dependency dispatched through another dependency's interface (overlays.List calling
+ZigEnvironmentOverlay.apply) fails to resolve when this module is loaded as a git dependency
+(Dagger v1.0.0-beta.11: "module provenance ... has no call frame").
+"""
+let withPhpToolchain(
+  container: Container!,
+  zigVersion: String!,
+  macosSdkVersion: String!,
+): Container! {
+  container
+    .{ Dagger.zigEnvironment(zigVersion).install(_) }
+    .{ Dagger.macosSdk([macosSdkVersion]).version(macosSdkVersion).overlay.apply(_) }
+}

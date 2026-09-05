@@ -9,7 +9,7 @@ Overlay installing the cross-compilation tools on top of Zig (which RustCross in
 - user-provided overlay
 """
 let moduleOverlay(
-  cargoZigbuildVersion: String,
+  cargoZigbuildVersion: String!,
   cargoArtifactsVersion: String!,
   overlay: Overlay,
 ): OverlaysList! {
@@ -34,10 +34,8 @@ let macosSdkOverlay(version: String!): MacosSdkOverlay! {
   Dagger.macosSdk([version]).version(version).overlay
 }
 
-let cargoZigbuildBinary(version: String): File! {
-  let version = if (version != null and version != "") {
-    "v" + version!.trimPrefix("v")
-  } else null
+let cargoZigbuildBinary(version: String!): File! {
+  let version = "v" + version.trimPrefix("v")
 
   Dagger
     .github

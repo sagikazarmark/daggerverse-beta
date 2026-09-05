@@ -36,9 +36,15 @@ type RustCross {
     """
     zigVersion: String! = "0.16.0",
     """
-    cargo-zigbuild version to use. Defaults to the latest release.
+    cargo-zigbuild version to use.
+
+    Pinned below 0.23.4: since https://github.com/rust-cross/cargo-zigbuild/pull/477 the wrapper
+    passes a `-Wl,<path>` argument to `zig cc` positionally whenever `<path>` is an existing file.
+    rustc emits `-Wl,-exported_symbols_list -Wl,<file>` for every cdylib on Apple targets (the
+    file already exists), so `-exported_symbols_list` swallows the next linker argument and no
+    cdylib can be linked for macOS.
     """
-    cargoZigbuildVersion: String,
+    cargoZigbuildVersion: String! = "0.23.3",
     """
     macOS SDK version to install when building for macOS targets.
     """

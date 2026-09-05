@@ -131,4 +131,53 @@ type Tests {
   tracing: Directory! @check {
     self.buildExample(name: "tracing")
   }
+
+  """
+  With chef enabled, the dependencies are compiled on the skeleton before the real build.
+
+  Uses a standalone copy of the digest example depending on `worker` from crates.io, like a user
+  project would: in the workers-rs repository `worker` is a workspace member, whose version cargo-chef
+  masks, which worker-build's version check rejects.
+  """
+  chefDigest: Directory! @check {
+    let output = Dagger
+      .workerBuild(
+        ws: self.standaloneDigest.asWorkspace,
+        rustVersion: rustVersion,
+        container: self.container,
+        chef: true,
+      )
+      .build
+
+    assert { output.file("index.js").contents.contains("wasm") }
+
+    output
+  }
+
+  let standaloneDigest: Directory! {
+    let cargoToml = """
+      [package]
+      name = "digest-stream-on-workers"
+      version = "0.1.0"
+      edition = "2021"
+
+      [lib]
+      crate-type = ["cdylib"]
+
+      [dependencies]
+      hex = "0.4"
+    """ + "\n" + `worker = "=${self.version}"` + "\n"
+
+    let source = Dagger
+      .directory
+      .withNewFile("Cargo.toml", cargoToml)
+      .withDirectory("src", self.source.directory("examples/digest/src"))
+
+    self
+      .container
+      .withMountedDirectory("/work/src", source)
+      .withWorkdir("/work/src")
+      .withExec(["cargo", "generate-lockfile"])
+      .directory("/work/src")
+  }
 }

@@ -61,6 +61,18 @@ type WorkerBuild {
     Useful if you want to mount cache volumes manually or use a different cache volume strategy.
     """
     noCache: Boolean! = false,
+    """
+    Cache compiled dependencies in a separate layer using cargo-chef.
+
+    Requires a Cargo.lock. Before each build, the dependencies are compiled from the manifests
+    alone by running worker-build (with the same options) on a skeleton of the project,
+    so source edits only recompile the workspace crates.
+    """
+    chef: Boolean! = false,
+    """
+    cargo-chef version to install when `chef` is enabled.
+    """
+    chefVersion: String,
   ) {
     version = version ?? packageVersion(ws, "worker")
     wasmBindgenVersion = wasmBindgenVersion ?? packageVersion(ws, "wasm-bindgen")
@@ -74,6 +86,9 @@ type WorkerBuild {
       components: ["rust-std"] + components,
 
       noCache: noCache,
+
+      chef: chef,
+      chefVersion: chefVersion,
     )
 
     self.buildEnv = Dagger
@@ -124,11 +139,42 @@ type WorkerBuild {
   Container with the Rust toolchain and worker-build installed.
   """
   container: Container! {
+    self.assemble(null)
+  }
+
+  """
+  Assemble the build container: base, Rust environment, overlays,
+  build environment variables, dependency cook (optional), then the source.
+  """
+  let assemble(cookArgs: [String!]): Container! {
     self
       .base
       .{ self.rustEnv.apply(_) }
       .{ self.overlay.apply(_) ?? _ }
-      .{ self.buildEnv.apply(_) }
+      .{ self.buildEnv.applyEnvironment(_) }
+      .{ self.cook(_, cookArgs) }
+      .{ self.buildEnv.applySource(_) }
+  }
+
+  """
+  Compile the dependencies in a separate layer, when enabled.
+
+  worker-build runs on the cargo-chef skeleton with the same options as the real build, so the
+  dependencies are compiled with exactly the flags and environment it uses (`cargo build --lib
+  --target wasm32-unknown-unknown`, `WASM_BINDGEN_USE_JS_SYS=1`, ...); see `RustEnvironment.cookWith`.
+  """
+  let cook(container: Container!, args: [String!]): Container! {
+    if (!self.rustEnv.chef or args == null) {
+      return container
+    }
+
+    self.rustEnv.cookWith(
+      container,
+      self.buildEnv.source,
+      self.buildEnv.sourceRoot,
+      self.buildEnv.workdir,
+      args,
+    )
   }
 
   """
@@ -171,10 +217,13 @@ type WorkerBuild {
       buildArgs += ["--panic-unwind"]
     }
 
+    # Same build on the skeleton, into a scratch output directory.
+    let cookArgs = buildArgs + ["--out-dir", "/tmp/worker-build/out", self.buildEnv.workdir] + args
+
     buildArgs += ["--out-dir", "/work/out", self.buildEnv.workdir] + args
 
     self
-      .container
+      .assemble(cookArgs)
       .withExec(buildArgs)
       .directory("/work/out")
   }

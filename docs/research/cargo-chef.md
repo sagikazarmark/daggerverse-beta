@@ -261,6 +261,32 @@ it in-container otherwise), and fullstack builds (client + server are two dx
 invocations; the skeleton `dx build` mirrors whatever the command passes, so
 it should follow, but it is unmeasured).
 
+## worker-build
+
+`worker-build` runs `cargo build --lib [--release|--profile X] --target
+wasm32-unknown-unknown` **with `WASM_BINDGEN_USE_JS_SYS=1`**, an environment
+variable read by wasm-bindgen's proc-macro at expansion time.[^wb-cargo] Cargo
+does not track environment reads made inside proc-macros, so a plain `cook`
+without that variable would produce dependency artifacts compiled differently
+yet considered fresh by the real build — a silent miscompile, not just a cache
+miss. This makes "hydrate the skeleton, let the tool compile it" the *safe*
+option for any tool that drives cargo, not merely the convenient one; it is
+factored into `RustEnvironment.cookWith(container, source, sourceRoot, workdir,
+command)` and used by both `dioxus` and `worker-build`.
+
+worker-build also validates the `worker` crate version against its own
+(`MIN_WORKER_LIB_VERSION`).[^wb-versions] In the workers-rs repository itself
+`worker` is a workspace member, whose version cargo-chef masks to `0.0.1`, so
+the skeleton build is rejected before compiling. User projects depend on
+`worker` from crates.io (not masked) and are unaffected; the test uses a
+standalone copy of the digest example for that reason.
+
+Measured on the standalone digest example (`worker = "=0.8.5"`, 81 crates):
+skeleton `worker-build --release` compiles 81 crates in 11.1s, then fails at
+wasm-bindgen ("no function table found in module") as expected; the real
+`worker-build` compiles **only** `digest-stream-on-workers` (cargo: 0.18s).
+With a source-only change, the skeleton build is `CACHED [0.0s]`.
+
 ## Design summary
 
 - **`build-environment`**: split `apply` into `applyEnvironment` (env file,
@@ -279,9 +305,12 @@ it should follow, but it is unmeasured).
   `applyEnvironment` and `applySource` per command. The plain `container`
   accessor cooks only when `chefArgs` is set.
 - **`dioxus`**: `chef`/`chefVersion` constructor arguments; the cook is
-  `rustEnv.cook(..., ["--no-build"])` followed by `dx build` with the
-  command's options (`DioxusCommand.build`), for `bundle`, `bundleAsContainer`
-  and `serve`. No `chefArgs`: dx derives the flags itself.
+  `rustEnv.cookWith(...)` running `dx build` with the command's options
+  (`DioxusCommand.build`), for `bundle`, `bundleAsContainer` and `serve`.
+  No `chefArgs`: dx derives the flags itself.
+- **`worker-build`**: `chef`/`chefVersion` constructor arguments; the cook is
+  `rustEnv.cookWith(...)` running `worker-build` with the same options into a
+  scratch `--out-dir`.
 
 ## Verification (2026-09-05, Dagger v1.0.0-beta.11)
 
@@ -297,6 +326,9 @@ it should follow, but it is unmeasured).
 - End to end through `dioxus.bundle(platform: WEB)` on the `dx init` template
   with a source-only change: skeleton `dx build` `CACHED [0.0s]`, `dx bundle`
   compiles only the workspace crate (see "Dioxus").
+- End to end through `worker-build.build` on a standalone digest example with
+  a source-only change: skeleton `worker-build` `CACHED [0.0s]`, the real
+  build compiles only the workspace crate (see "worker-build").
 
 ## Primary sources
 
@@ -325,3 +357,5 @@ it should follow, but it is unmeasured).
 [^dx-profile-name]: [Dioxus CLI source: `profile_name` yields `<bundle>-<dev|release>`](https://github.com/DioxusLabs/dioxus/blob/74a49736c029e0e6f6fc4a79b5def923f0d587b8/packages/cli/src/platform.rs#L306-L318)
 [^dx-profile-args]: [Dioxus CLI source: `profile_args` defines the ad hoc profile via `--config` (`strip=false`, `inherits`, `opt-level="s"`)](https://github.com/DioxusLabs/dioxus/blob/74a49736c029e0e6f6fc4a79b5def923f0d587b8/packages/cli/src/build/request.rs#L3077-L3117)
 [^dx-wrapper]: [Dioxus CLI source: `RUSTC_WORKSPACE_WRAPPER=dx` (workspace members only)](https://github.com/DioxusLabs/dioxus/blob/74a49736c029e0e6f6fc4a79b5def923f0d587b8/packages/cli/src/build/request.rs#L1665-L1677)
+[^wb-cargo]: [worker-build v0.8.5 source: `cargo_build_wasm` (`cargo build --lib --target wasm32-unknown-unknown`, `WASM_BINDGEN_USE_JS_SYS=1` read by the proc-macro at expansion time)](https://github.com/cloudflare/workers-rs/blob/v0.8.5/worker-build/src/build/target.rs)
+[^wb-versions]: [worker-build v0.8.5 source: `MIN_WORKER_LIB_VERSION` derived from worker-build's own version](https://github.com/cloudflare/workers-rs/blob/v0.8.5/worker-build/src/versions.rs)

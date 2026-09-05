@@ -195,6 +195,49 @@ type RustEnvironment {
     }
   }
 
+  """
+  Compile the dependencies of the source in a separate layer using a tool that drives cargo itself
+  (e.g. `dx build`, `worker-build`), instead of `cargo chef cook`'s own `cargo build`.
+
+  cargo-chef only hydrates the project skeleton (`cook --no-build`: manifests, lockfile, dummy sources);
+  `command` then runs on it from `workdir`. The tool compiles the dependencies with exactly the flags
+  and environment it uses for the real build (which may not be reproducible with cook arguments,
+  e.g. ad hoc profiles or environment variables read by proc-macros). It is expected to fail afterwards
+  on the dummy sources (e.g. at wasm-bindgen); its exit code is ignored, the compiled dependencies are
+  what the real build reuses. cargo-chef masks workspace crate versions, so the skeleton's own artifacts
+  never collide with the real ones.
+
+  Like `cook`, the source is only used to compute the recipe and is not mounted in the returned container.
+  Requires `chef` to be enabled.
+  """
+  cookWith(
+    """
+    Container with the Rust environment applied.
+    """
+    container: Container!,
+    """
+    Source directory containing the Cargo workspace.
+    """
+    source: Directory!,
+    """
+    Absolute path where the source is going to be mounted in the container.
+    """
+    sourceRoot: String! = "/work/src",
+    """
+    Working directory to run the command from (where the real command runs too).
+    """
+    workdir: String!,
+    """
+    Command compiling the dependencies on the skeleton.
+    """
+    command: [String!]!,
+  ): Container! {
+    self
+      .cook(container, source, sourceRoot, ["--no-build"])
+      .withWorkdir(workdir)
+      .withExec(command, expect: ReturnType.ANY)
+  }
+
   let cargoRootIn(sourceRoot: String!): String! {
     Path(sourceRoot).join(Path(self.cargoRoot!)).string
   }

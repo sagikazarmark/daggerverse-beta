@@ -181,31 +181,26 @@ type Dioxus {
   """
   Compile the dependencies in a separate layer, when enabled.
 
-  cargo-chef hydrates a skeleton of the project (manifests, lockfile, dummy sources) from the
-  recipe; `dx build` is then run on the skeleton with the same options as the real command,
-  so the dependencies are compiled with exactly the flags dx uses (profile, target, features,
-  rustflags). The skeleton's own artifacts are harmless: cargo-chef masks workspace crate
-  versions, so they never collide with the real ones.
+  `dx build` runs on the cargo-chef skeleton with the same options as the real command,
+  so the dependencies are compiled with exactly the flags dx uses (see `RustEnvironment.cookWith`).
   """
   let cook(container: Container!, dxArgs: [String!]): Container! {
     if (!self.rustEnv.chef or dxArgs == null) {
       return container
     }
 
-    self.rustEnv
-      .cook(container, self.buildEnv.source, self.buildEnv.sourceRoot, ["--no-build"])
+    let sourceRoot = self.buildEnv.sourceRoot
+
+    container
       .{
         # Dioxus.toml is not part of the recipe; dx reads it for build settings.
         let config = self.dioxusConfig
         let path = self.dioxusConfigPath
         if (config != null and path != null) {
-          _.withNewFile(Path(self.buildEnv.sourceRoot).join(Path(path)).string, config.contents)
+          _.withNewFile(Path(sourceRoot).join(Path(path)).string, config.contents)
         } else _
       }
-      .withWorkdir(self.buildEnv.workdir)
-      # dx compiles the dependencies, then fails on the dummy binary (e.g. wasm-bindgen finds
-      # no bindings). The compiled dependencies are what matters; the real build reports real errors.
-      .withExec(dxArgs, expect: ReturnType.ANY)
+      .{ self.rustEnv.cookWith(_, self.buildEnv.source, sourceRoot, self.buildEnv.workdir, dxArgs) }
   }
 
   let extendContainer(cookArgs: [String!], &fn(c: Container!): Container!): Container! {

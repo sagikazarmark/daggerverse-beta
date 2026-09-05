@@ -10,11 +10,17 @@ let moduleOverlay(
   let wasmTools = Dagger
     .wasmTools
     .withTool(WasmToolsTool.ESBUILD, esbuildVersion)
-    .withTool(WasmToolsTool.WASM_BINDGEN, wasmBindgenVersion)
 
   let customBinaryen = binaryenVersion != null and binaryenVersion != ""
   if (customBinaryen) {
     wasmTools = wasmTools.withTool(WasmToolsTool.BINARYEN, binaryenVersion)
+  }
+
+  # worker-build only picks up a wasm-bindgen from PATH when WASM_BINDGEN_BIN points at it;
+  # otherwise it downloads the version matching the project's lockfile itself.
+  let customWasmBindgen = wasmBindgenVersion != null and wasmBindgenVersion != ""
+  if (customWasmBindgen) {
+    wasmTools = wasmTools.withTool(WasmToolsTool.WASM_BINDGEN, wasmBindgenVersion)
   }
 
   Dagger.overlays.combine([
@@ -22,6 +28,10 @@ let moduleOverlay(
 
     if (customBinaryen) {
       Dagger.overlays.withEnvVariable("WASM_OPT_BIN", "wasm-opt")
+    } else null,
+
+    if (customWasmBindgen) {
+      Dagger.overlays.withEnvVariable("WASM_BINDGEN_BIN", "wasm-bindgen")
     } else null,
 
     Dagger.overlays.withEnvVariable("ESBUILD_BIN", "esbuild"),

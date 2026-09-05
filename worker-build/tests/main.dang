@@ -63,6 +63,68 @@ type Tests {
     assert { overriddenContainer.envVariable("WASM_OPT_BIN") == "wasm-opt" }
   }
 
+  """
+  Let worker-build manage wasm-bindgen unless a version is explicitly requested.
+  """
+  wasmBindgenOverride: Void @check {
+    let ws = Dagger.directory.asWorkspace
+    let defaultContainer = Dagger
+      .workerBuild(
+        ws: ws,
+        version: "0.8.5",
+        rustVersion: rustVersion,
+        container: self.container,
+      )
+      .container
+
+    assert { defaultContainer.envVariable("WASM_BINDGEN_BIN") == null }
+    assert { defaultContainer.withExec(["which", "wasm-bindgen"], expect: ReturnType.ANY).exitCode != 0 }
+
+    let overriddenContainer = Dagger
+      .workerBuild(
+        ws: ws,
+        version: "0.8.5",
+        wasmBindgenVersion: "0.2.125",
+        rustVersion: rustVersion,
+        container: self.container,
+      )
+      .container
+
+    assert { overriddenContainer.envVariable("WASM_BINDGEN_BIN") == "wasm-bindgen" }
+    assert { overriddenContainer.withExec(["wasm-bindgen", "--version"]).stdout.contains("0.2.125") }
+  }
+
+  """
+  Persist worker-build's own downloads in a cache volume unless caching is disabled.
+  """
+  downloadCache: Void @check {
+    let ws = Dagger.directory.asWorkspace
+    let cacheDir = "/root/.cache/worker-build"
+
+    let defaultContainer = Dagger
+      .workerBuild(
+        ws: ws,
+        version: "0.8.5",
+        rustVersion: rustVersion,
+        container: self.container,
+      )
+      .container
+
+    assert { defaultContainer.mounts.contains(cacheDir) }
+
+    let noCacheContainer = Dagger
+      .workerBuild(
+        ws: ws,
+        version: "0.8.5",
+        rustVersion: rustVersion,
+        container: self.container,
+        noCache: true,
+      )
+      .container
+
+    assert { !noCacheContainer.mounts.contains(cacheDir) }
+  }
+
   let buildExample(source: Directory! = self.source, name: String!): Directory! {
     let output = self
       .workerBuild(source.asWorkspace("examples/" + name))

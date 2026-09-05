@@ -6,6 +6,8 @@ type WorkerBuild {
 
   let overlay: OverlaysOverlay
 
+  let noCache: Boolean!
+
   new(
     ws: Workspace!,
     """
@@ -13,7 +15,11 @@ type WorkerBuild {
     """
     version: String,
     """
-    wasm-bindgen CLI version to use (default: auto-detect from Cargo.lock).
+    wasm-bindgen CLI version to use.
+
+    By default, worker-build downloads the version matching the project's lockfile itself;
+    setting this installs the given version and points worker-build at it (WASM_BINDGEN_BIN).
+    It must match the wasm-bindgen crate version the project resolves to.
     """
     wasmBindgenVersion: String,
     """
@@ -75,9 +81,10 @@ type WorkerBuild {
     chefVersion: String,
   ) {
     version = version ?? packageVersion(ws, "worker")
-    wasmBindgenVersion = wasmBindgenVersion ?? packageVersion(ws, "wasm-bindgen")
 
     self.base = container
+
+    self.noCache = noCache
 
     self.rustEnv = Dagger.rustEnvironment(
       ws: ws,
@@ -143,17 +150,41 @@ type WorkerBuild {
   }
 
   """
-  Assemble the build container: base, Rust environment, overlays,
+  Assemble the build container: base, Rust environment, worker-build download cache, overlays,
   build environment variables, dependency cook (optional), then the source.
   """
   let assemble(cookArgs: [String!]): Container! {
     self
       .base
       .{ self.rustEnv.apply(_) }
+      .{ self.cache(_) }
       .{ self.overlay.apply(_) ?? _ }
       .{ self.buildEnv.applyEnvironment(_) }
       .{ self.cook(_, cookArgs) }
       .{ self.buildEnv.applySource(_) }
+  }
+
+  """
+  Persist the tools worker-build downloads for itself (wasm-bindgen, wasm-opt) across builds.
+
+  Locked: before downloading a tool, worker-build deletes every other cached version of it,
+  so concurrent builds sharing the volume must not run at the same time.
+  """
+  let cache(container: Container!): Container! {
+    if (self.noCache) {
+      return container
+    }
+
+    # worker-build caches its downloads under `$XDG_CACHE_HOME/worker-build`, falling back to
+    # `$HOME/.cache/worker-build`. Neither variable is defined in the Rust image's config, so the path
+    # cannot be expanded here; the official images run as root.
+    let workerBuildCacheDir: String! = "/root/.cache/worker-build"
+
+    container.withMountedCache(
+      workerBuildCacheDir,
+      Dagger.cacheVolume("worker-build"),
+      sharing: Dagger.CacheSharingMode.LOCKED,
+    )
   }
 
   """

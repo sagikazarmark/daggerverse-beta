@@ -16,6 +16,8 @@ type Tests {
 
   toolchain: ToolchainTests! { ToolchainTests }
 
+  chef: ChefTests! { ChefTests }
+
   apply: Void @check {
     let container = rustContainer.withEnvVariable("FOO", "bar")
 

@@ -1,0 +1,28 @@
+# cargo-chef: dependency caching in a separate container layer.
+#
+# `cargo chef prepare` reduces a Cargo workspace to a recipe (normalized manifests, lockfile,
+# root cargo config and toolchain file). `cargo chef cook` rebuilds a dummy workspace from the
+# recipe and compiles its dependencies, so a later cargo command only compiles the workspace
+# crates. The cook only depends on the recipe, not on the sources, so it is reused across
+# source edits.
+#
+# See docs/research/cargo-chef.md.
+
+"""
+Pinned on purpose: the binary sits upstream of the cook layer, so a floating "latest"
+would invalidate every consumer's dependency cache whenever upstream releases.
+"""
+let defaultChefVersion: String! = "0.1.78"
+
+let recipePath: String! = "/tmp/rust-environment/recipe.json"
+
+let cargoChefBinary(version: String!): File! {
+  let version = "v" + version.trimPrefix("v")
+
+  Dagger
+    .github
+    .release(version, "LukeMathWalker/cargo-chef")
+    .asset(`cargo-chef-${arch}-unknown-linux-musl.tar.xz`)
+    .extracted(true)
+    .file("cargo-chef")
+}

@@ -1,0 +1,7 @@
+let arch(platform: Platform! = Dagger.defaultPlatform): String! {
+  case (platform) {
+    "linux/amd64" => "x86_64"
+    "linux/arm64" => "aarch64"
+    else => raise "unsupported platform: " + toString(platform)
+  }
+}

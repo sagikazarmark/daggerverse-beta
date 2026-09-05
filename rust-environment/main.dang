@@ -1,5 +1,6 @@
 type RustEnvironment {
   let toolchainFile: File
+  let toolchainPath: String
 
   let targets: [String!]!
   let components: [String!]!
@@ -10,6 +11,24 @@ type RustEnvironment {
   Directory containing the project's .cargo directory.
   """
   dotCargo: Directory! = Dagger.directory
+  let dotCargoPath: String
+
+  """
+  Whether dependency caching with cargo-chef is enabled.
+  """
+  chef: Boolean! = false
+  let chefVersion: String!
+
+  """
+  Path of the Cargo workspace root (the directory containing Cargo.lock) within the workspace.
+  """
+  cargoRoot: String
+
+  """
+  Path of the nearest Cargo.toml within the workspace:
+  the package cargo selects when invoked from the current directory.
+  """
+  manifestPath: String
 
   new(
     ws: Workspace!,
@@ -26,10 +45,21 @@ type RustEnvironment {
     Useful if you want to mount cache volumes manually or use a different cache volume strategy.
     """
     noCache: Boolean! = false,
+    """
+    Cache compiled dependencies in a separate layer using cargo-chef.
+
+    Requires a Cargo.lock. See `cook`.
+    """
+    chef: Boolean! = false,
+    """
+    cargo-chef version to install when `chef` is enabled (default: 0.1.78).
+    """
+    chefVersion: String,
   ) {
     let toolchainPath = ws.findUp("rust-toolchain.toml")
     if (toolchainPath != null) {
       self.toolchainFile = ws.file(toolchainPath)
+      self.toolchainPath = toolchainPath
     }
 
     self.targets = targets
@@ -40,6 +70,23 @@ type RustEnvironment {
     let dotCargo = ws.findUp(".cargo")
     if (dotCargo != null) {
       self.dotCargo = ws.directory(dotCargo, gitignore: true)
+      self.dotCargoPath = dotCargo
+    }
+
+    self.chef = chef
+    self.chefVersion = chefVersion ?? defaultChefVersion
+
+    let lockPath = ws.findUp("Cargo.lock")
+    if (lockPath != null) {
+      self.cargoRoot = Path(lockPath).parent.string
+    }
+    if (chef and lockPath == null) {
+      raise `cargo-chef requires a Cargo.lock: none found in ${ws.cwd} (or any parent directory)`
+    }
+
+    let manifestPath = ws.findUp("Cargo.toml")
+    if (manifestPath != null) {
+      self.manifestPath = manifestPath
     }
 
     self
@@ -58,6 +105,140 @@ type RustEnvironment {
       .{ self.defaults(_) }
       .{ self.cache(_) }
       .{ self.rustup(_) }
+      .{ self.installChef(_) }
+  }
+
+  """
+  Recipe describing the dependencies of the source (`cargo chef prepare`).
+
+  Only the manifests, the lockfile and the cargo config and toolchain files at the Cargo workspace root
+  contribute to it, so it is stable across source edits.
+  Requires `chef` to be enabled.
+  """
+  recipe(
+    """
+    Container with the Rust environment applied.
+    """
+    container: Container!,
+    """
+    Source directory containing the Cargo workspace.
+    """
+    source: Directory!,
+    """
+    Absolute path where the source is (going to be) mounted in the container.
+    """
+    sourceRoot: String! = "/work/src",
+  ): File! {
+    self.requireChef
+
+    container
+      .withMountedDirectory(sourceRoot, source)
+      .withWorkdir(self.cargoRootIn(sourceRoot))
+      .withExec(["cargo", "chef", "prepare", "--recipe-path", "/tmp/recipe.json"])
+      .file("/tmp/recipe.json")
+  }
+
+  """
+  Compile the dependencies of the source in a separate layer (`cargo chef cook`),
+  so that subsequent cargo commands only compile the workspace crates.
+
+  The source is only used to compute the recipe; it is not mounted in the returned container.
+  Mount it afterwards, at `sourceRoot` (e.g. with build-environment's `applySource`).
+
+  Run this as late as possible before mounting the source: everything affecting cargo's
+  fingerprints (environment variables such as RUSTFLAGS, toolchain, profile, target, features,
+  package selection) must be identical between the cook and the cargo command that follows,
+  otherwise the cooked dependencies are not reused.
+  Requires `chef` to be enabled.
+  """
+  cook(
+    """
+    Container with the Rust environment applied.
+    """
+    container: Container!,
+    """
+    Source directory containing the Cargo workspace.
+    """
+    source: Directory!,
+    """
+    Absolute path where the source is going to be mounted in the container.
+    """
+    sourceRoot: String! = "/work/src",
+    """
+    Additional arguments for `cargo chef cook`, mirroring the cargo command that follows
+    (e.g. `--release`, `--tests`, `--target`, `--features`, `-p`, `--workspace`).
+    """
+    args: [String!]! = [],
+  ): Container! {
+    self.requireChef
+
+    # The recipe is embedded by content (not as a File): Dagger keys `withFile` by the producing
+    # call chain, which includes the source, so a content-identical recipe from an edited source
+    # would not hit the cache. `withNewFile` with the contents makes the cook depend on the recipe
+    # content only.
+    let recipe = self.recipe(container, source, sourceRoot).contents
+
+    container
+      .{ self.withConfigFiles(_, sourceRoot) }
+      .withWorkdir(self.cargoRootIn(sourceRoot))
+      .withNewFile(recipePath, recipe)
+      .withExec(
+        ["cargo", "chef", "cook", "--recipe-path", recipePath, "--locked"]
+          + self.manifestPathArgs(sourceRoot)
+          + args,
+      )
+  }
+
+  let requireChef: Void {
+    if (!self.chef) {
+      raise "cargo-chef is not enabled: construct the environment with chef: true"
+    }
+  }
+
+  let cargoRootIn(sourceRoot: String!): String! {
+    Path(sourceRoot).join(Path(self.cargoRoot!)).string
+  }
+
+  """
+  Select the same package cargo would select from the current directory.
+  """
+  let manifestPathArgs(sourceRoot: String!): [String!]! {
+    let manifestPath = self.manifestPath
+    if (manifestPath == null) {
+      return []
+    }
+
+    ["--manifest-path", Path(sourceRoot).join(Path(manifestPath)).string]
+  }
+
+  """
+  Place the project's .cargo directory and toolchain file where cargo and rustup find them
+  when walking up from the Cargo workspace root. They may live above the Cargo workspace root,
+  in which case cargo-chef does not capture them in the recipe.
+  """
+  let withConfigFiles(container: Container!, sourceRoot: String!): Container! {
+    container
+      .{
+        let dotCargoPath = self.dotCargoPath
+        if (dotCargoPath != null) {
+          _.withDirectory(Path(sourceRoot).join(Path(dotCargoPath)).string, self.dotCargo)
+        } else _
+      }
+      .{
+        let toolchainFile = self.toolchainFile
+        let toolchainPath = self.toolchainPath
+        if (toolchainFile != null and toolchainPath != null) {
+          _.withFile(Path(sourceRoot).join(Path(toolchainPath)).string, toolchainFile)
+        } else _
+      }
+  }
+
+  let installChef(container: Container!): Container! {
+    if (!self.chef) {
+      return container
+    }
+
+    container.withFile("/usr/local/bin/cargo-chef", cargoChefBinary(self.chefVersion))
   }
 
   let defaults(container: Container!): Container! {

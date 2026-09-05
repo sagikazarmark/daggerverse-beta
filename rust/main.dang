@@ -8,6 +8,8 @@ type Rust {
 
   let prefetch: Boolean!
 
+  let chefArgs: [String!]
+
   new(
     ws: Workspace!,
     """
@@ -49,14 +51,35 @@ type Rust {
     Whether to prefetch Cargo dependencies before building.
     """
     prefetch: Boolean! = false,
+    """
+    Cache compiled dependencies in a separate layer using cargo-chef.
+
+    Requires a Cargo.lock. Before each cargo command, its dependencies are compiled
+    from the manifests alone (with arguments mirroring the command), so source edits
+    only recompile the workspace crates.
+    """
+    chef: Boolean! = false,
+    """
+    cargo-chef version to install when `chef` is enabled.
+    """
+    chefVersion: String,
+    """
+    Fixed arguments for `cargo chef cook` (e.g. `["--workspace", "--all-targets"]`).
+
+    When set, replaces the arguments derived from each cargo command
+    (one shared dependency layer per profile), and also applies to `container`.
+    """
+    chefArgs: [String!],
   ) {
     self.base = container
 
     self.env = Dagger.rustEnvironment(
-      ws,
-      targets,
-      ["rustfmt", "clippy"] + components,
-      noCache,
+      ws: ws,
+      targets: targets,
+      components: ["rustfmt", "clippy"] + components,
+      noCache: noCache,
+      chef: chef,
+      chefVersion: chefVersion,
     )
 
     self.buildEnv = Dagger
@@ -68,6 +91,8 @@ type Rust {
     self.overlay = overlay
 
     self.prefetch = prefetch
+
+    self.chefArgs = chefArgs
 
     self
   }
@@ -97,23 +122,52 @@ type Rust {
 
   """
   Container with the Rust toolchain and common components installed.
+
+  Dependencies are cooked (cargo-chef) only when `chefArgs` is set.
   """
   container: Container! {
-    self._container { _ }
+    self.assemble(null) { _ }
   }
 
-  _container(&fn(c: Container!): Container!): Container! {
+  """
+  Assemble the build container: base, Rust environment, overlays, caller hook,
+  build environment variables, cargo-chef cook (optional), then the source.
+
+  The cook runs with the final environment but before the source is mounted:
+  its inputs are the environment and the recipe (derived from the manifests), never the sources.
+  """
+  let assemble(cookArgs: [String!], &fn(c: Container!): Container!): Container! {
     self
       .base
       .{ self.env.apply(_) }
       .{ moduleOverlay("v0.2.0", self.overlay).apply(_) }
       .{ fn(_) }
-      .{ self.buildEnv.apply(_) }
+      .{ self.buildEnv.applyEnvironment(_) }
+      .{ self.cook(_, cookArgs) }
+      .{ self.buildEnv.applySource(_) }
   }
 
-  let extendContainer(&fn(c: Container!): Container!): Container! {
+  """
+  Cook dependencies with cargo-chef, when enabled.
+
+  Fixed `chefArgs` take precedence over the derived arguments; `null` means no cook.
+  """
+  let cook(container: Container!, derivedArgs: [String!]): Container! {
+    if (!self.env.chef) {
+      return container
+    }
+
+    let args = self.chefArgs ?? derivedArgs
+    if (args == null) {
+      return container
+    }
+
+    self.env.cook(container, self.buildEnv.source, self.buildEnv.sourceRoot, args)
+  }
+
+  let extendContainer(cookArgs: [String!], &fn(c: Container!): Container!): Container! {
     self
-      ._container { fn(_) }
+      .assemble(cookArgs) { fn(_) }
       .{
         if (self.prefetch) {
           _.withExec(["cargo", "fetch", "--locked"])
@@ -121,8 +175,8 @@ type Rust {
       }
   }
 
-  let buildContainer: Container! {
-    self.extendContainer { _ }
+  let buildContainer(cookArgs: [String!]): Container! {
+    self.extendContainer(cookArgs) { _ }
   }
 
   """
@@ -168,7 +222,7 @@ type Rust {
     self.prefetch = true
 
     self
-      .extendContainer {
+      .extendContainer(null) {
         _
           .withFile("/usr/local/bin/cargo-audit", cargoAuditBinary("0.22.0"))
           .withMountedDirectory(ADVISORY_DB_PATH, advisoryDb)
@@ -290,8 +344,28 @@ type Rust {
       expect = ReturnType.ANY
     }
 
+    let cookArgs = CargoCommand.chefCook(
+      package: package,
+      all: all,
+      bins: bins,
+      bin: bin,
+      examples: examples,
+      example: example,
+      tests: tests,
+      test: test,
+      benches: benches,
+      bench: bench,
+      allTargets: allTargets,
+      target: target,
+      allFeatures: allFeatures,
+      feature: feature,
+      noDefaultFeatures: noDefaultFeatures,
+      release: release,
+      profile: profile,
+    )
+
     self
-      .buildContainer
+      .buildContainer(cookArgs)
       .withExec(
         args,
         expand: true,
@@ -425,7 +499,27 @@ type Rust {
       profile,
     )
 
-    self.buildContainer.withExec(args).combinedOutput
+    # `cargo test` compiles dev-dependencies: cook them too.
+    let cookArgs = CargoCommand.chefCook(
+      package: package,
+      all: all,
+      bins: bins,
+      bin: bin,
+      examples: examples,
+      example: example,
+      tests: true,
+      benches: benches,
+      bench: bench,
+      allTargets: allTargets,
+      target: target,
+      allFeatures: allFeatures,
+      feature: feature,
+      noDefaultFeatures: noDefaultFeatures,
+      release: release,
+      profile: profile,
+    )
+
+    self.buildContainer(cookArgs).withExec(args).combinedOutput
   }
 
   """
@@ -433,7 +527,7 @@ type Rust {
   """
   fmt: Changeset! @generate {
     self
-      .buildContainer
+      .buildContainer(null)
       .withExec(["cargo", "fmt", "--", "--check"])
       .directory("/work/src")
       .filter(gitignore: true)
@@ -477,7 +571,7 @@ type Rust {
     deny.each { d => args += ["--deny", d] }
     forbid.each { f => args += ["--forbid", f] }
 
-    self.buildContainer.withExec(args).stdout
+    self.buildContainer(CargoCommand.chefCook(clippy: true)).withExec(args).stdout
   }
 
   """
@@ -558,8 +652,24 @@ type Rust {
       profile,
     )
 
+    # rustdoc needs the dependencies' metadata only (check mode).
+    let cookArgs = CargoCommand.chefCook(
+      package: package,
+      all: all,
+      bins: bins,
+      bin: bin,
+      examples: examples,
+      example: example,
+      allFeatures: allFeatures,
+      feature: feature,
+      noDefaultFeatures: noDefaultFeatures,
+      release: release,
+      profile: profile,
+      check: true,
+    )
+
     self
-      .buildContainer
+      .buildContainer(cookArgs)
       .withEnvVariable("RUSTDOCFLAGS", "-D warnings")
       .withExec(args)
       .stdout

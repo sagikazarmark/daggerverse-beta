@@ -34,4 +34,59 @@ type Tests {
   clippy: String! @check {
     Dagger.rust(ws: realProject.asWorkspace, version: rustVersion).clippy
   }
+
+  chef: ChefTests! { ChefTests }
+}
+
+let hasTargetDir(container: Container!): Boolean! {
+  container
+    .withExec(["sh", "-c", "test -d /target && echo yes || echo no"])
+    .stdout
+    .trimSpace == "yes"
+}
+
+type ChefTests {
+  """
+  Without fixed arguments, the plain container is not cooked.
+  """
+  containerNotCooked: Void @check {
+    let container = Dagger
+      .rust(ws: realProject.asWorkspace, version: rustVersion, chef: true)
+      .container
+
+    assert { !hasTargetDir(container) }
+    assert { container.withExec(["cargo", "chef", "--version"]).stdout.contains("0.1.78") }
+  }
+
+  """
+  With fixed arguments, the plain container is cooked with them.
+  """
+  containerCookedWithFixedArgs: Void @check {
+    let container = Dagger
+      .rust(ws: realProject.asWorkspace, version: rustVersion, chef: true, chefArgs: ["--release"])
+      .container
+
+    let deps = container.directory("/target/release/deps").entries
+
+    assert { deps.any { _.hasPrefix("libclap-") } }
+    assert { !deps.any { _.hasPrefix("libcargo_artifacts") } }
+    assert { container.workdir == "/work/src" }
+    assert { container.file("/work/src/src/lib.rs").contents != "" }
+  }
+
+  build: Void @check {
+    let artifacts = Dagger
+      .rust(ws: realProject.asWorkspace, version: rustVersion, chef: true)
+      .build(release: true)
+
+    assert { artifacts.entries.contains("cargo-artifacts") }
+  }
+
+  test: String! @check {
+    Dagger.rust(ws: realProject.asWorkspace, version: rustVersion, chef: true).test
+  }
+
+  clippy: String! @check {
+    Dagger.rust(ws: realProject.asWorkspace, version: rustVersion, chef: true).clippy
+  }
 }

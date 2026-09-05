@@ -1,9 +1,9 @@
 type Fix {
   let parent: Rust!
 
-  let exec(args: [String!]!): Changeset! {
+  let exec(args: [String!]!, cookArgs: [String!]): Changeset! {
     parent
-      .buildContainer
+      .buildContainer(cookArgs)
       .withExec(args)
       .directory("/work/src")
       .filter(gitignore: true)
@@ -20,6 +20,6 @@ type Fix {
       "--", "-D", "warnings",
     ]
 
-    self.exec(args)
+    self.exec(args, CargoCommand.chefCook(allTargets: true, clippy: true))
   }
 }

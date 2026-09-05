@@ -169,6 +169,75 @@ type CargoCommand {
     args
   }
 
+  """
+  Arguments for `cargo chef cook` mirroring a cargo command's package selection,
+  target selection, features and compilation options, so that the cooked dependencies
+  have the same fingerprints as the ones the command needs.
+
+  Only flags supported by cargo-chef are emitted. Per-target flags it lacks
+  (`--example NAME`, `--test NAME`, `--bench NAME`) are widened to their group
+  (`--examples`, `--tests`, `--benches`); `--lib` and `--exclude` are dropped.
+  """
+  chefCook(
+    package: [String!]! = [],
+    all: Boolean! = false,
+    bins: Boolean! = false,
+    bin: [String!]! = [],
+    examples: Boolean! = false,
+    example: [String!]! = [],
+    tests: Boolean! = false,
+    test: [String!]! = [],
+    benches: Boolean! = false,
+    bench: [String!]! = [],
+    allTargets: Boolean! = false,
+    target: [String!]! = [],
+    allFeatures: Boolean! = false,
+    feature: [String!]! = [],
+    noDefaultFeatures: Boolean! = false,
+    release: Boolean! = false,
+    profile: String! = "",
+    """
+    Cook with `cargo check` instead of `cargo build` (for check-like commands such as `cargo doc`).
+    """
+    check: Boolean! = false,
+    """
+    Cook with `cargo clippy` instead of `cargo build`.
+    """
+    clippy: Boolean! = false,
+  ): [String!]! {
+    let args = []
+
+    package.each { p => args += ["--package", p] }
+
+    if (all) { args += ["--workspace"] }
+
+    if (bins) { args += ["--bins"] }
+
+    bin.each { b => args += ["--bin", b] }
+
+    if (examples or !example.isEmpty) { args += ["--examples"] }
+
+    if (tests or !test.isEmpty) { args += ["--tests"] }
+
+    if (benches or !bench.isEmpty) { args += ["--benches"] }
+
+    if (allTargets) { args += ["--all-targets"] }
+
+    target.each { t => args += ["--target", t] }
+
+    args += self.featureSelection(allFeatures, feature, noDefaultFeatures)
+
+    if (release) { args += ["--release"] }
+
+    if (profile != "") { args += ["--profile", profile] }
+
+    if (check) { args += ["--check"] }
+
+    if (clippy) { args += ["--clippy"] }
+
+    args
+  }
+
   let globalArgs: [String!]! {
     let args = []
 

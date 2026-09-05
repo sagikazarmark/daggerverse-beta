@@ -12,6 +12,7 @@ type RustCross {
   let env: RustEnvironment!
   let buildEnv: BuildEnvironment!
 
+  let zig: ZigEnvironment!
   let overlay: OverlaysList!
 
   let macosSdkVersion: String!
@@ -96,8 +97,9 @@ type RustCross {
       .withEnvFile(envFile)
       .withSourceDateEpoch(sourceDateEpoch)
 
+    self.zig = Dagger.zigEnvironment(zigVersion)
+
     self.overlay = moduleOverlay(
-      zigVersion,
       cargoZigbuildVersion,
       "v0.2.0",
       overlay,
@@ -148,6 +150,11 @@ type RustCross {
     self
       .base
       .{ self.env.apply(_) }
+      # Zig is installed with a direct call rather than as part of the overlay list: an object
+      # from one dependency dispatched through another dependency's interface (overlays.List
+      # calling ZigEnvironmentOverlay.apply) fails to resolve when this module is loaded as a
+      # git dependency (Dagger v1.0.0-beta.11: "module provenance ... has no call frame").
+      .{ self.zig.install(_) }
       .{ self.overlay.apply(_) }
       .{ self.cache(_) }
       .{ fn(_) }

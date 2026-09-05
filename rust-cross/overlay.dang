@@ -3,21 +3,17 @@ interface Overlay implements OverlaysOverlay {
 }
 
 """
-Overlay installing the cross-compilation toolchain:
+Overlay installing the cross-compilation tools on top of Zig (which RustCross installs directly):
 
-- Zig (used by cargo-zigbuild as the C compiler and linker)
 - cargo-zigbuild and cargo-artifacts binaries
 - user-provided overlay
 """
 let moduleOverlay(
-  zigVersion: String!,
   cargoZigbuildVersion: String,
   cargoArtifactsVersion: String!,
   overlay: Overlay,
 ): OverlaysList! {
   Dagger.overlays.combine([
-    Dagger.zigEnvironment(zigVersion).overlay,
-
     Dagger.overlays.withFiles(
       "/usr/local/bin/",
       [

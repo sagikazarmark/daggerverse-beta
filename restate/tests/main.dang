@@ -57,6 +57,27 @@ type Tests {
       )
       .withDeployment(exampleWorker)
   }
+
+  """
+  Worker is still accessible when the server sits idle between registration and the first call.
+
+  Registration runs in its own exec. Once that exec ends the server has no clients, and Dagger
+  stops an unstarted service after a grace period; the caller would then bind a fresh server
+  without the deployment and get a 404. The sleep runs before the service binding is attached,
+  so the server idles for longer than the grace period.
+  """
+  workerAfterIdle: String @check @cache(policy: FunctionCachePolicy.Never) {
+    let restate = self.workerRestate.service
+
+    Dagger
+      .container
+      .from("alpine/curl")
+      .withEnvVariable("__DAGGER_CACHE_BUST", Random.string)
+      .withExec(["sleep", "20"])
+      .withServiceBinding("restate", restate)
+      .withExec(["curl", "--fail-with-body", "http://restate:8080/Greeter/greet", "--json", "\"Sarah\""])
+      .stdout
+  }
 }
 
 type ClientTests {

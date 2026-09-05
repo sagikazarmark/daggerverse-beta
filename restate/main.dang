@@ -66,6 +66,8 @@ type Restate {
 
   Deployments are registered while the service is initialized, so the result must not be
   reused across sessions: a cached Service ID would come without the registration side effect.
+  The server is started for the rest of the session, so the registration survives idle periods
+  between the callers' execs.
   """
   service: Service! @cache(policy: FunctionCachePolicy.PerSession) {
     self.init.service
@@ -305,11 +307,15 @@ let initialize(container: Container!, deployments: [Deployment!]!): Initialized!
     .withExposedPort(8080)
     .withExposedPort(9070)
 
+  # Started explicitly so the server outlives the registration exec below. Dagger stops a service
+  # that no exec is bound to after a grace period; a server restarted for the caller's exec would
+  # come up without the registered deployments. A started service runs until the session ends.
   let service = deployments
     .reduce(serviceContainer) { container, deployment =>
       container.withServiceBinding(deployment.hostname, deployment.service)
     }
     .asService(args: ["restate-server", "--node-name", "restate"])
+    .start
 
   let clientContainer = container
     .withEnvVariable("CI", "true")

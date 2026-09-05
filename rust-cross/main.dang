@@ -1,0 +1,365 @@
+"""
+Build Rust projects with automatic cross-compilation.
+
+Builds for the host target use plain `cargo build`. Builds for any other target
+use cargo-zigbuild, which links with Zig, so no target-specific C toolchains
+need to be installed. Rust targets are installed with rustup on demand, and
+the macOS SDK is installed automatically when building for macOS targets.
+"""
+type RustCross {
+  let base: Container!
+
+  let env: RustEnvironment!
+  let buildEnv: BuildEnvironment!
+
+  let overlay: OverlaysList!
+
+  let macosSdkVersion: String!
+  let noMacosSdk: Boolean!
+
+  let noCache: Boolean!
+  let prefetch: Boolean!
+
+  new(
+    ws: Workspace!,
+    """
+    Version (image tag) to use from the official Rust image repository as a base container.
+    """
+    version: String! = "latest",
+    """
+    Custom container to use as a base container.
+    """
+    container: Container! = Dagger.container.from("rust:" + version),
+    """
+    Zig version to use as the cross-compilation linker (see https://ziglang.org/download/index.json).
+    """
+    zigVersion: String! = "0.16.0",
+    """
+    cargo-zigbuild version to use. Defaults to the latest release.
+    """
+    cargoZigbuildVersion: String,
+    """
+    macOS SDK version to install when building for macOS targets.
+    """
+    macosSdkVersion: String! = "15.5",
+    """
+    Whether to disable installing the macOS SDK for macOS targets.
+
+    Pure Rust macOS builds work without the SDK; it is required to link against Apple frameworks
+    (e.g. Security, CoreFoundation).
+    """
+    noMacosSdk: Boolean! = false,
+    """
+    Targets to install with rustup up front.
+
+    Targets passed to `build` are installed automatically; this is only useful for the `container` function.
+    """
+    targets: [String!]! = [],
+    """
+    Additional components to install.
+    """
+    components: [String!]! = [],
+    """
+    Overlay to apply to the base container (after the Rust and cross-compilation toolchains are installed).
+    """
+    overlay: Overlay,
+    """
+    Env file to load into the container.
+    """
+    envFile: File,
+    """
+    Override the source date epoch for reproducible builds.
+    """
+    sourceDateEpoch: String,
+    """
+    Whether to disable automatically mounted cache volumes.
+    Useful if you want to mount cache volumes manually or use a different cache volume strategy.
+    """
+    noCache: Boolean! = false,
+    """
+    Whether to prefetch Cargo dependencies before building.
+    """
+    prefetch: Boolean! = false,
+  ) {
+    self.base = container
+
+    self.env = Dagger.rustEnvironment(
+      ws,
+      targets,
+      components,
+      noCache,
+    )
+
+    self.buildEnv = Dagger
+      .buildEnvironment
+      .withSource(ws.directory("/", gitignore: true), ws.cwd)
+      .withEnvFile(envFile)
+      .withSourceDateEpoch(sourceDateEpoch)
+
+    self.overlay = moduleOverlay(
+      zigVersion,
+      cargoZigbuildVersion,
+      "v0.2.0",
+      overlay,
+    )
+
+    self.macosSdkVersion = macosSdkVersion
+    self.noMacosSdk = noMacosSdk
+
+    self.noCache = noCache
+    self.prefetch = prefetch
+
+    self
+  }
+
+  """
+  Set an environment variable in the build container.
+  """
+  withEnvVariable(
+    """
+    Name of the environment variable (e.g., "MACOSX_DEPLOYMENT_TARGET").
+    """
+    name: String!,
+    """
+    Value of the environment variable (e.g., "11.0").
+    """
+    value: String!,
+    """
+    Replace `${VAR}` or `$VAR` in the value according to the current environment
+    variables defined in the container (e.g., "/opt/bin:$PATH").
+    """
+    expand: Boolean,
+  ): RustCross! {
+    self.buildEnv = self.buildEnv.withEnvVariable(name, value, expand)
+
+    self
+  }
+
+  """
+  Container with the Rust toolchain, Zig and cargo-zigbuild installed.
+
+  The macOS SDK is not included; it is added by `build` for macOS targets.
+  """
+  container: Container! {
+    self._container { _ }
+  }
+
+  let _container(&fn(c: Container!): Container!): Container! {
+    self
+      .base
+      .{ self.env.apply(_) }
+      .{ self.overlay.apply(_) }
+      .{ self.cache(_) }
+      .{ fn(_) }
+      .{ self.buildEnv.apply(_) }
+  }
+
+  let cache(container: Container!): Container! {
+    if (self.noCache) {
+      return container
+    }
+
+    let ZIG_GLOBAL_CACHE_DIR = "/var/cache/zig"
+
+    container
+      .withEnvVariable("ZIG_GLOBAL_CACHE_DIR", ZIG_GLOBAL_CACHE_DIR)
+      .withMountedCache(ZIG_GLOBAL_CACHE_DIR, Dagger.cacheVolume("zig-global-cache"))
+  }
+
+  """
+  Target triple of the Rust toolchain in the build container (e.g. "x86_64-unknown-linux-gnu").
+
+  Builds for any other target are cross-compiled with cargo-zigbuild.
+  """
+  hostTarget: String! {
+    let line = self
+      .container
+      .withExec(["rustc", "-vV"])
+      .stdout
+      .split("\n")
+      .find { _.hasPrefix("host: ") }
+
+    if (line == null) {
+      raise "failed to determine host target from `rustc -vV` output"
+    }
+
+    line!.trimPrefix("host: ").trimSpace
+  }
+
+  let buildContainer(
+    """
+    Rust targets to install with rustup before building.
+    """
+    targets: [String!]! = [],
+    """
+    Whether to install the macOS SDK.
+    """
+    macosSdk: Boolean! = false,
+  ): Container! {
+    self
+      ._container {
+        if (macosSdk) {
+          macosSdkOverlay(self.macosSdkVersion).apply(_)
+        } else _
+      }
+      .{
+        # Runs in the project directory, so a rust-toolchain.toml (if any) is honored.
+        if (!targets.isEmpty) {
+          _.withExec(["rustup", "target", "add"] + targets)
+        } else _
+      }
+      .{
+        if (self.prefetch) {
+          _.withExec(["cargo", "fetch", "--locked"])
+        } else _
+      }
+  }
+
+  """
+  Compile a local package and all of its dependencies.
+
+  Targets other than the host target are cross-compiled with cargo-zigbuild and
+  installed with rustup automatically. The macOS SDK is installed for macOS targets
+  unless disabled.
+  """
+  build(
+    """
+    Package to build.
+    """
+    package: [String!]! = [],
+    """
+    Build all packages in the workspace.
+    """
+    all: Boolean! = false,
+    """
+    Exclude packages from the build.
+    """
+    exclude: [String!]! = [],
+    """
+    Build only this package's library.
+    """
+    lib: Boolean! = false,
+    """
+    Build all binaries.
+    """
+    bins: Boolean! = false,
+    """
+    Build only the specified binary.
+    """
+    bin: [String!]! = [],
+    """
+    Build all examples.
+    """
+    examples: Boolean! = false,
+    """
+    Build only the specified example.
+    """
+    example: [String!]! = [],
+    """
+    Build all targets that have `test = true` set.
+    """
+    tests: Boolean! = false,
+    """
+    Build only the specified test target.
+    """
+    test: [String!]! = [],
+    """
+    Build all targets that have `bench = true` set.
+    """
+    benches: Boolean! = false,
+    """
+    Build only the specified bench target.
+    """
+    bench: [String!]! = [],
+    """
+    Build all targets.
+    """
+    allTargets: Boolean! = false,
+    """
+    Build for the target triple.
+
+    A glibc version suffix is supported for `*-linux-gnu` targets (e.g. "aarch64-unknown-linux-gnu.2.17").
+    """
+    target: [String!]! = [],
+    """
+    Activate all available features.
+    """
+    allFeatures: Boolean! = false,
+    """
+    List of features to activate.
+    """
+    feature: [String!]! = [],
+    """
+    Do not activate the `default` feature.
+    """
+    noDefaultFeatures: Boolean! = false,
+    """
+    Build artifacts in release mode, with optimizations.
+    """
+    release: Boolean! = false,
+    """
+    Build artifacts with the specified profile.
+    """
+    profile: String! = "",
+    """
+    Do not abort the build as soon as there is an error.
+    """
+    keepGoing: Boolean! = false,
+  ): Directory! @check {
+    let targets = target.map { Target(_) }
+    targets.each { _.validate }
+
+    let host = self.hostTarget
+    let crossTargets = targets.filter { _.isCross(host) }
+
+    let command = if (crossTargets.isEmpty) { "build" } else { "zigbuild" }
+
+    let rustupTargets = crossTargets
+      .map { _.triple }
+      .reject { _ == null }
+      .map { _! }
+      .uniq
+
+    let macosSdk = !self.noMacosSdk and crossTargets.any { _.isDarwin }
+
+    let args = CargoCommand.build(
+      command: command,
+      package: package,
+      all: all,
+      exclude: exclude,
+      lib: lib,
+      bins: bins,
+      bin: bin,
+      examples: examples,
+      example: example,
+      tests: tests,
+      test: test,
+      benches: benches,
+      bench: bench,
+      allTargets: allTargets,
+      target: target,
+      allFeatures: allFeatures,
+      feature: feature,
+      noDefaultFeatures: noDefaultFeatures,
+      release: release,
+      profile: profile,
+      keepGoing: keepGoing,
+    )
+
+    let expect = ReturnType.SUCCESS
+    if (keepGoing) {
+      expect = ReturnType.ANY
+    }
+
+    self
+      .buildContainer(rustupTargets, macosSdk)
+      .withExec(
+        args,
+        expand: true,
+        redirectStdout: "/stdout.json",
+        expect: expect,
+      )
+      .withExec(["cargo", "artifacts", "copy", "-i", "/stdout.json", "--out-dir", "/work/out"])
+      .directory("/work/out")
+  }
+}

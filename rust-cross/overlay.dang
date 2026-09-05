@@ -1,0 +1,71 @@
+interface Overlay implements OverlaysOverlay {
+  apply(container: Container!): Container!
+}
+
+"""
+Overlay installing the cross-compilation toolchain:
+
+- Zig (used by cargo-zigbuild as the C compiler and linker)
+- cargo-zigbuild and cargo-artifacts binaries
+- user-provided overlay
+"""
+let moduleOverlay(
+  zigVersion: String!,
+  cargoZigbuildVersion: String,
+  cargoArtifactsVersion: String!,
+  overlay: Overlay,
+): OverlaysList! {
+  Dagger.overlays.combine([
+    Dagger.zigEnvironment(zigVersion).overlay,
+
+    Dagger.overlays.withFiles(
+      "/usr/local/bin/",
+      [
+        cargoZigbuildBinary(cargoZigbuildVersion),
+        cargoArtifactsBinary(cargoArtifactsVersion),
+      ],
+      permissions: 755,
+    ),
+
+    overlay,
+  ])
+}
+
+"""
+Overlay installing the macOS SDK and pointing SDKROOT at it (picked up by cargo-zigbuild).
+"""
+let macosSdkOverlay(version: String!): MacosSdkOverlay! {
+  Dagger.macosSdk([version]).version(version).overlay
+}
+
+let cargoZigbuildBinary(version: String): File! {
+  let version = if (version != null and version != "") {
+    "v" + version!.trimPrefix("v")
+  } else null
+
+  Dagger
+    .github
+    .release(version, "rust-cross/cargo-zigbuild")
+    .asset(`cargo-zigbuild-${arch}-unknown-linux-gnu.tar.xz`)
+    .extracted(true)
+    .file("cargo-zigbuild")
+}
+
+let cargoArtifactsBinary(version: String!): File! {
+  let version = "v" + version.trimPrefix("v")
+
+  Dagger
+    .github
+    .release(version, "sagikazarmark/cargo-artifacts")
+    .asset(`cargo-artifacts-${arch}-unknown-linux-gnu.tar.xz`)
+    .extracted(true)
+    .file("cargo-artifacts")
+}
+
+let arch(platform: Platform! = Dagger.defaultPlatform): String! {
+  case (platform) {
+    "linux/amd64" => "x86_64"
+    "linux/arm64" => "aarch64"
+    else => raise "unsupported platform: " + toString(platform)
+  }
+}

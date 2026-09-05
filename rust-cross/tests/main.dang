@@ -1,0 +1,185 @@
+let rustVersion: String! = "1.96.0-slim-trixie@sha256:082a5849a6870672b5f7a5bf4eddc71723fce38756fd834a0d734a5306a310ab"
+
+let realProject: Directory! {
+  Dagger
+    .git("https://github.com/sagikazarmark/cargo-artifacts.git")
+    .head
+    .tree
+}
+
+"""
+Dependency-free crate linking against Security.framework (requires the macOS SDK to link).
+"""
+let frameworkProject: Directory! {
+  Dagger.currentModule.source.directory("testdata/framework")
+}
+
+let rustCross: RustCross! {
+  Dagger.rustCross(ws: realProject.asWorkspace, version: rustVersion)
+}
+
+let rustCrossNoSdk: RustCross! {
+  Dagger.rustCross(ws: realProject.asWorkspace, version: rustVersion, noMacosSdk: true)
+}
+
+let frameworkRustCross(noMacosSdk: Boolean! = false): RustCross! {
+  Dagger.rustCross(ws: frameworkProject.asWorkspace, version: rustVersion, noMacosSdk: noMacosSdk)
+}
+
+"""
+Describe the built binary using `file`.
+"""
+let fileType(output: Directory!, name: String! = "cargo-artifacts"): String! {
+  Dagger
+    .container
+    .from("alpine:3.22")
+    .withExec(["apk", "add", "--no-cache", "file"])
+    .withMountedDirectory("/out", output)
+    .withExec(["file", "-b", "/out/" + name])
+    .stdout
+}
+
+let isX86_64(target: String!): Boolean! {
+  target.hasPrefix("x86_64-")
+}
+
+type Tests {
+  hostTarget: Void @check {
+    let host = rustCross.hostTarget
+
+    assert { host == "x86_64-unknown-linux-gnu" or host == "aarch64-unknown-linux-gnu" }
+  }
+
+  """
+  The macOS SDK is only added for macOS builds, never to the base container.
+  """
+  containerHasNoSdk: Void @check {
+    assert { rustCross.container.envVariable("SDKROOT") == null }
+  }
+
+  """
+  No target: plain `cargo build` for the host.
+  """
+  buildNative: Void @check {
+    let host = rustCross.hostTarget
+    let info = fileType(rustCross.build)
+
+    assert { info.contains("ELF 64-bit") }
+    assert { info.contains("dynamically linked") }
+
+    if (isX86_64(host)) {
+      assert { info.contains("x86-64") }
+    } else {
+      assert { info.contains("aarch64") }
+    }
+  }
+
+  """
+  Cross-compile to the other Linux architecture (glibc) so the test is host independent.
+  """
+  buildCrossLinuxGnu: Void @check {
+    let host = rustCross.hostTarget
+
+    let target = if (isX86_64(host)) {
+      "aarch64-unknown-linux-gnu"
+    } else {
+      "x86_64-unknown-linux-gnu"
+    }
+
+    let info = fileType(rustCross.build(target: [target]))
+
+    assert { info.contains("ELF 64-bit") }
+    assert { info.contains("dynamically linked") }
+
+    if (isX86_64(host)) {
+      assert { info.contains("aarch64") }
+    } else {
+      assert { info.contains("x86-64") }
+    }
+  }
+
+  """
+  Cross-compile to musl (always a cross build from the glibc based official image).
+  """
+  buildCrossLinuxMusl: Void @check {
+    let info = fileType(rustCross.build(target: ["x86_64-unknown-linux-musl"], release: true))
+
+    assert { info.contains("ELF 64-bit") }
+    assert { info.contains("x86-64") }
+    assert { info.contains("static") }
+  }
+
+  """
+  The host triple with a glibc version suffix must be routed through cargo-zigbuild.
+  """
+  buildHostWithGlibcVersion: Void @check {
+    let host = rustCross.hostTarget
+    let info = fileType(rustCross.build(target: [host + ".2.28"]))
+
+    assert { info.contains("ELF 64-bit") }
+    assert { info.contains("dynamically linked") }
+  }
+
+  """
+  macOS target with the SDK installed automatically.
+  """
+  buildCrossDarwin: Void @check {
+    let info = fileType(rustCross.build(target: ["x86_64-apple-darwin"]))
+
+    assert { info.contains("Mach-O 64-bit") }
+    assert { info.contains("x86_64") }
+  }
+
+  """
+  Pure Rust macOS builds work without the SDK.
+  """
+  buildCrossDarwinNoSdk: Void @check {
+    let info = fileType(rustCrossNoSdk.build(target: ["aarch64-apple-darwin"]))
+
+    assert { info.contains("Mach-O 64-bit") }
+    assert { info.contains("arm64") }
+  }
+
+  """
+  Linking an Apple framework succeeds because the SDK is installed automatically.
+  """
+  buildCrossDarwinFramework: Void @check {
+    let info = fileType(
+      frameworkRustCross.build(target: ["aarch64-apple-darwin"]),
+      name: "framework-check",
+    )
+
+    assert { info.contains("Mach-O 64-bit") }
+    assert { info.contains("arm64") }
+  }
+
+  """
+  Linking an Apple framework fails when the SDK is disabled.
+  """
+  buildCrossDarwinFrameworkNoSdkFails: Void @check {
+    assert { frameworkWithoutSdkFails }
+  }
+
+  universal2IsRejected: Void @check {
+    assert { universal2Fails }
+  }
+}
+
+let frameworkWithoutSdkFails: Boolean! {
+  {
+    frameworkRustCross(noMacosSdk: true).build(target: ["aarch64-apple-darwin"]).entries
+    false
+  } rescue {
+    # cargo fails at link time: "unable to find framework 'Security'" (stderr is not part of the message)
+    err: Error => err.message.contains("exit code")
+  }
+}
+
+let universal2Fails: Boolean! {
+  {
+    rustCross.build(target: ["universal2-apple-darwin"]).entries
+    false
+  } rescue {
+    err: Error => err.message.contains("universal2-apple-darwin is not supported")
+  }
+}

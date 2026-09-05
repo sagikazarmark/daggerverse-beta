@@ -1,0 +1,47 @@
+"""
+A Cargo `--target` value as accepted by cargo-zigbuild.
+
+In addition to plain target triples, cargo-zigbuild accepts a glibc version suffix
+(e.g. `aarch64-unknown-linux-gnu.2.17`) and custom target specification files (`*.json`).
+"""
+type Target {
+  let value: String!
+
+  """
+  Target triple as understood by rustup (glibc version suffix stripped).
+
+  Null for custom target specification files, which cannot be installed with rustup.
+  """
+  let triple: String {
+    if (self.value.hasSuffix(".json")) {
+      return null
+    }
+
+    self.value.split(".")[0]!
+  }
+
+  """
+  Whether building for this target requires cargo-zigbuild on the given host.
+
+  Anything other than the exact host triple does: a different triple, a custom target
+  specification, or the host triple with a glibc version suffix (which only cargo-zigbuild understands).
+  """
+  let isCross(host: String!): Boolean! {
+    self.value != host
+  }
+
+  """
+  Whether this is a macOS target (which may need the macOS SDK to link Apple frameworks).
+  """
+  let isDarwin: Boolean! {
+    let triple = self.triple
+
+    triple != null and triple!.hasSuffix("-apple-darwin")
+  }
+
+  let validate: Void {
+    if (self.value == "universal2-apple-darwin") {
+      raise "universal2-apple-darwin is not supported: cargo-zigbuild does not emit build artifacts (--message-format) for it; build x86_64-apple-darwin and aarch64-apple-darwin separately instead"
+    }
+  }
+}

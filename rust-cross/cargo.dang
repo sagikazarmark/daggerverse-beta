@@ -1,0 +1,163 @@
+type CargoCommand {
+  locked: Boolean! = false
+  offline: Boolean! = false
+  frozen: Boolean! = false
+
+  """
+  Arguments for `cargo build` (or a drop-in replacement like `cargo zigbuild`).
+
+  cargo-zigbuild re-implements the full `cargo build` CLI surface, so the same
+  argument list is valid for both commands.
+  """
+  build(
+    command: String! = "build",
+    package: [String!]! = [],
+    all: Boolean! = false,
+    exclude: [String!]! = [],
+    lib: Boolean! = false,
+    bins: Boolean! = false,
+    bin: [String!]! = [],
+    examples: Boolean! = false,
+    example: [String!]! = [],
+    tests: Boolean! = false,
+    test: [String!]! = [],
+    benches: Boolean! = false,
+    bench: [String!]! = [],
+    allTargets: Boolean! = false,
+    target: [String!]! = [],
+    allFeatures: Boolean! = false,
+    feature: [String!]! = [],
+    noDefaultFeatures: Boolean! = false,
+    release: Boolean! = false,
+    profile: String! = "",
+    keepGoing: Boolean! = false,
+  ): [String!]! {
+    let args = ["cargo", command, "--message-format", "json-render-diagnostics"]
+
+    args += self.globalArgs
+
+    args += self.packageSelection(package, all, exclude)
+
+    args += self.targetSelection(
+      lib,
+      bins,
+      bin,
+      examples,
+      example,
+      tests,
+      test,
+      benches,
+      bench,
+      allTargets,
+      target,
+    )
+
+    args += self.featureSelection(allFeatures, feature, noDefaultFeatures)
+
+    args += self.compilationOptions(release, profile, keepGoing)
+
+    args
+  }
+
+  let globalArgs: [String!]! {
+    let args = []
+
+    if (self.locked) { args += ["--locked"] }
+
+    if (self.offline) { args += ["--offline"] }
+
+    if (self.frozen) { args += ["--frozen"] }
+
+    args
+  }
+
+  let packageSelection(
+    package: [String!]! = [],
+    all: Boolean! = false,
+    exclude: [String!]! = [],
+  ): [String!]! {
+    let args = []
+
+    package.each { p => args += ["--package", p] }
+
+    if (all) { args += ["--workspace"] }
+
+    exclude.each { e => args += ["--exclude", e] }
+
+    args
+  }
+
+  let targetSelection(
+    lib: Boolean! = false,
+    bins: Boolean! = false,
+    bin: [String!]! = [],
+    examples: Boolean! = false,
+    example: [String!]! = [],
+    tests: Boolean! = false,
+    test: [String!]! = [],
+    benches: Boolean! = false,
+    bench: [String!]! = [],
+    allTargets: Boolean! = false,
+    target: [String!]! = [],
+  ): [String!]! {
+    let args = []
+
+    if (lib) { args += ["--lib"] }
+
+    if (bins) { args += ["--bins"] }
+
+    bin.each { b => args += ["--bin", b] }
+
+    if (examples) { args += ["--examples"] }
+
+    example.each { e => args += ["--example", e] }
+
+    if (tests) { args += ["--tests"] }
+
+    test.each { t => args += ["--test", t] }
+
+    if (benches) { args += ["--benches"] }
+
+    bench.each { b => args += ["--bench", b] }
+
+    if (allTargets) { args += ["--all-targets"] }
+
+    target.each { t => args += ["--target", t] }
+
+    args
+  }
+
+  let featureSelection(
+    allFeatures: Boolean! = false,
+    feature: [String!]! = [],
+    noDefaultFeatures: Boolean! = false,
+  ): [String!]! {
+    let args = []
+
+    if (allFeatures) { args += ["--all-features"] }
+
+    feature.each { f => args += ["--features", f] }
+
+    if (noDefaultFeatures) {
+      args += ["--no-default-features"]
+    }
+
+    args
+  }
+
+  let compilationOptions(
+    release: Boolean! = false,
+    profile: String! = "",
+    keepGoing: Boolean! = false,
+  ): [String!]! {
+    let args = []
+
+    if (release) { args += ["--release"] }
+
+    if (profile != "") { args += ["--profile", profile] }
+
+    if (keepGoing) { args += ["--keep-going"] }
+
+    args
+  }
+}

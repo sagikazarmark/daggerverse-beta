@@ -125,8 +125,28 @@ type BuildEnvironment {
 
   """
   Returns a container with the configured build environment.
+
+  Equivalent to applying the environment (`applyEnvironment`) followed by the source (`applySource`).
   """
   apply(
+    """
+    Custom base container to use.
+    """
+    container: Container!,
+  ): Container! {
+    container
+      .{ self.applyEnvironment(_) }
+      .{ self.applySource(_) }
+  }
+
+  """
+  Returns a container with the configured environment variables (env file, source date epoch, variables),
+  without mounting the source.
+
+  Useful when a step (e.g. dependency caching) has to run with the final environment
+  but must not see the source; follow up with `applySource`.
+  """
+  applyEnvironment(
     """
     Custom base container to use.
     """
@@ -146,14 +166,27 @@ type BuildEnvironment {
         } else _
       }
       .{ self.envVariables.reduce(_) { _, env => env.apply(_) } }
-      .{
-        let source = self._source
-        if (source != null) {
-          _
-            .withMountedDirectory(self.sourceRoot, source)
-            .withWorkdir(self.workdir)
-        } else _
-      }
+  }
+
+  """
+  Returns a container with the configured source mounted and the working directory set.
+
+  Does nothing when no source has been configured.
+  """
+  applySource(
+    """
+    Custom base container to use.
+    """
+    container: Container!,
+  ): Container! {
+    let source = self._source
+    if (source == null) {
+      return container
+    }
+
+    container
+      .withMountedDirectory(self.sourceRoot, source)
+      .withWorkdir(self.workdir)
   }
 }
 

@@ -72,6 +72,51 @@ type Tests {
     assert { Dagger.buildEnvironment.withSource(source).source.entries == ["app/"] }
     assert { missingSourceFails }
   }
+
+  """
+  `applyEnvironment` sets variables without mounting the source; `applySource` mounts it afterwards.
+  A step in between sees the environment but not the source, and is shadowed once the source is mounted.
+  """
+  splitApply: Void @check {
+    let env = Dagger
+      .buildEnvironment
+      .withSource(source, path: "app")
+      .withEnvFile(envFile)
+      .withEnvVariable("BUILD_ENV_VARIABLE", "variable-ok")
+
+    let withoutSource = env.applyEnvironment(alpine)
+
+    assert { withoutSource.envVariable("BUILD_ENV_TEST") == "from-env-file" }
+    assert { withoutSource.envVariable("BUILD_ENV_VARIABLE") == "variable-ok" }
+    assert { !withoutSource.mounts.contains("/work/src") and !withoutSource.mounts.contains("/work/src/") }
+    assert { withoutSource.workdir == null or withoutSource.workdir == "" or withoutSource.workdir == "/" }
+
+    # A step between the two phases can write below the future source root.
+    let between = withoutSource
+      .withNewFile("/work/src/app/marker.txt", "shadowed")
+      .withNewFile("/work/src/app/between.txt", "between")
+
+    let withSource = env.applySource(between)
+
+    assert { withSource.mounts.contains("/work/src") or withSource.mounts.contains("/work/src/") }
+    assert { withSource.file("/work/src/app/marker.txt").contents == "source-ok" }
+    assert { !withSource.directory("/work/src/app").entries.contains("between.txt") }
+
+    let output = withSource
+      .withExec(["sh", "-c", "printf '%s|%s|%s' \"$(pwd)\" \"$(cat marker.txt)\" \"$BUILD_ENV_VARIABLE\""])
+      .stdout
+
+    assert { output == "/work/src/app|source-ok|variable-ok" }
+  }
+
+  """
+  `applySource` is a no-op when no source is configured.
+  """
+  applySourceWithoutSource: Void @check {
+    let container = Dagger.buildEnvironment.applySource(alpine)
+
+    assert { !container.mounts.contains("/work/src") and !container.mounts.contains("/work/src/") }
+  }
 }
 
 let invalidSourcePath(path: Path!): Boolean! {

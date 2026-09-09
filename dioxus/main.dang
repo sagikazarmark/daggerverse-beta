@@ -274,9 +274,9 @@ type Dioxus {
     """
     example: String,
     """
-    Build the app with custom a profile.
+    Build the app with a custom cargo profile.
     """
-    profile: String,
+    cargoProfile: String,
     """
     List of features to activate.
     """
@@ -378,7 +378,7 @@ type Dioxus {
       package: package,
       bin: bin,
       example: example,
-      profile: profile,
+      profile: cargoProfile,
       features: features,
       noDefaultFeatures: noDefaultFeatures,
       allFeatures: allFeatures,
@@ -412,7 +412,7 @@ type Dioxus {
       package: package,
       bin: bin,
       example: example,
-      profile: profile,
+      profile: cargoProfile,
       features: features,
       noDefaultFeatures: noDefaultFeatures,
       allFeatures: allFeatures,
@@ -493,9 +493,9 @@ type Dioxus {
     """
     example: String,
     """
-    Build the app with custom a profile.
+    Build the app with a custom cargo profile.
     """
-    profile: String,
+    cargoProfile: String,
     """
     List of features to activate.
     """
@@ -597,7 +597,7 @@ type Dioxus {
       package: package,
       bin: bin,
       example: example,
-      profile: profile,
+      profile: cargoProfile,
       features: features,
       noDefaultFeatures: noDefaultFeatures,
       allFeatures: allFeatures,
@@ -631,7 +631,7 @@ type Dioxus {
       package: package,
       bin: bin,
       example: example,
-      profile: profile,
+      profile: cargoProfile,
       features: features,
       noDefaultFeatures: noDefaultFeatures,
       allFeatures: allFeatures,
@@ -703,9 +703,9 @@ type Dioxus {
     """
     example: String,
     """
-    Build the app with custom a profile.
+    Build the app with a custom cargo profile.
     """
-    profile: String,
+    cargoProfile: String,
     """
     List of features to activate.
     """
@@ -786,7 +786,7 @@ type Dioxus {
       package: package,
       bin: bin,
       example: example,
-      profile: profile,
+      profile: cargoProfile,
       features: features,
       noDefaultFeatures: noDefaultFeatures,
       allFeatures: allFeatures,
@@ -815,7 +815,7 @@ type Dioxus {
       package: package,
       bin: bin,
       example: example,
-      profile: profile,
+      profile: cargoProfile,
       features: features,
       noDefaultFeatures: noDefaultFeatures,
       allFeatures: allFeatures,

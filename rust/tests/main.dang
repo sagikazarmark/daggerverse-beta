@@ -261,7 +261,7 @@ type NextestTests {
   cargoProfile: Void @check {
     let output = Dagger
       .rust(ws: nextestBinProject.asWorkspace, version: rustVersion)
-      .test(profile: "release")
+      .test(cargoProfile: "release")
 
     assert { output.contains("1 passed") }
   }

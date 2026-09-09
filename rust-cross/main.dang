@@ -311,9 +311,9 @@ type RustCross {
     """
     release: Boolean! = false,
     """
-    Build artifacts with the specified profile.
+    Build artifacts with the specified cargo profile.
     """
-    profile: String! = "",
+    cargoProfile: String! = "",
     """
     Do not abort the build as soon as there is an error.
     """
@@ -355,7 +355,7 @@ type RustCross {
       feature: feature,
       noDefaultFeatures: noDefaultFeatures,
       release: release,
-      profile: profile,
+      profile: cargoProfile,
       keepGoing: keepGoing,
     )
 

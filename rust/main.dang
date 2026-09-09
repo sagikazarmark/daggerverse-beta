@@ -367,9 +367,9 @@ type Rust {
     """
     release: Boolean! = false,
     """
-    Build artifacts with the specified profile.
+    Build artifacts with the specified cargo profile.
     """
-    profile: String! = "",
+    cargoProfile: String! = "",
     """
     Do not abort the build as soon as there is an error.
     """
@@ -394,7 +394,7 @@ type Rust {
       feature,
       noDefaultFeatures,
       release,
-      profile,
+      cargoProfile,
       keepGoing,
     )
 
@@ -420,7 +420,7 @@ type Rust {
       feature: feature,
       noDefaultFeatures: noDefaultFeatures,
       release: release,
-      profile: profile,
+      profile: cargoProfile,
     )
 
     self
@@ -514,9 +514,9 @@ type Rust {
     """
     release: Boolean! = false,
     """
-    Check artifacts with the specified profile.
+    Check artifacts with the specified cargo profile.
     """
-    profile: String! = "",
+    cargoProfile: String! = "",
     """
     Do not abort the check as soon as there is an error.
     """
@@ -544,7 +544,7 @@ type Rust {
         feature,
         noDefaultFeatures,
         release,
-        profile,
+        cargoProfile,
         keepGoing,
       ),
       hack,
@@ -567,7 +567,7 @@ type Rust {
       feature: feature,
       noDefaultFeatures: noDefaultFeatures,
       release: release,
-      profile: profile,
+      profile: cargoProfile,
       check: true,
     )
 
@@ -671,9 +671,9 @@ type Rust {
     """
     release: Boolean! = false,
     """
-    Build artifacts with the specified profile.
+    Build artifacts with the specified cargo profile.
     """
-    profile: String! = "",
+    cargoProfile: String! = "",
   ): String! @check {
     let hack = self.hackArgs { _.test }
 
@@ -704,7 +704,7 @@ type Rust {
         feature,
         noDefaultFeatures,
         release,
-        profile,
+        cargoProfile,
         nextest,
       ),
       hack,
@@ -727,7 +727,7 @@ type Rust {
       feature: feature,
       noDefaultFeatures: noDefaultFeatures,
       release: release,
-      profile: profile,
+      profile: cargoProfile,
     )
 
     let result = self.commandContainer(cookArgs, hack, nextest).withExec(command)
@@ -757,7 +757,7 @@ type Rust {
         feature: feature,
         noDefaultFeatures: noDefaultFeatures,
         release: release,
-        profile: profile,
+        profile: cargoProfile,
       ),
       hack,
     )
@@ -870,9 +870,9 @@ type Rust {
     """
     release: Boolean! = false,
     """
-    Lint artifacts with the specified profile.
+    Lint artifacts with the specified cargo profile.
     """
-    profile: String! = "",
+    cargoProfile: String! = "",
     """
     Do not abort the lint as soon as there is an error.
     """
@@ -917,7 +917,7 @@ type Rust {
         feature,
         noDefaultFeatures,
         release,
-        profile,
+        cargoProfile,
         keepGoing,
       ),
       hack,
@@ -947,7 +947,7 @@ type Rust {
       feature: feature,
       noDefaultFeatures: noDefaultFeatures,
       release: release,
-      profile: profile,
+      profile: cargoProfile,
       clippy: true,
     )
 
@@ -1014,9 +1014,9 @@ type Rust {
     """
     release: Boolean! = false,
     """
-    Build artifacts with the specified profile.
+    Build artifacts with the specified cargo profile.
     """
-    profile: String! = "",
+    cargoProfile: String! = "",
   ): String! @check {
     let hack = self.hackArgs { _.doc }
 
@@ -1035,7 +1035,7 @@ type Rust {
         feature,
         noDefaultFeatures,
         release,
-        profile,
+        cargoProfile,
       ),
       hack,
     )
@@ -1052,7 +1052,7 @@ type Rust {
       feature: feature,
       noDefaultFeatures: noDefaultFeatures,
       release: release,
-      profile: profile,
+      profile: cargoProfile,
       check: true,
     )
 

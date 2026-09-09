@@ -1,0 +1,6 @@
+# nextest's own configuration: its presence makes the `rust` module run tests with nextest.
+[profile.default]
+retries = 0
+
+[profile.ci]
+fail-fast = false

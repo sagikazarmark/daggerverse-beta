@@ -137,8 +137,13 @@ type CargoCommand {
     noDefaultFeatures: Boolean! = false,
     release: Boolean! = false,
     profile: String! = "",
+    """
+    Run with `cargo nextest run` instead of `cargo test` (same selection flags;
+    the cargo profile goes through `--cargo-profile`, `--profile` being nextest's own).
+    """
+    nextest: Boolean! = false,
   ): [String!]! {
-    let _args = ["cargo", "test"]
+    let _args = if (nextest) { ["cargo", "nextest", "run"] } else { ["cargo", "test"] }
 
     if (noFailFast) { _args += ["--no-fail-fast"] }
 
@@ -162,8 +167,10 @@ type CargoCommand {
       feature,
       noDefaultFeatures,
       release,
-      profile,
+      if (nextest) { "" } else { profile },
     )
+
+    if (nextest and profile != "") { _args += ["--cargo-profile", profile] }
 
     if (testName != "") { _args += [testName] }
 

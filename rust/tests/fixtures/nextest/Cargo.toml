@@ -1,0 +1,12 @@
+[package]
+name = "nextest-fixture"
+version = "0.1.0"
+edition = "2021"
+
+[features]
+extra = []
+
+# `hack.test` composes with nextest: `cargo hack <args> nextest run ...`.
+[[package.metadata.dagger.modules]]
+name = "rust"
+hack.test = ["--each-feature"]

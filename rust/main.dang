@@ -15,6 +15,11 @@ type Rust {
   """
   let config: ModuleConfig
 
+  """
+  Whether tests run with cargo-nextest: the project has a `.config/nextest.toml` (see nextest.dang).
+  """
+  nextest: Boolean! = false
+
   new(
     ws: Workspace!,
     """
@@ -109,6 +114,8 @@ type Rust {
 
     self.config = moduleConfig(ws, ws.findUp("Cargo.toml"))
 
+    self.nextest = detectNextest(ws)
+
     self
   }
 
@@ -195,13 +202,22 @@ type Rust {
   }
 
   """
-  Build container for a cargo command, with cargo-hack installed when the command is wrapped by it.
+  Build container for a cargo command, with cargo-hack installed when the command is wrapped by it
+  and cargo-nextest when it runs the tests.
   """
-  let commandContainer(cookArgs: [String!], hack: [String!]): Container! {
+  let commandContainer(cookArgs: [String!], hack: [String!], nextest: Boolean! = false): Container! {
     self.extendContainer(cookArgs) {
-      if (hack != null) {
-        _.withFile("/usr/local/bin/cargo-hack", cargoHackBinary(defaultHackVersion))
-      } else _
+      _
+        .{
+          if (hack != null) {
+            _.withFile("/usr/local/bin/cargo-hack", cargoHackBinary(defaultHackVersion))
+          } else _
+        }
+        .{
+          if (nextest) {
+            _.withFile("/usr/local/bin/cargo-nextest", cargoNextestBinary(defaultNextestVersion))
+          } else _
+        }
     }
   }
 
@@ -561,6 +577,8 @@ type Rust {
   """
   Execute all unit and integration tests and build examples of a local package.
 
+  Runs with cargo-nextest (followed by `cargo test --doc`) when the project has a
+  `.config/nextest.toml` (see nextest.dang).
   Wrapped by cargo-hack when `hack.test` is configured in the manifest (see hack.dang).
   """
   test(
@@ -659,7 +677,10 @@ type Rust {
   ): String! @check {
     let hack = self.hackArgs { _.test }
 
-    let args = withHack(
+    # nextest cannot run doctests: `doc` stays with cargo test.
+    let nextest = self.nextest and !doc
+
+    let command = withHack(
       CargoCommand.test(
         testName,
         args,
@@ -684,6 +705,7 @@ type Rust {
         noDefaultFeatures,
         release,
         profile,
+        nextest,
       ),
       hack,
     )
@@ -708,7 +730,49 @@ type Rust {
       profile: profile,
     )
 
-    self.commandContainer(cookArgs, hack).withExec(args).combinedOutput
+    let result = self.commandContainer(cookArgs, hack, nextest).withExec(command)
+
+    if (!nextest) {
+      return result.combinedOutput
+    }
+
+    # Mirror `cargo test`, which runs doctests only as part of the default target set.
+    let targetsSelected = lib or bins or !bin.isEmpty or examples or !example.isEmpty
+      or tests or !test.isEmpty or benches or !bench.isEmpty or allTargets
+    if (targetsSelected) {
+      return result.combinedOutput
+    }
+
+    let doctestArgs = withHack(
+      CargoCommand.test(
+        testName,
+        args,
+        noFailFast,
+        package,
+        all,
+        exclude,
+        target: target,
+        doc: true,
+        allFeatures: allFeatures,
+        feature: feature,
+        noDefaultFeatures: noDefaultFeatures,
+        release: release,
+        profile: profile,
+      ),
+      hack,
+    )
+
+    # Packages without a library have no doctests (cargo test skips them silently).
+    let doctests = result.withExec(doctestArgs, expect: ReturnType.ANY)
+    if (doctests.exitCode != 0) {
+      if (doctests.stderr.contains("no library targets found")) {
+        return result.combinedOutput
+      }
+
+      raise "doctests failed:\n" + doctests.combinedOutput
+    }
+
+    result.combinedOutput + doctests.combinedOutput
   }
 
   """

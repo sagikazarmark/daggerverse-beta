@@ -24,12 +24,12 @@ let cargoAuditBinary(version: String!): File! {
       }
     }
 
-  let version = "v" + version.trimPrefix("v")
+  let tag = "v" + version.trimPrefix("v")
 
   Dagger
     .github
-    .release(`cargo-audit/${version}`, "rustsec/rustsec")
-    .asset(`cargo-audit-${arch}-unknown-linux-gnu-${version}.tgz`)
+    .release(`cargo-audit/${tag}`, "rustsec/rustsec")
+    .asset(`cargo-audit-${arch}-unknown-linux-gnu-${tag}.tgz`)
     .extracted(true)
     .file("cargo-audit")
 }

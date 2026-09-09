@@ -3,7 +3,7 @@ interface Overlay implements OverlaysOverlay {
 }
 
 let moduleOverlay(cargoArtifactsVersion: String, overlay: Overlay): OverlaysList! {
-  let cargoArtifactsVersion = "v" + cargoArtifactsVersion.trimPrefix("v") ?? null
+  let tag = "v" + cargoArtifactsVersion.trimPrefix("v") ?? null
 
   Dagger.overlays.combine([
     Dagger.overlays.withFiles(
@@ -11,7 +11,7 @@ let moduleOverlay(cargoArtifactsVersion: String, overlay: Overlay): OverlaysList
       [
         Dagger
           .github
-          .release(cargoArtifactsVersion, "sagikazarmark/cargo-artifacts")
+          .release(tag, "sagikazarmark/cargo-artifacts")
           .asset(`cargo-artifacts-${arch}-unknown-linux-gnu.tar.xz`)
           .extracted(true)
           .file("cargo-artifacts"),

@@ -12,12 +12,12 @@ Pinned on purpose: the binary sits upstream of every test run.
 let defaultNextestVersion: String! = "0.9.143"
 
 let cargoNextestBinary(version: String!): File! {
-  let version = version.trimPrefix("v")
+  let tag = version.trimPrefix("v")
 
   Dagger
     .github
-    .release(`cargo-nextest-${version}`, "nextest-rs/nextest")
-    .asset(`cargo-nextest-${version}-${arch}-unknown-linux-musl.tar.gz`)
+    .release(`cargo-nextest-${tag}`, "nextest-rs/nextest")
+    .asset(`cargo-nextest-${tag}-${arch}-unknown-linux-musl.tar.gz`)
     .extracted # flat archive
     .file("cargo-nextest")
 }

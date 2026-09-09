@@ -22,11 +22,11 @@ Pinned on purpose: the binary sits upstream of every wrapped command.
 let defaultHackVersion: String! = "0.6.45"
 
 let cargoHackBinary(version: String!): File! {
-  let version = "v" + version.trimPrefix("v")
+  let tag = "v" + version.trimPrefix("v")
 
   Dagger
     .github
-    .release(version, "taiki-e/cargo-hack")
+    .release(tag, "taiki-e/cargo-hack")
     .asset(`cargo-hack-${arch}-unknown-linux-musl.tar.gz`)
     .extracted # flat archive
     .file("cargo-hack")

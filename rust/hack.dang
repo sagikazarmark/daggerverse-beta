@@ -1,0 +1,115 @@
+# cargo-hack: run a cargo command across feature combinations (and more).
+#
+# The module never models a matrix itself: it forwards the arguments configured in the
+# project's manifest to cargo-hack, which enumerates the runs
+# (`--each-feature`, `--feature-powerset`, `--exclude-features`, `--depth`, ...).
+#
+# Configuration lives in Cargo.toml (package first, then workspace), keyed by the name
+# this module is registered under in dagger.toml, so instances (e.g. an MSRV one)
+# can run different matrices:
+#
+#   [[package.metadata.dagger.modules]]
+#   name = "rust"
+#   hack.check = ["--feature-powerset", "--no-dev-deps"]
+#   hack.test = ["--each-feature"]
+#
+# The instance name is a field rather than a table key (`[...modules.rust.hack]`)
+# because TOML tables with arbitrary keys cannot be decoded (no map materialization).
+
+"""
+Pinned on purpose: the binary sits upstream of every wrapped command.
+"""
+let defaultHackVersion: String! = "0.6.45"
+
+let cargoHackBinary(version: String!): File! {
+  let version = "v" + version.trimPrefix("v")
+
+  Dagger
+    .github
+    .release(version, "taiki-e/cargo-hack")
+    .asset(`cargo-hack-${arch}-unknown-linux-musl.tar.gz`)
+    .extracted # flat archive
+    .file("cargo-hack")
+}
+
+"""
+Wrap a cargo command line with cargo-hack: `cargo <cmd> ...` becomes `cargo hack <args> <cmd> ...`.
+cargo-hack's own options precede the subcommand; everything after it is forwarded to cargo.
+"""
+let withHack(command: [String!]!, hack: [String!]): [String!]! {
+  if (hack == null) {
+    return command
+  }
+
+  ["cargo", "hack"] + hack + command.dropFirst(1)
+}
+
+"""
+Configuration of this module instance, from the project's manifest.
+"""
+let moduleConfig(ws: Workspace!, manifestPath: String): ModuleConfig {
+  if (manifestPath == null) {
+    return null
+  }
+
+  let manifest = TOML.decode(ws.file(manifestPath).contents) :: Manifest!
+  let name = Dagger.currentModule.name
+
+  let modules = modulesIn(manifest.package) + modulesIn(manifest.workspace)
+
+  modules.find { _.name == name }
+}
+
+let modulesIn(section: ManifestSection): [ModuleConfig!]! {
+  if (section == null) {
+    return []
+  }
+
+  let metadata = section.metadata
+  if (metadata == null) {
+    return []
+  }
+
+  let dagger = metadata.dagger
+  if (dagger == null) {
+    return []
+  }
+
+  dagger.modules
+}
+
+type Manifest {
+  package: ManifestSection
+  workspace: ManifestSection
+}
+
+type ManifestSection {
+  metadata: ManifestMetadata
+}
+
+type ManifestMetadata {
+  dagger: DaggerMetadata
+}
+
+type DaggerMetadata {
+  modules: [ModuleConfig!]! = []
+}
+
+type ModuleConfig {
+  """
+  Name the module is registered under in dagger.toml.
+  """
+  name: String!
+
+  """
+  cargo-hack arguments per cargo command.
+  """
+  hack: HackConfig
+}
+
+type HackConfig {
+  check: [String!]
+  test: [String!]
+  clippy: [String!]
+  doc: [String!]
+}

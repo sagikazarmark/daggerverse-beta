@@ -7,6 +7,13 @@ let realProject: Directory! {
     .tree
 }
 
+"""
+Dependency-free crate with two features and a `rust` module configuration in its manifest.
+"""
+let featuresProject: Directory! {
+  Dagger.currentModule.source.directory("fixtures/features")
+}
+
 type Tests {
   envFile: Void @check {
     let output = Dagger
@@ -27,6 +34,10 @@ type Tests {
     Dagger.rust(ws: realProject.asWorkspace, version: rustVersion).build
   }
 
+  check: String! @check {
+    Dagger.rust(ws: realProject.asWorkspace, version: rustVersion).check
+  }
+
   test: String! @check {
     Dagger.rust(ws: realProject.asWorkspace, version: rustVersion).test
   }
@@ -35,7 +46,22 @@ type Tests {
     Dagger.rust(ws: realProject.asWorkspace, version: rustVersion).clippy
   }
 
+  """
+  `toolchain: "msrv"` runs everything on the manifest's rust-version.
+  """
+  msrv: Void @check {
+    let output = Dagger
+      .rust(ws: featuresProject.asWorkspace, version: rustVersion, toolchain: "msrv")
+      .container
+      .withExec(["rustc", "--version"])
+      .stdout
+
+    assert { output.contains("rustc 1.88.") }
+  }
+
   chef: ChefTests! { ChefTests }
+
+  hack: HackTests! { HackTests }
 }
 
 let hasTargetDir(container: Container!): Boolean! {
@@ -88,5 +114,39 @@ type ChefTests {
 
   clippy: String! @check {
     Dagger.rust(ws: realProject.asWorkspace, version: rustVersion, chef: true).clippy
+  }
+}
+
+type HackTests {
+  """
+  `hack.check` in the manifest wraps `cargo check` with cargo-hack: one run per feature.
+  """
+  check: Void @check {
+    let output = Dagger.rust(ws: featuresProject.asWorkspace, version: rustVersion).check
+
+    assert { output.contains("cargo check --no-default-features") }
+    assert { output.contains("--features b") }
+    assert { output.contains("--all-features") }
+  }
+
+  """
+  `hack.test` in the manifest wraps `cargo test` the same way; every run passes.
+  """
+  test: Void @check {
+    let output = Dagger.rust(ws: featuresProject.asWorkspace, version: rustVersion).test
+
+    assert { output.contains("cargo test --no-default-features") }
+    assert { output.contains("--all-features") }
+    assert { !output.contains("test result: FAILED") }
+  }
+
+  """
+  Without a configuration for this module, cargo runs plain (no cargo-hack).
+  """
+  notConfigured: Void @check {
+    let output = Dagger.rust(ws: realProject.asWorkspace, version: rustVersion).check
+
+    assert { !output.contains("cargo hack") }
+    assert { !output.contains("running `cargo check") }
   }
 }

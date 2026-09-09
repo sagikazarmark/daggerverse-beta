@@ -1,0 +1,16 @@
+[package]
+name = "features"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.88"
+
+[features]
+default = ["a"]
+a = []
+b = []
+
+# Configuration of the `rust` Dagger module (keyed by the name it is registered under).
+[[package.metadata.dagger.modules]]
+name = "rust"
+hack.check = ["--each-feature"]
+hack.test = ["--each-feature"]

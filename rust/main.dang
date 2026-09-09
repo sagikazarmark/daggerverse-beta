@@ -10,6 +10,11 @@ type Rust {
 
   let chefArgs: [String!]
 
+  """
+  Configuration of this module instance from the project's manifest (see hack.dang).
+  """
+  let config: ModuleConfig
+
   new(
     ws: Workspace!,
     """
@@ -20,6 +25,13 @@ type Rust {
     Custom container to use as a base container.
     """
     container: Container! = Dagger.container.from("rust:" + version),
+    """
+    Toolchain to install and use instead of the base container's (rustup name, e.g. `1.85`, `nightly`),
+    or `msrv` for the project's `package.rust-version`.
+
+    Takes precedence over a rust-toolchain.toml.
+    """
+    toolchain: String,
     """
     Targets to install for cross-compilation.
     """
@@ -75,6 +87,7 @@ type Rust {
 
     self.env = Dagger.rustEnvironment(
       ws: ws,
+      toolchain: toolchain,
       targets: targets,
       components: ["rustfmt", "clippy"] + components,
       noCache: noCache,
@@ -93,6 +106,8 @@ type Rust {
     self.prefetch = prefetch
 
     self.chefArgs = chefArgs
+
+    self.config = moduleConfig(ws, ws.findUp("Cargo.toml"))
 
     self
   }
@@ -177,6 +192,34 @@ type Rust {
 
   let buildContainer(cookArgs: [String!]): Container! {
     self.extendContainer(cookArgs) { _ }
+  }
+
+  """
+  Build container for a cargo command, with cargo-hack installed when the command is wrapped by it.
+  """
+  let commandContainer(cookArgs: [String!], hack: [String!]): Container! {
+    self.extendContainer(cookArgs) {
+      if (hack != null) {
+        _.withFile("/usr/local/bin/cargo-hack", cargoHackBinary(defaultHackVersion))
+      } else _
+    }
+  }
+
+  """
+  cargo-hack arguments configured for a cargo command (null when not configured).
+  """
+  let hackArgs(&select(hack: HackConfig!): [String!]): [String!] {
+    let config = self.config
+    if (config == null) {
+      return null
+    }
+
+    let hack = config.hack
+    if (hack == null) {
+      return null
+    }
+
+    select(hack)
   }
 
   """
@@ -377,7 +420,148 @@ type Rust {
   }
 
   """
+  Check a local package and all of its dependencies for errors.
+
+  Wrapped by cargo-hack when `hack.check` is configured in the manifest (see hack.dang).
+  """
+  check(
+    """
+    Package to check.
+    """
+    package: [String!]! = [],
+    """
+    Check all packages in the workspace.
+    """
+    all: Boolean! = false,
+    """
+    Exclude packages from the check.
+    """
+    exclude: [String!]! = [],
+    """
+    Check only this package's library.
+    """
+    lib: Boolean! = false,
+    """
+    Check all binaries.
+    """
+    bins: Boolean! = false,
+    """
+    Check only the specified binary.
+    """
+    bin: [String!]! = [],
+    """
+    Check all examples.
+    """
+    examples: Boolean! = false,
+    """
+    Check only the specified example.
+    """
+    example: [String!]! = [],
+    """
+    Check all targets that have `test = true` set.
+    """
+    tests: Boolean! = false,
+    """
+    Check only the specified test target.
+    """
+    test: [String!]! = [],
+    """
+    Check all targets that have `bench = true` set.
+    """
+    benches: Boolean! = false,
+    """
+    Check only the specified bench target.
+    """
+    bench: [String!]! = [],
+    """
+    Check all targets.
+    """
+    allTargets: Boolean! = false,
+    """
+    Check for the target triple.
+    """
+    target: [String!]! = [],
+    """
+    Activate all available features.
+    """
+    allFeatures: Boolean! = false,
+    """
+    List of features to activate.
+    """
+    feature: [String!]! = [],
+    """
+    Do not activate the `default` feature.
+    """
+    noDefaultFeatures: Boolean! = false,
+    """
+    Check artifacts in release mode, with optimizations.
+    """
+    release: Boolean! = false,
+    """
+    Check artifacts with the specified profile.
+    """
+    profile: String! = "",
+    """
+    Do not abort the check as soon as there is an error.
+    """
+    keepGoing: Boolean! = false,
+  ): String! @check {
+    let hack = self.hackArgs { _.check }
+
+    let args = withHack(
+      CargoCommand.check(
+        package,
+        all,
+        exclude,
+        lib,
+        bins,
+        bin,
+        examples,
+        example,
+        tests,
+        test,
+        benches,
+        bench,
+        allTargets,
+        target,
+        allFeatures,
+        feature,
+        noDefaultFeatures,
+        release,
+        profile,
+        keepGoing,
+      ),
+      hack,
+    )
+
+    let cookArgs = CargoCommand.chefCook(
+      package: package,
+      all: all,
+      bins: bins,
+      bin: bin,
+      examples: examples,
+      example: example,
+      tests: tests,
+      test: test,
+      benches: benches,
+      bench: bench,
+      allTargets: allTargets,
+      target: target,
+      allFeatures: allFeatures,
+      feature: feature,
+      noDefaultFeatures: noDefaultFeatures,
+      release: release,
+      profile: profile,
+      check: true,
+    )
+
+    self.commandContainer(cookArgs, hack).withExec(args).combinedOutput
+  }
+
+  """
   Execute all unit and integration tests and build examples of a local package.
+
+  Wrapped by cargo-hack when `hack.test` is configured in the manifest (see hack.dang).
   """
   test(
     """
@@ -473,30 +657,35 @@ type Rust {
     """
     profile: String! = "",
   ): String! @check {
-    let args = CargoCommand.test(
-      testName,
-      args,
-      noFailFast,
-      package,
-      all,
-      exclude,
-      lib,
-      bins,
-      bin,
-      examples,
-      example,
-      tests,
-      test,
-      benches,
-      bench,
-      allTargets,
-      target,
-      doc,
-      allFeatures,
-      feature,
-      noDefaultFeatures,
-      release,
-      profile,
+    let hack = self.hackArgs { _.test }
+
+    let args = withHack(
+      CargoCommand.test(
+        testName,
+        args,
+        noFailFast,
+        package,
+        all,
+        exclude,
+        lib,
+        bins,
+        bin,
+        examples,
+        example,
+        tests,
+        test,
+        benches,
+        bench,
+        allTargets,
+        target,
+        doc,
+        allFeatures,
+        feature,
+        noDefaultFeatures,
+        release,
+        profile,
+      ),
+      hack,
     )
 
     # `cargo test` compiles dev-dependencies: cook them too.
@@ -519,7 +708,7 @@ type Rust {
       profile: profile,
     )
 
-    self.buildContainer(cookArgs).withExec(args).combinedOutput
+    self.commandContainer(cookArgs, hack).withExec(args).combinedOutput
   }
 
   """
@@ -536,6 +725,8 @@ type Rust {
 
   """
   Checks a package to catch common mistakes and improve your Rust code.
+
+  Wrapped by cargo-hack when `hack.clippy` is configured in the manifest (see hack.dang).
   """
   clippy(
     """
@@ -571,11 +762,18 @@ type Rust {
     deny.each { d => args += ["--deny", d] }
     forbid.each { f => args += ["--forbid", f] }
 
-    self.buildContainer(CargoCommand.chefCook(clippy: true)).withExec(args).stdout
+    let hack = self.hackArgs { _.clippy }
+
+    self
+      .commandContainer(CargoCommand.chefCook(clippy: true), hack)
+      .withExec(withHack(args, hack))
+      .stdout
   }
 
   """
   Build a package's documentation.
+
+  Wrapped by cargo-hack when `hack.doc` is configured in the manifest (see hack.dang).
   """
   doc(
     """
@@ -635,21 +833,26 @@ type Rust {
     """
     profile: String! = "",
   ): String! @check {
-    let args = CargoCommand.doc(
-      noDeps,
-      package,
-      all,
-      exclude,
-      lib,
-      bins,
-      bin,
-      examples,
-      example,
-      allFeatures,
-      feature,
-      noDefaultFeatures,
-      release,
-      profile,
+    let hack = self.hackArgs { _.doc }
+
+    let args = withHack(
+      CargoCommand.doc(
+        noDeps,
+        package,
+        all,
+        exclude,
+        lib,
+        bins,
+        bin,
+        examples,
+        example,
+        allFeatures,
+        feature,
+        noDefaultFeatures,
+        release,
+        profile,
+      ),
+      hack,
     )
 
     # rustdoc needs the dependencies' metadata only (check mode).
@@ -669,7 +872,7 @@ type Rust {
     )
 
     self
-      .buildContainer(cookArgs)
+      .commandContainer(cookArgs, hack)
       .withEnvVariable("RUSTDOCFLAGS", "-D warnings")
       .withExec(args)
       .stdout

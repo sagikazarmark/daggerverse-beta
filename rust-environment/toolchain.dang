@@ -1,0 +1,80 @@
+# Toolchain override, including the MSRV (`package.rust-version`) of the project.
+#
+# The toolchain is selected with RUSTUP_TOOLCHAIN, which takes precedence over
+# rust-toolchain.toml (and its components/targets lists) by rustup's own rules.
+
+"""
+Special toolchain name resolving to the project's `package.rust-version`.
+"""
+let msrvToolchain: String! = "msrv"
+
+"""
+Resolve the toolchain to install: rustup names are passed through, `msrv` is read from the manifests.
+"""
+let resolveToolchain(ws: Workspace!, toolchain: String, manifestPath: String, cargoRoot: String): String {
+  if (toolchain == null or toolchain != msrvToolchain) {
+    return toolchain
+  }
+
+  if (manifestPath == null) {
+    raise `toolchain "msrv" requires a Cargo.toml: none found in ${ws.cwd} (or any parent directory)`
+  }
+
+  let manifest = ws.file(manifestPath).contents
+
+  # `package.rust-version = "1.85"`; decoding fails when it is `{ workspace = true }`
+  let own = {
+    let decoded = TOML.decode(manifest) :: MsrvPackageManifest!
+    let package = decoded.package
+    if (package != null) package.rustVersion else null
+  } rescue null
+  if (own != null) {
+    return own
+  }
+
+  # `[workspace.package] rust-version = "1.85"`, in the nearest manifest or at the Cargo workspace root
+  let inherited = workspaceRustVersion(manifest)
+  if (inherited == null and cargoRoot != null) {
+    let rootManifestPath = Path(cargoRoot).join(Path("Cargo.toml")).string
+    if (rootManifestPath != manifestPath) {
+      inherited = workspaceRustVersion(ws.file(rootManifestPath).contents)
+    }
+  }
+  if (inherited != null) {
+    return inherited
+  }
+
+  raise `toolchain "msrv" requires a rust-version: none found in ${manifestPath} (or the Cargo workspace root)`
+}
+
+let workspaceRustVersion(manifest: String!): String {
+  let decoded = TOML.decode(manifest) :: MsrvWorkspaceManifest!
+
+  let workspace = decoded.workspace
+  if (workspace == null) {
+    return null
+  }
+
+  let package = workspace.package
+  if (package == null) {
+    return null
+  }
+
+  package.rustVersion
+}
+
+type MsrvPackageManifest {
+  package: MsrvPackage
+}
+
+type MsrvWorkspaceManifest {
+  workspace: MsrvWorkspace
+}
+
+type MsrvWorkspace {
+  package: MsrvPackage
+}
+
+type MsrvPackage {
+  rustVersion: String @TOML.field(name: "rust-version")
+}

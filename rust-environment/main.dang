@@ -2,6 +2,11 @@ type RustEnvironment {
   let toolchainFile: File
   let toolchainPath: String
 
+  """
+  Toolchain overriding the base image's and the toolchain file's (rustup name), if any.
+  """
+  toolchain: String
+
   let targets: [String!]!
   let components: [String!]!
 
@@ -32,6 +37,14 @@ type RustEnvironment {
 
   new(
     ws: Workspace!,
+    """
+    Toolchain to install and use (rustup name, e.g. `1.85`, `stable`, `nightly-2026-01-01`),
+    or `msrv` for the project's `package.rust-version`.
+
+    Selected with RUSTUP_TOOLCHAIN, so it takes precedence over a rust-toolchain.toml
+    (whose components and targets are then not installed either).
+    """
+    toolchain: String,
     """
     Targets to install with rustup.
     """
@@ -77,8 +90,10 @@ type RustEnvironment {
     self.chefVersion = chefVersion ?? defaultChefVersion
 
     let lockPath = ws.findUp("Cargo.lock")
+    let cargoRoot: String = null
     if (lockPath != null) {
-      self.cargoRoot = Path(lockPath).parent.string
+      cargoRoot = Path(lockPath).parent.string
+      self.cargoRoot = cargoRoot
     }
     if (chef and lockPath == null) {
       raise `cargo-chef requires a Cargo.lock: none found in ${ws.cwd} (or any parent directory)`
@@ -88,6 +103,8 @@ type RustEnvironment {
     if (manifestPath != null) {
       self.manifestPath = manifestPath
     }
+
+    self.toolchain = resolveToolchain(ws, toolchain, manifestPath, cargoRoot)
 
     self
   }
@@ -330,8 +347,15 @@ type RustEnvironment {
   let rustup(container: Container!): Container! {
     container
       .{
+        let toolchain = self.toolchain
         let toolchainFile = self.toolchainFile
-        if (toolchainFile != null) {
+        if (toolchain != null) {
+          # RUSTUP_TOOLCHAIN makes it the active toolchain for every rustup-managed command
+          # (cargo, rustc, the component/target installs below), regardless of a toolchain file.
+          _
+            .withExec(["rustup", "toolchain", "install", toolchain, "--no-self-update"])
+            .withEnvVariable("RUSTUP_TOOLCHAIN", toolchain)
+        } else if (toolchainFile != null) {
           _
             .withWorkdir("/tmp/rust-environment/src")
             .withFile("rust-toolchain.toml", toolchainFile)

@@ -91,10 +91,10 @@ type RustCross {
     self.base = container
 
     self.env = Dagger.rustEnvironment(
-      ws,
-      targets,
-      components,
-      noCache,
+      ws: ws,
+      targets: targets,
+      components: components,
+      noCache: noCache,
     )
 
     self.buildEnv = Dagger

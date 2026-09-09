@@ -38,14 +38,6 @@ type RustEnvironment {
   new(
     ws: Workspace!,
     """
-    Toolchain to install and use (rustup name, e.g. `1.85`, `stable`, `nightly-2026-01-01`),
-    or `msrv` for the project's `package.rust-version`.
-
-    Selected with RUSTUP_TOOLCHAIN, so it takes precedence over a rust-toolchain.toml
-    (whose components and targets are then not installed either).
-    """
-    toolchain: String,
-    """
     Targets to install with rustup.
     """
     targets: [String!]! = [],
@@ -68,6 +60,14 @@ type RustEnvironment {
     cargo-chef version to install when `chef` is enabled (default: 0.1.78).
     """
     chefVersion: String,
+    """
+    Toolchain to install and use (rustup name, e.g. `1.85`, `stable`, `nightly-2026-01-01`),
+    or `msrv` for the project's `package.rust-version`.
+
+    Selected with RUSTUP_TOOLCHAIN, so it takes precedence over a rust-toolchain.toml
+    (whose components and targets are then not installed either).
+    """
+    toolchain: String,
   ) {
     let toolchainPath = ws.findUp("rust-toolchain.toml")
     if (toolchainPath != null) {

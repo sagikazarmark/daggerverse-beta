@@ -113,6 +113,63 @@ type CargoCommand {
     args
   }
 
+  """
+  `cargo clippy` with cargo's selection flags; lint levels go after `--`, appended by the caller.
+  """
+  clippy(
+    noDeps: Boolean! = true,
+    package: [String!]! = [],
+    all: Boolean! = false,
+    exclude: [String!]! = [],
+    lib: Boolean! = false,
+    bins: Boolean! = false,
+    bin: [String!]! = [],
+    examples: Boolean! = false,
+    example: [String!]! = [],
+    tests: Boolean! = false,
+    test: [String!]! = [],
+    benches: Boolean! = false,
+    bench: [String!]! = [],
+    allTargets: Boolean! = false,
+    target: [String!]! = [],
+    allFeatures: Boolean! = false,
+    feature: [String!]! = [],
+    noDefaultFeatures: Boolean! = false,
+    release: Boolean! = false,
+    profile: String! = "",
+    keepGoing: Boolean! = false,
+  ): [String!]! {
+    let args = ["cargo", "clippy"]
+
+    args += self.coreArgs(
+      package,
+      all,
+      exclude,
+      lib,
+      bins,
+      bin,
+      examples,
+      example,
+      tests,
+      test,
+      benches,
+      bench,
+      false,
+      allTargets,
+      target,
+      allFeatures,
+      feature,
+      noDefaultFeatures,
+      release,
+      profile,
+      keepGoing,
+    )
+
+    if (noDeps) { args += ["--no-deps"] }
+
+    args
+  }
+
   test(
     testName: String! = "",
     args: [String!]! = [],

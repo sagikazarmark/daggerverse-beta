@@ -14,3 +14,4 @@ b = []
 name = "rust"
 hack.check = ["--each-feature"]
 hack.test = ["--each-feature"]
+hack.clippy = ["--each-feature"]

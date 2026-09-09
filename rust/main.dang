@@ -798,6 +798,86 @@ type Rust {
     """
     noDeps: Boolean,
     """
+    Package to lint.
+    """
+    package: [String!]! = [],
+    """
+    Lint all packages in the workspace.
+    """
+    all: Boolean! = false,
+    """
+    Exclude packages from the lint.
+    """
+    exclude: [String!]! = [],
+    """
+    Lint only this package's library.
+    """
+    lib: Boolean! = false,
+    """
+    Lint all binaries.
+    """
+    bins: Boolean! = false,
+    """
+    Lint only the specified binary.
+    """
+    bin: [String!]! = [],
+    """
+    Lint all examples.
+    """
+    examples: Boolean! = false,
+    """
+    Lint only the specified example.
+    """
+    example: [String!]! = [],
+    """
+    Lint all targets that have `test = true` set.
+    """
+    tests: Boolean! = false,
+    """
+    Lint only the specified test target.
+    """
+    test: [String!]! = [],
+    """
+    Lint all targets that have `bench = true` set.
+    """
+    benches: Boolean! = false,
+    """
+    Lint only the specified bench target.
+    """
+    bench: [String!]! = [],
+    """
+    Lint all targets.
+    """
+    allTargets: Boolean! = false,
+    """
+    Lint for the target triple.
+    """
+    target: [String!]! = [],
+    """
+    Activate all available features.
+    """
+    allFeatures: Boolean! = false,
+    """
+    List of features to activate.
+    """
+    feature: [String!]! = [],
+    """
+    Do not activate the `default` feature.
+    """
+    noDefaultFeatures: Boolean! = false,
+    """
+    Lint artifacts in release mode, with optimizations.
+    """
+    release: Boolean! = false,
+    """
+    Lint artifacts with the specified profile.
+    """
+    profile: String! = "",
+    """
+    Do not abort the lint as soon as there is an error.
+    """
+    keepGoing: Boolean! = false,
+    """
     Set lint warnings.
     """
     warn: [String!]! = [],
@@ -814,24 +894,65 @@ type Rust {
     """
     forbid: [String!]! = [],
   ): String! @check {
-    let args = CargoCommand.generic("clippy")
-    if (noDeps ?? true) {
-      args += ["--no-deps"]
-    }
-
-    args += ["--"]
-
-    warn.each { w => args += ["--warn", w] }
-    allow.each { a => args += ["--allow", a] }
-    deny.each { d => args += ["--deny", d] }
-    forbid.each { f => args += ["--forbid", f] }
-
     let hack = self.hackArgs { _.clippy }
 
-    self
-      .commandContainer(CargoCommand.chefCook(clippy: true), hack)
-      .withExec(withHack(args, hack))
-      .stdout
+    let command = withHack(
+      CargoCommand.clippy(
+        noDeps ?? true,
+        package,
+        all,
+        exclude,
+        lib,
+        bins,
+        bin,
+        examples,
+        example,
+        tests,
+        test,
+        benches,
+        bench,
+        allTargets,
+        target,
+        allFeatures,
+        feature,
+        noDefaultFeatures,
+        release,
+        profile,
+        keepGoing,
+      ),
+      hack,
+    )
+
+    command += ["--"]
+
+    warn.each { w => command += ["--warn", w] }
+    allow.each { a => command += ["--allow", a] }
+    deny.each { d => command += ["--deny", d] }
+    forbid.each { f => command += ["--forbid", f] }
+
+    let cookArgs = CargoCommand.chefCook(
+      package: package,
+      all: all,
+      bins: bins,
+      bin: bin,
+      examples: examples,
+      example: example,
+      tests: tests,
+      test: test,
+      benches: benches,
+      bench: bench,
+      allTargets: allTargets,
+      target: target,
+      allFeatures: allFeatures,
+      feature: feature,
+      noDefaultFeatures: noDefaultFeatures,
+      release: release,
+      profile: profile,
+      clippy: true,
+    )
+
+    # clippy reports on stderr
+    self.commandContainer(cookArgs, hack).withExec(command).combinedOutput
   }
 
   """

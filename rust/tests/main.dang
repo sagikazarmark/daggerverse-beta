@@ -54,6 +54,17 @@ type Tests {
   }
 
   """
+  clippy takes cargo's selection flags, like check and test.
+  """
+  clippySelection: Void @check {
+    let output = Dagger
+      .rust(ws: realProject.asWorkspace, version: rustVersion)
+      .clippy(allTargets: true, allFeatures: true, deny: ["warnings"])
+
+    assert { output.contains("Finished") }
+  }
+
+  """
   `toolchain: "msrv"` runs everything on the manifest's rust-version.
   """
   msrv: Void @check {
@@ -147,6 +158,19 @@ type HackTests {
     assert { output.contains("cargo test --no-default-features") }
     assert { output.contains("--all-features") }
     assert { !output.contains("test result: FAILED") }
+  }
+
+  """
+  `hack.clippy` in the manifest wraps `cargo clippy` the same way; lint levels still go after `--`.
+  """
+  clippy: Void @check {
+    let output = Dagger
+      .rust(ws: featuresProject.asWorkspace, version: rustVersion)
+      .clippy(allTargets: true, deny: ["warnings"])
+
+    assert { output.contains("cargo clippy --all-targets") }
+    assert { output.contains("--features b") }
+    assert { output.contains("-- --deny warnings") }
   }
 
   """

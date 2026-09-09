@@ -14,11 +14,13 @@ pub fn b() -> &'static str {
 pub fn enabled() -> Vec<&'static str> {
     let mut features = Vec::new();
 
-    #[cfg(feature = "a")]
-    features.push(a());
+    if cfg!(feature = "a") {
+        features.push("a");
+    }
 
-    #[cfg(feature = "b")]
-    features.push(b());
+    if cfg!(feature = "b") {
+        features.push("b");
+    }
 
     features
 }

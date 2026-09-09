@@ -31,6 +31,13 @@ type Rust {
     """
     container: Container! = Dagger.container.from("rust:" + version),
     """
+    Toolchain to install and use instead of the base container's (rustup name, e.g. `1.85`, `nightly`),
+    or `msrv` for the project's `package.rust-version`.
+
+    Takes precedence over a rust-toolchain.toml.
+    """
+    toolchain: String,
+    """
     Targets to install for cross-compilation.
     """
     targets: [String!]! = [],
@@ -80,13 +87,6 @@ type Rust {
     (one shared dependency layer per profile), and also applies to `container`.
     """
     chefArgs: [String!],
-    """
-    Toolchain to install and use instead of the base container's (rustup name, e.g. `1.85`, `nightly`),
-    or `msrv` for the project's `package.rust-version`.
-
-    Takes precedence over a rust-toolchain.toml.
-    """
-    toolchain: String,
   ) {
     self.base = container
 

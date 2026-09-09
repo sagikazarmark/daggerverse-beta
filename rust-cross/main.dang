@@ -57,6 +57,13 @@ type RustCross {
     """
     noMacosSdk: Boolean! = false,
     """
+    Toolchain to install and use instead of the base container's (rustup name, e.g. `1.85`, `nightly`),
+    or `msrv` for the project's `package.rust-version`.
+
+    Takes precedence over a rust-toolchain.toml.
+    """
+    toolchain: String,
+    """
     Targets to install with rustup up front.
 
     Targets passed to `build` are installed automatically; this is only useful for the `container` function.
@@ -92,6 +99,7 @@ type RustCross {
 
     self.env = Dagger.rustEnvironment(
       ws: ws,
+      toolchain: toolchain,
       targets: targets,
       components: components,
       noCache: noCache,

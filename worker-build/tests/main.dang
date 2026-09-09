@@ -35,6 +35,23 @@ type Tests {
   }
 
   """
+  The toolchain override reaches the Rust environment.
+  """
+  toolchain: Void @check {
+    let container = Dagger
+      .workerBuild(
+        ws: Dagger.directory.asWorkspace,
+        rustVersion: rustVersion,
+        container: self.container,
+        toolchain: "1.96.0",
+      )
+      .container
+
+    assert { container.envVariable("RUSTUP_TOOLCHAIN") == "1.96.0" }
+    assert { container.withExec(["rustc", "--version"]).stdout.contains("rustc 1.96.0") }
+  }
+
+  """
   Use worker-build's managed wasm-opt unless a Binaryen version is explicitly requested.
   """
   binaryenOverride: Void @check {

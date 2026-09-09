@@ -42,6 +42,13 @@ type Dioxus {
     """
     container: Container! = Dagger.container.from("rust:" + rustVersion),
     """
+    Toolchain to install and use instead of the base container's (rustup name, e.g. `1.85`, `nightly`),
+    or `msrv` for the project's `package.rust-version`.
+
+    Takes precedence over a rust-toolchain.toml.
+    """
+    toolchain: String,
+    """
     Targets to install for cross-compilation.
     """
     targets: [String!]! = [],
@@ -93,6 +100,7 @@ type Dioxus {
     self.rustEnv = Dagger.rustEnvironment(
       ws: ws,
 
+      toolchain: toolchain,
       targets: ["wasm32-unknown-unknown"] + targets,
       components: ["rust-std"] + components,
 

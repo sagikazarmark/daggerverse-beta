@@ -253,7 +253,7 @@ type Rust {
   ): String! @check {
     let advisoryDb = Dagger.git("https://github.com/rustsec/advisory-db.git").head.tree
 
-    if (self.env.dotCargo.exists("audit.toml", expectedType: ExistsType.DIRECTORY_TYPE)) {
+    if (self.env.dotCargo.exists("audit.toml", expectedType: ExistsType.REGULAR_TYPE)) {
       let config = TOML.decode(self.env.dotCargo.file("audit.toml").contents) :: CargoAuditConfig
 
       let url = config.database.url

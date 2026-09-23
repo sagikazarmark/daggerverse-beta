@@ -6,7 +6,7 @@ edition = "2021"
 [features]
 extra = []
 
-# `hack.test` composes with nextest: `cargo hack <args> nextest run ...`.
+# `hack.test` composes with nextest: `cargo hack nextest run ... <args>`.
 [[package.metadata.dagger.modules]]
 name = "rust"
 hack.test = ["--each-feature"]

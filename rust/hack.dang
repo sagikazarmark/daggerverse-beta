@@ -13,6 +13,9 @@
 #   hack.check = ["--feature-powerset", "--no-dev-deps"]
 #   hack.test = ["--each-feature"]
 #
+# The arguments follow the cargo subcommand and its options (see `withHack`), so they may end
+# with `--` and arguments for the test binaries, e.g. `hack.test = ["--", "--include-ignored"]`.
+#
 # The instance name is a field rather than a table key (`[...modules.rust.hack]`)
 # because TOML tables with arbitrary keys cannot be decoded (no map materialization).
 
@@ -33,15 +36,41 @@ let cargoHackBinary(version: String!): File! {
 }
 
 """
-Wrap a cargo command line with cargo-hack: `cargo <cmd> ...` becomes `cargo hack <args> <cmd> ...`.
-cargo-hack's own options precede the subcommand; everything after it is forwarded to cargo.
+Wrap a cargo command line with cargo-hack: `cargo <cmd> <options> [-- <args>]` becomes
+`cargo hack <cmd> <options> <hack> [-- <args>]`.
+
+cargo-hack takes its own options after the subcommand too, and forwards the rest to cargo, so
+the configured arguments may end with `--` and arguments for the test binaries
+(e.g. `hack.test = ["--", "--include-ignored"]`). They go before the command's own `--` arguments,
+which then share the configured separator.
 """
 let withHack(command: [String!]!, hack: [String!]): [String!]! {
   if (hack == null) {
     return command
   }
 
-  ["cargo", "hack"] + hack + command.dropFirst(1)
+  let options: [String!]! = []
+  let trailing: [String!]! = []
+  let separated = false
+
+  command.dropFirst(1).each { arg =>
+    if (arg == "--") {
+      separated = true
+    }
+
+    if (separated) {
+      trailing += [arg]
+    } else {
+      options += [arg]
+    }
+  }
+
+  # One separator: the command's own arguments follow the configured ones.
+  if (hack.contains("--") and !trailing.isEmpty) {
+    trailing = trailing.dropFirst(1)
+  }
+
+  ["cargo", "hack"] + options + hack + trailing
 }
 
 """

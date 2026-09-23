@@ -896,31 +896,28 @@ type Rust {
   ): String! @check {
     let hack = self.hackArgs { _.clippy }
 
-    let command = withHack(
-      CargoCommand.clippy(
-        noDeps ?? true,
-        package,
-        all,
-        exclude,
-        lib,
-        bins,
-        bin,
-        examples,
-        example,
-        tests,
-        test,
-        benches,
-        bench,
-        allTargets,
-        target,
-        allFeatures,
-        feature,
-        noDefaultFeatures,
-        release,
-        cargoProfile,
-        keepGoing,
-      ),
-      hack,
+    let command = CargoCommand.clippy(
+      noDeps ?? true,
+      package,
+      all,
+      exclude,
+      lib,
+      bins,
+      bin,
+      examples,
+      example,
+      tests,
+      test,
+      benches,
+      bench,
+      allTargets,
+      target,
+      allFeatures,
+      feature,
+      noDefaultFeatures,
+      release,
+      cargoProfile,
+      keepGoing,
     )
 
     command += ["--"]
@@ -929,6 +926,9 @@ type Rust {
     allow.each { a => command += ["--allow", a] }
     deny.each { d => command += ["--deny", d] }
     forbid.each { f => command += ["--forbid", f] }
+
+    # Wrapped last, so configured arguments go before the lint levels.
+    command = withHack(command, hack)
 
     let cookArgs = CargoCommand.chefCook(
       package: package,

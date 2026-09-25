@@ -1,0 +1,250 @@
+"""
+Check links in local files and websites with Lychee.
+"""
+type Lychee {
+  let baseContainer: Container!
+
+  let source: Directory!
+  let cwd: Path!
+
+  let cache: CacheVolume
+
+  let config: File
+  let githubToken: Secret
+  let cookieJar: File
+
+  new(
+    ws: Workspace!,
+    """
+    Version (image tag) from the official Lychee image repository.
+    """
+    version: String! = "0.24.2",
+    """
+    Custom container with lychee installed.
+    """
+    container: Container! = Dagger.container.from("lycheeverse/lychee:" + version),
+    """
+    Configuration file. When omitted, Lychee discovers configuration in the source.
+    """
+    config: File,
+    """
+    GitHub API token, exposed through the secret GITHUB_TOKEN environment variable.
+    """
+    githubToken: Secret,
+    """
+    Disable the request cache, including when enabled in the config file.
+    """
+    noCache: Boolean! = false,
+    """
+    Request cache volume, stored outside the source directory.
+    Use a dedicated volume when projects should not share cached responses.
+    """
+    cache: CacheVolume = if (!noCache) Dagger.cacheVolume("lychee") else null,
+    """
+    Initial Netscape cookie jar. The updated jar is available on the result.
+    Overrides cookie_jar with a writable internal path.
+    """
+    cookieJar: File,
+  ) {
+    self.baseContainer = container
+
+    self.source = ws.directory("/", gitignore: true)
+    self.cwd = Path(ws.cwd)
+
+    self.cache = if (noCache) null else cache
+
+    self.config = config
+    self.githubToken = githubToken
+    self.cookieJar = cookieJar
+
+    self
+  }
+
+  """
+  Container with source, configuration, secrets, and cache mounted.
+  """
+  container: Container! {
+    self
+      .baseContainer
+      .withDirectory("/work/out", Dagger.directory)
+      .{
+        let config = self.config
+        if (config != null) _.withMountedFile("/work/config/" + config.name, config) else _
+      }
+      .{
+        let cookieJar = self.cookieJar
+        if (cookieJar != null) _.withFile("/work/out/cookies.jar", cookieJar) else _
+      }
+      .{
+        let token = self.githubToken
+        if (token != null) _.withSecretVariable("GITHUB_TOKEN", token) else _
+      }
+      .withDirectory("/work/src", self.source)
+      .withWorkdir(Path("/work/src").join(self.cwd).string)
+      .withoutFile(".lycheecache")
+      .{
+        let cache = self.cache
+        if (cache != null) {
+          _
+            .withMountedCache("/work/cache", cache, sharing: CacheSharingMode.LOCKED)
+            # Lychee 0.24.2 hardcodes this filename, but follows symlinks when writing it.
+            .withExec(["ln", "-s", "/work/cache/lychee.csv", ".lycheecache"])
+        } else _
+      }
+  }
+
+  """
+  Prepare a Lychee runner that retains reports even when links fail.
+  Network checks are re-executed on each call; Lychee controls response cache expiry.
+  """
+  run(
+    """
+    Files, globs, or URLs to check, relative to the workspace cwd. Defaults to the cwd.
+    """
+    inputs: [String!]! = ["."],
+    """
+    Only check local links. Both true and false override the config; omission preserves it.
+    """
+    offline: Boolean,
+  ): Runner! @cache(policy: FunctionCachePolicy.Never) {
+    let args = [
+      "--no-progress",
+      "--root-dir", "/work/src",
+      "--output", "/work/out/report",
+      "--cookie-jar", "/work/out/cookies.jar",
+      "--cache=" + toString(self.cache != null),
+      # A check must actually check links, even if a shared config enables dumping.
+      "--dump=false", "--dump-inputs=false",
+    ]
+
+    let config = self.config
+    if (config != null) { args += ["--config", "/work/config/" + config.name] }
+
+    if (offline != null) { args += ["--offline=" + toString(offline)] }
+
+    Runner(
+      self
+        .container
+        .withEnvVariable("__DAGGER_CACHE_BUST", Random.string),
+      args,
+      if (inputs.isEmpty) ["."] else inputs,
+    )
+  }
+
+  """
+  Check links in the workspace and fail if Lychee reports errors.
+  """
+  check(
+    inputs: [String!]! = [],
+    offline: Boolean,
+  ): String! @check @cache(policy: FunctionCachePolicy.Never) {
+    self.run(inputs, offline).check
+  }
+}
+
+"""
+Runs Lychee with the configured format or a format-specific report override.
+"""
+type Runner {
+  let baseContainer: Container!
+  let args: [String!]!
+  let inputs: [String!]!
+
+  let container: Container!
+
+  new(baseContainer: Container!, args: [String!]!, inputs: [String!]!) {
+    self.baseContainer = baseContainer
+    self.args = args
+    self.inputs = inputs
+    self.container = self.exec
+
+    self
+  }
+
+  let exec(format: String): Container! {
+    let args = ["lychee"] + self.args
+    if (format != null) { args += ["--format", format] }
+
+    self.baseContainer.withExec(
+      args + ["--"] + self.inputs,
+      expect: ReturnType.ANY,
+      redirectStdout: "/work/out/stdout.log",
+      redirectStderr: "/work/out/stderr.log",
+    )
+  }
+
+  """
+  Lychee exit code. Zero means all checked links passed.
+  """
+  exitCode: Int! { self.container.exitCode }
+
+  """
+  Run Lychee and return the report in the config's format, or Lychee's default.
+  Available even when links fail.
+  """
+  report: File! { self.container.file("/work/out/report") }
+
+  """
+  Run Lychee with compact output, overriding the configured report format.
+  """
+  compact: File! { self.exec("compact").file("/work/out/report") }
+
+  """
+  Run Lychee with detailed output, overriding the configured report format.
+  """
+  detailed: File! { self.exec("detailed").file("/work/out/report") }
+
+  """
+  Run Lychee with JSON output, overriding the configured report format.
+  """
+  json: File! { self.exec("json").file("/work/out/report") }
+
+  """
+  Run Lychee with JUnit output, overriding the configured report format.
+  """
+  junit: File! { self.exec("junit").file("/work/out/report") }
+
+  """
+  Run Lychee with Markdown output, overriding the configured report format.
+  """
+  markdown: File! { self.exec("markdown").file("/work/out/report") }
+
+  """
+  Captured standard output.
+  """
+  stdout: String! { self.stdoutFile.contents }
+
+  """
+  Captured standard error.
+  """
+  stderr: String! { self.stderrFile.contents }
+
+  stdoutFile: File! { self.container.file("/work/out/stdout.log") }
+
+  stderrFile: File! { self.container.file("/work/out/stderr.log") }
+
+  """
+  Updated Netscape cookie jar.
+  """
+  cookieJar: File! { self.container.file("/work/out/cookies.jar") }
+
+  """
+  Report, logs, and cookies from the run.
+  """
+  outputDirectory: Directory! { self.container.directory("/work/out") }
+
+  """
+  Fail for a nonzero exit code, otherwise return the report.
+  """
+  check: String! {
+    if (self.exitCode != 0) {
+      let report = if (self.outputDirectory.exists("report", expectedType: ExistsType.REGULAR_TYPE)) {
+        self.report.contents
+      } else ""
+
+      raise "Lychee failed (exit code " + toString(self.exitCode) + ")\n" + report + self.stdout + self.stderr
+    }
+
+    self.report.contents
+  }
+}

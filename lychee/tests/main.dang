@@ -1,0 +1,231 @@
+type Tests {
+  """
+  Config discovery preserves exclusions and format, while managed paths override host paths.
+  """
+  configDiscovery: Void @check {
+    let source = self.source.withNewFile("lychee.toml", """offline = true
+    format = "json"
+    exclude = ["missing"]
+    root_dir = "/does/not/exist"
+    output = "/does/not/exist/report"
+    cookie_jar = "/does/not/exist/cookies"
+    """)
+    let result = Dagger.lychee(ws: source.asWorkspace, noCache: true).run
+
+    assert { result.exitCode == 0 }
+    assert { result.report.contents.hasPrefix("{") }
+    assert { result.outputDirectory.entries.contains("report") }
+    assert { result.stdoutFile.contents == result.stdout }
+    assert { result.stderrFile.contents == result.stderr }
+  }
+
+  """
+  An explicit config File replaces discovery; runner functions override only the report format.
+  """
+  configAndFormat: Void @check {
+    let config = Dagger.directory.withNewFile("custom.toml", """offline = true
+    format = "json"
+    exclude = ["missing"]
+    """).file("custom.toml")
+    let source = self.source.withNewFile("lychee.toml", "this is invalid TOML")
+    let runner = Dagger.lychee(ws: source.asWorkspace, config: config, noCache: true).run
+
+    assert { runner.report.contents.hasPrefix("{") }
+    assert { runner.json.contents.hasPrefix("{") }
+    assert { runner.junit.contents.contains("<testsuites") }
+    assert { runner.markdown.contents.contains("|") }
+    assert { runner.compact.contents.contains("Total") }
+    assert { runner.detailed.contents.contains("Total") }
+    assert { runner.report.contents.hasPrefix("{") }
+  }
+
+  """
+  Failed links retain a report, and the workspace check actually fails.
+  """
+  brokenLinks: Void @check {
+    let lychee = Dagger.lychee(ws: self.source.asWorkspace, noCache: true)
+    let result = lychee.run(offline: true)
+
+    assert { result.exitCode != 0 }
+    assert { result.report.contents.contains("missing.md") }
+    assert { result.json.contents.contains("missing.md") }
+    assert { result.junit.contents.contains("missing.md") }
+
+    {
+      lychee.check(offline: true)
+      raise "expected broken links to fail the check"
+    } rescue {
+      err: Error => {
+        assert { err.message.contains("Lychee failed (exit code") }
+        assert { err.message.contains("missing.md") }
+      }
+    }
+
+    let valid = self.source.withNewFile("missing.md", "# Found")
+      .withNewFile("lychee.toml", "format = 'json'")
+    assert { Dagger.lychee(ws: valid.asWorkspace, noCache: true).check(offline: true).hasPrefix("{") }
+  }
+
+  """
+  Nullable booleans preserve config when omitted and override it when explicitly false.
+  """
+  offlineOverride: Void @check @cache(policy: FunctionCachePolicy.Never) {
+    let source = Dagger.directory
+      .withNewFile("README.md", "[Missing](http://lychee-api:8000/missing)")
+      .withNewFile("lychee.toml", "offline = true\nmax_retries = 0")
+    let lychee = Dagger.lychee(ws: source.asWorkspace, container: self.container, noCache: true)
+
+    assert { lychee.run.exitCode == 0 }
+    assert { lychee.run(offline: false).exitCode != 0 }
+  }
+
+  """
+  Request cache is written outside the source tree and reused by a subsequent run.
+  """
+  cacheVolume: Void @check @cache(policy: FunctionCachePolicy.Never) {
+    let cache = Dagger.cacheVolume("lychee-tests-responses")
+    # Reset this test's dedicated cache before making the first request.
+    let base = self.container.withMountedCache("/test-cache", cache, sharing: CacheSharingMode.LOCKED)
+      .withExec(["sh", "-c", "rm -f /test-cache/lychee.csv"])
+      .withoutMount("/test-cache")
+    let source = Dagger.directory
+      .withNewFile("README.md", "[OK](http://lychee-api:8000/ok)")
+      .withNewFile("lychee.toml", "cache = false\nformat = 'json'")
+      .withNewFile(".lycheecache", "invalid source cache must not be used")
+    let lychee = Dagger.lychee(ws: source.asWorkspace, container: base, cache: cache)
+    let first = lychee.run
+
+    assert { first.exitCode == 0 }
+    let contents = Dagger.container.from("alpine:3.23.4")
+      .withMountedCache("/cache", cache, sharing: CacheSharingMode.LOCKED)
+      .withExec(["cat", "/cache/lychee.csv"]).stdout
+    assert { contents.contains("http://lychee-api:8000/ok") }
+
+    let second = lychee.run
+    assert { second.exitCode == 0 }
+    assert { second.report.contents.contains(`"cached": 1`) }
+  }
+
+  """
+  noCache overrides config and an explicitly supplied volume.
+  """
+  noCache: Void @check {
+    let source = self.source.withNewFile("missing.md", "# Found")
+      .withNewFile("lychee.toml", "cache = true\noffline = true")
+    let lychee = Dagger.lychee(ws: source.asWorkspace, noCache: true, cache: Dagger.cacheVolume("lychee-tests-disabled"))
+    assert { !lychee.container.mounts.contains("/work/cache") }
+    assert { lychee.run.exitCode == 0 }
+    assert { !lychee.container.directory("/work/src").entries.contains(".lycheecache") }
+  }
+
+  """
+  Explicit input lists suppress default directory scanning, and dollar signs stay literal.
+  """
+  inputsAndSecret: Void @check {
+    let source = Dagger.directory
+      .withNewFile("$README.md", "[OK](/ok.md)")
+      .withNewFile("ok.md", "# OK")
+      .withNewFile("bad.md", "[Missing](missing.md)")
+    let lychee = Dagger.lychee(
+      ws: source.asWorkspace,
+      noCache: true,
+      githubToken: Dagger.setSecret("lychee-tests-github-token", "test-token"),
+    )
+    assert { lychee.container.withExec(["sh", "-c", `test "$GITHUB_TOKEN" = test-token`]).exitCode == 0 }
+    assert { lychee.run(inputs: ["$README.md"], offline: true).exitCode == 0 }
+  }
+
+  """
+  A nested cwd discovers local config and resolves links against the full workspace root.
+  """
+  workspaceCwd: Void @check {
+    let source = Dagger.directory
+      .withNewFile("shared/ok.md", "# OK")
+      .withNewFile("bad.md", "[Not scanned from nested cwd](missing.md)")
+      .withNewFile("lychee.toml", "invalid root config should not be loaded")
+      .withNewFile("docs/README.md", "[Relative](../shared/ok.md)\n[Absolute](/shared/ok.md)")
+      .withNewFile("docs/lychee.toml", "offline = true\nformat = 'json'\nroot_dir = '/wrong'")
+    let lychee = Dagger.lychee(ws: source.asWorkspace("/docs"))
+
+    assert { lychee.container.workdir == "/work/src/docs" }
+    assert { lychee.container.file("/work/src/shared/ok.md").contents == "# OK" }
+    assert { lychee.container.withExec(["readlink", ".lycheecache"]).stdout.trimSpace == "/work/cache/lychee.csv" }
+    assert { lychee.check.hasPrefix("{") }
+  }
+
+  """
+  Gitignored files are omitted from the loaded workspace, even if Lychee ignores no files.
+  """
+  workspaceGitignore: Void @check {
+    let source = Dagger.directory
+      .withNewFile(".gitignore", "ignored.md\n")
+      .withNewFile("ignored.md", "[Broken](missing.md)")
+      .withNewFile("docs/README.md", "# OK")
+      .withNewFile("docs/lychee.toml", "offline = true\nno_ignore = true")
+    let lychee = Dagger.lychee(ws: source.asWorkspace("docs"), noCache: true)
+
+    assert { !lychee.container.directory("/work/src").exists("ignored.md") }
+    assert { lychee.run(inputs: [".."]).exitCode == 0 }
+  }
+
+  """
+  Identical runs still check the network when the Lychee cache is disabled.
+  """
+  freshNetworkChecks: Void @check @cache(policy: FunctionCachePolicy.Never) {
+    let api = Dagger.container.from("python:3.13-alpine")
+      .withEnvVariable("TEST_RUN", Random.string)
+      .withFile("/server.py", Dagger.currentModule.source.file("testdata/changing-server.py"))
+      .withExposedPort(8000)
+      .asService(["python", "/server.py"])
+      .start
+    let source = Dagger.directory
+      .withNewFile("README.md", "[Changing](http://changing-api:8000/link)")
+      .withNewFile("lychee.toml", "max_retries = 0")
+    let lychee = Dagger.lychee(
+      ws: source.asWorkspace,
+      container: Dagger.container.from("lycheeverse/lychee:0.24.2").withServiceBinding("changing-api", api),
+      noCache: true,
+    )
+
+    let runner = lychee.run
+    assert { runner.exitCode == 0 }
+    # A format-specific report executes Lychee again, rather than reformatting old results.
+    assert { runner.json.contents.contains("404") }
+    assert { lychee.run.exitCode != 0 }
+  }
+
+  """
+  Configuration failures remain diagnostic even when Lychee never creates a report.
+  """
+  configFailure: Void @check {
+    {
+      let source = self.source.withNewFile("lychee.toml", "not valid TOML")
+      Dagger.lychee(ws: source.asWorkspace, noCache: true).run.check
+      raise "expected invalid configuration to fail"
+    } rescue {
+      err: Error => {
+        assert { err.message.contains("Lychee failed (exit code") }
+        assert { err.message.contains("configuration") }
+      }
+    }
+  }
+
+  let source: Directory! {
+    Dagger.directory
+      .withNewFile("README.md", "[Relative](docs/ok.md)\n[Absolute](/docs/ok.md)\n[Missing](missing.md)")
+      .withNewFile("docs/ok.md", "# OK")
+  }
+
+  let container: Container! {
+    Dagger.container.from("lycheeverse/lychee:0.24.2")
+      .withServiceBinding("lychee-api", self.api)
+  }
+
+  let api: Service! {
+    Dagger.container.from("python:3.13-alpine")
+      .withWorkdir("/srv")
+      .withNewFile("ok", "ok")
+      .withExposedPort(8000)
+      .asService(["python", "-m", "http.server", "8000"])
+  }
+}

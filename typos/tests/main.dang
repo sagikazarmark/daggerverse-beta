@@ -1,0 +1,64 @@
+type Tests {
+  check: Void @check {
+    let source = Dagger.directory.withNewFile("README.md", "The receive function.\n")
+    assert { Dagger.typos(ws: source.asWorkspace).check == "" }
+  }
+
+  typosFailCheck: Void @check {
+    {
+      let source = Dagger.directory.withNewFile("README.md", "The recieve function.\n")
+      Dagger.typos(ws: source.asWorkspace).check
+      raise "expected typos to fail the check"
+    } rescue {
+      err: Error => {
+        assert { err.message.contains("exit code: 2") }
+      }
+    }
+  }
+
+  fix: Void @check {
+    let source = Dagger.directory.withNewFile("README.md", "The recieve function.\n")
+    let changes = Dagger.typos(ws: source.asWorkspace).fix
+
+    assert { changes.after.file("README.md").contents == "The receive function.\n" }
+    assert { changes.modifiedPaths == ["README.md"] }
+    assert { changes.addedPaths.isEmpty }
+    assert { changes.removedPaths.isEmpty }
+    assert { Dagger.typos(ws: changes.after.asWorkspace).check == "" }
+  }
+
+  configDiscovery: Void @check {
+    let source = Dagger.directory
+      .withNewFile("README.md", "The recieve function.\n")
+      .withNewFile("_typos.toml", "[default.extend-words]\nrecieve = 'recieve'\n")
+
+    assert { Dagger.typos(ws: source.asWorkspace).check == "" }
+    assert { Dagger.typos(ws: source.asWorkspace).fix.modifiedPaths.isEmpty }
+  }
+
+  constructorConfig: Void @check {
+    let source = Dagger.directory
+      .withNewFile("README.md", "The recieve function.\n")
+      .withNewFile("_typos.toml", "[default.extend-words]\nrecieve = 'recieve'\n")
+    let config = Dagger.directory.withNewFile("custom.toml", "[default.extend-words]\nrecieve = 'receive'\n").file("custom.toml")
+    let typos = Dagger.typos(ws: source.asWorkspace, config: config)
+    let changes = typos.fix
+
+    assert { changes.after.file("README.md").contents == "The receive function.\n" }
+    assert { changes.modifiedPaths == ["README.md"] }
+    assert { changes.addedPaths.isEmpty }
+    assert { Dagger.typos(ws: changes.after.asWorkspace, config: config).check == "" }
+  }
+
+  workspaceCwd: Void @check {
+    let source = Dagger.directory
+      .withNewFile("README.md", "The recieve function.\n")
+      .withNewFile("docs/README.md", "The recieve function.\n")
+    let changes = Dagger.typos(ws: source.asWorkspace("/docs")).fix
+
+    assert { changes.modifiedPaths == ["docs/README.md"] }
+    assert { changes.after.file("README.md").contents == "The recieve function.\n" }
+    assert { changes.after.file("docs/README.md").contents == "The receive function.\n" }
+    assert { Dagger.typos(ws: changes.after.asWorkspace("/docs")).check == "" }
+  }
+}

@@ -1,0 +1,70 @@
+"""
+Check and fix spelling mistakes in source code with typos.
+"""
+type Typos {
+  let source: Directory!
+  let container: Container!
+  let args: [String!]!
+
+  new(
+    ws: Workspace!,
+    """
+    Typos release version.
+    """
+    version: String! = "1.50.2",
+    """
+    Custom container with typos installed.
+    """
+    container: Container! = typosContainer(version),
+    """
+    Configuration file. When omitted, typos discovers configuration in the source.
+    """
+    config: File,
+  ) {
+    self.source = ws.directory("/", gitignore: true)
+    self.container = container
+      .withDirectory("/work/src", self.source)
+      .withWorkdir(Path("/work/src").join(Path(ws.cwd)).string)
+    self.args = ["typos"]
+
+    if (config != null) {
+      self.container = self.container.withMountedFile("/work/config/typos.toml", config)
+      self.args += ["--config", "/work/config/typos.toml"]
+    }
+
+    self
+  }
+
+  """
+  Check spelling in the workspace cwd and fail if typos are found.
+  """
+  check: String! @check {
+    self.container.withExec(self.args).stdout
+  }
+
+  """
+  Fix spelling in the workspace cwd and return the changes.
+  """
+  fix: Changeset! @generate {
+    self.container
+      .withExec(self.args + ["--write-changes"])
+      .directory("/work/src")
+      .changes(self.source)
+  }
+}
+
+let typosContainer(version: String!): Container! {
+  let container = Dagger.container.from("alpine:3.23.4")
+  let arch = case (container.platform) {
+    "linux/amd64" => "x86_64"
+    "linux/arm64" => "aarch64"
+    else => raise "unsupported platform: " + toString(container.platform)
+  }
+  let binary = Dagger.github
+    .release("v" + version.trimPrefix("v"), "crate-ci/typos")
+    .{ _.asset(`typos-${_.tagName}-${arch}-unknown-linux-musl.tar.gz`) }
+    .extracted
+    .file("typos")
+
+  container.withFile("/usr/local/bin/typos", binary)
+}

@@ -1,0 +1,77 @@
+"""
+Check and fix Markdown with rumdl.
+"""
+type Rumdl {
+  let source: Directory!
+  let container: Container!
+  let args: [String!]!
+
+  new(
+    ws: Workspace!,
+    """
+    rumdl release version.
+    """
+    version: String! = "0.2.77",
+    """
+    Custom container with rumdl installed.
+    """
+    container: Container! = rumdlContainer(version),
+    """
+    Configuration file. When omitted, rumdl discovers configuration in the source.
+    """
+    config: File,
+    """
+    Lint cache volume, stored outside the source directory.
+    """
+    cache: CacheVolume! = Dagger.cacheVolume("rumdl"),
+  ) {
+    self.source = ws.directory("/", gitignore: true)
+    self.container = container
+      .withMountedCache("/work/cache", cache, sharing: CacheSharingMode.LOCKED)
+      .withEnvVariable("RUMDL_CACHE_DIR", "/work/cache")
+      .withDirectory("/work/src", self.source)
+      .withWorkdir(Path("/work/src").join(Path(ws.cwd)).string)
+    self.args = ["rumdl"]
+
+    if (config != null) {
+      self.container = self.container.withMountedFile("/work/config/" + config.name, config)
+      self.args += ["--config", "/work/config/" + config.name]
+    }
+
+    self
+  }
+
+  """
+  Check Markdown in the workspace cwd and fail if lint issues are found.
+  """
+  check: String! @check {
+    self.container.withExec(self.args + ["check", "."]).stdout
+  }
+
+  """
+  Fix Markdown in the workspace cwd and return the changes.
+  Unfixable lint issues do not prevent returning fixes.
+  """
+  fix: Changeset! @generate {
+    self.container
+      .withExec(self.args + ["fmt", "."])
+      .directory("/work/src")
+      .changes(self.source)
+  }
+}
+
+let rumdlContainer(version: String!): Container! {
+  let container = Dagger.container.from("alpine:3.23.4")
+  let arch = case (container.platform) {
+    "linux/amd64" => "x86_64"
+    "linux/arm64" => "aarch64"
+    else => raise "unsupported platform: " + toString(container.platform)
+  }
+  let binary = Dagger.github
+    .release("v" + version.trimPrefix("v"), "rvben/rumdl")
+    .{ _.asset(`rumdl-${_.tagName}-${arch}-unknown-linux-musl.tar.gz`) }
+    .extracted
+    .file("rumdl")
+
+  container.withFile("/usr/local/bin/rumdl", binary)
+}

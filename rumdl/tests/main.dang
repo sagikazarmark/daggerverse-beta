@@ -1,0 +1,96 @@
+type Tests {
+  check: Void @check {
+    let source = Dagger.directory.withNewFile("README.md", "# Title\n")
+    Dagger.rumdl(ws: source.asWorkspace).check
+    null
+  }
+
+  lintIssuesFailCheck: Void @check {
+    {
+      let source = Dagger.directory.withNewFile("README.md", "# Title   \n")
+      Dagger.rumdl(ws: source.asWorkspace).check
+      raise "expected rumdl to fail the check"
+    } rescue {
+      err: Error => {
+        assert { err.message.contains("exit code: 1") }
+      }
+    }
+  }
+
+  fix: Void @check {
+    let source = Dagger.directory.withNewFile("README.md", "# Title   \n")
+    let changes = Dagger.rumdl(ws: source.asWorkspace).fix
+
+    assert { changes.after.file("README.md").contents == "# Title\n" }
+    assert { changes.modifiedPaths == ["README.md"] }
+    assert { changes.addedPaths.isEmpty }
+    assert { changes.removedPaths.isEmpty }
+    Dagger.rumdl(ws: changes.after.asWorkspace).check
+    null
+  }
+
+  unfixableIssues: Void @check {
+    let source = Dagger.directory.withNewFile("README.md", "# Title   \n\n## Duplicate\n\n## Duplicate\n")
+    let changes = Dagger.rumdl(ws: source.asWorkspace).fix
+
+    assert { changes.after.file("README.md").contents == "# Title\n\n## Duplicate\n\n## Duplicate\n" }
+    assert { changes.modifiedPaths == ["README.md"] }
+    assert { changes.addedPaths.isEmpty }
+  }
+
+  configDiscovery: Void @check {
+    let source = Dagger.directory
+      .withNewFile("README.md", "# Title   \n")
+      .withNewFile(".rumdl.toml", "[global]\ndisable = ['MD009']\n")
+
+    Dagger.rumdl(ws: source.asWorkspace).check
+    assert { Dagger.rumdl(ws: source.asWorkspace).fix.modifiedPaths.isEmpty }
+  }
+
+  constructorConfig: Void @check {
+    let source = Dagger.directory
+      .withNewFile("README.md", "# Title   \n")
+      .withNewFile(".rumdl.toml", "[global]\ndisable = ['MD009']\n")
+    let config = Dagger.directory.withNewFile("custom.toml", "[global]\nenable = ['MD009']\n").file("custom.toml")
+    let changes = Dagger.rumdl(ws: source.asWorkspace, config: config).fix
+
+    assert { changes.after.file("README.md").contents == "# Title\n" }
+    assert { changes.modifiedPaths == ["README.md"] }
+    assert { changes.addedPaths.isEmpty }
+    Dagger.rumdl(ws: changes.after.asWorkspace, config: config).check
+    null
+  }
+
+  workspaceCwd: Void @check {
+    let source = Dagger.directory
+      .withNewFile("README.md", "# Title   \n")
+      .withNewFile("docs/README.md", "# Title   \n")
+    let changes = Dagger.rumdl(ws: source.asWorkspace("/docs")).fix
+
+    assert { changes.modifiedPaths == ["docs/README.md"] }
+    assert { changes.after.file("README.md").contents == "# Title   \n" }
+    assert { changes.after.file("docs/README.md").contents == "# Title\n" }
+    assert { changes.addedPaths.isEmpty }
+    Dagger.rumdl(ws: changes.after.asWorkspace("/docs")).check
+    null
+  }
+
+  cacheVolume: Void @check {
+    let cache = Dagger.cacheVolume("rumdl-test-" + Random.string)
+    let source = Dagger.directory
+      .withNewFile("README.md", "# Title\n")
+      .withNewFile(".rumdl.toml", "[global]\ncache-dir = '/work/src/cache'\n")
+
+    Dagger.rumdl(ws: source.asWorkspace, cache: cache).check
+
+    # Verify rumdl actually writes lint results into the supplied volume.
+    Dagger.container.from("alpine:3.23.4")
+      .withMountedCache("/cache", cache, sharing: CacheSharingMode.LOCKED)
+      .withExec(["sh", "-c", "set -- /cache/*/*.json; test -f \"$1\""])
+      .sync
+
+    let changes = Dagger.rumdl(ws: source.asWorkspace, cache: cache).fix
+    assert { changes.addedPaths.isEmpty }
+    assert { changes.modifiedPaths.isEmpty }
+  }
+}

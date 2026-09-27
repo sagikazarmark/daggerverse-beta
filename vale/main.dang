@@ -1,0 +1,296 @@
+"""
+Lint prose with Vale, automatically preparing and caching styles before checking.
+"""
+type Vale {
+  let baseContainer: Container!
+  let source: Directory!
+  let dependencySource: Directory!
+  let packageSource: Directory!
+  let packages: [String!]!
+  let cwd: Path!
+  let configPath: Path!
+  let stylesPath: Path!
+  let autoSync: Boolean!
+
+  new(
+    ws: Workspace!,
+    """
+    Version (image tag) from the official Vale image repository.
+    """
+    version: String! = "v3.22.0",
+    """
+    Custom container with Vale installed.
+    """
+    container: Container! = Dagger.container.from("jdkato/vale:" + version),
+    """
+    Configuration path relative to the workspace root. Otherwise search upward from cwd.
+    """
+    config: String,
+    """
+    Automatically sync packages before linting. Disable for vendored/offline styles.
+    """
+    autoSync: Boolean! = true,
+    """
+    Respect gitignore when loading documents and local styles. Explicit config and local packages are always loaded.
+    """
+    gitignore: Boolean! = true,
+    """
+    Workspace-relative document include patterns. Configuration dependencies are loaded separately.
+    """
+    include: [String!],
+    """
+    Workspace-relative document exclude patterns.
+    """
+    exclude: [String!],
+  ) {
+    self.baseContainer = container
+    self.cwd = Path(ws.cwd.trimPrefix("/"))
+    self.autoSync = autoSync
+    self.source = ws.directory("/", gitignore: gitignore, include: include, exclude: exclude)
+
+    let configPath = if (config != null) {
+      workspacePath(Path(config), "config")
+    } else {
+      findConfig(ws, self.cwd)
+    }
+    self.configPath = Path("/work/src").join(configPath)
+    let root = ws.directory("/")
+    self.packageSource = root
+    let file = root.file(configPath.string)
+    let settings = inspectConfig(file)
+    self.packages = settings.packages
+    let dependencies = Dagger.directory.withFile(configPath.string, file)
+
+    if (settings.stylesPath == "") {
+      self.stylesPath = Path("/work/styles")
+      # --no-global also disables Vale's default styles search path. Make our
+      # isolated default explicit without changing paths in user configuration.
+      dependencies = dependencies.withNewFile(configPath.string, settings.configContents)
+    } else {
+      if (Path(settings.stylesPath).isAbsolute) {
+        raise "StylesPath must be relative to the configuration file"
+      }
+      let styles = workspacePath(configPath.parent.join(Path(settings.stylesPath)), "StylesPath")
+      if (styles.string == "." or styles.contains(configPath)) {
+        raise "StylesPath must be a separate directory, not the workspace or configuration directory"
+      }
+      self.stylesPath = Path("/work/src").join(styles)
+      let styleSource = ws.directory("/", gitignore: if (autoSync) gitignore else false)
+      if (styleSource.exists(styles.string, expectedType: ExistsType.DIRECTORY_TYPE)) {
+        dependencies = dependencies.withDirectory(styles.string, styleSource.directory(styles.string))
+      }
+    }
+
+    self.dependencySource = dependencies
+    self
+  }
+
+  let environment: Container! {
+    self.baseContainer
+      .withEnvVariable("VALE_STYLES_PATH", "/work/styles")
+      .withWorkdir(Path("/work/src").join(self.cwd).string)
+  }
+
+  """
+  Sync packages and return the complete styles tree, including package configuration.
+  Cached by configuration, local dependencies, and the Vale container; documents are not inputs.
+  """
+  sync: Directory! {
+    let result = self.environment
+      .withMountedDirectory("/work/src", withLocalPackages(self.dependencySource, self.packageSource, self.cwd, self.packages, []))
+      .withExec(["vale", "sync", "--config", self.configPath.string, "--no-global", "--plain-progress"], expect: ReturnType.ANY)
+    if (result.exitCode != 0) {
+      raise "Vale sync failed (exit code " + toString(result.exitCode) + ")\n" + result.stdout + result.stderr
+    }
+    result.directory(self.stylesPath.string)
+  }
+
+  """
+  Container with documents, configuration, and prepared styles mounted.
+  """
+  container: Container! {
+    self.environment
+      .withMountedDirectory("/work/src", self.source)
+      .withMountedFile(self.configPath.string, self.dependencySource.file(self.configPath.string.trimPrefix("/work/src/")))
+      .{
+        if (self.autoSync) {
+          _.withMountedDirectory(self.stylesPath.string, self.sync)
+        } else if (self.stylesPath.string == "/work/styles") {
+          _.withMountedDirectory("/work/styles", Dagger.directory)
+        } else {
+          let path = self.stylesPath.string.trimPrefix("/work/src/")
+          let styles = if (self.dependencySource.exists(path, expectedType: ExistsType.DIRECTORY_TYPE)) {
+            self.dependencySource.directory(path)
+          } else Dagger.directory
+          _.withMountedDirectory(self.stylesPath.string, styles)
+        }
+      }
+      .withDirectory("/work/out", Dagger.directory)
+  }
+
+  """
+  Lint files or directories, retaining reports on failure. Paths are relative to the workspace cwd.
+  """
+  run(
+    inputs: [String!]! = ["."],
+    glob: String,
+    minAlertLevel: AlertLevel,
+  ): Runner! {
+    let inputs = if (inputs.isEmpty) ["."] else inputs
+    let args = ["--config", self.configPath.string, "--no-global", "--no-color", "--no-wrap"]
+    if (glob != null) { args += ["--glob", glob] }
+    if (minAlertLevel != null) { args += ["--minAlertLevel", alertLevel(minAlertLevel)] }
+    let container = self.container
+    inputs.each { input =>
+      if (Path(input).isAbsolute) { raise "Vale input must be relative to the workspace cwd: " + input }
+      workspacePath(self.cwd.join(Path(input)), "input")
+    }
+    # Check paths inside the prepared filesystem. Vale otherwise treats missing paths as literal prose.
+    let validated = container.withExec([
+      "sh", "-c", """for input do
+        if [ ! -f "$input" ] && [ ! -d "$input" ]; then
+          printf 'Vale input does not exist: %s\n' "$input" >&2
+          exit 1
+        fi
+      done""", "vale-inputs",
+    ] + inputs, expect: ReturnType.ANY)
+    if (validated.exitCode != 0) { raise validated.stderr }
+    Runner(validated, args, inputs)
+  }
+
+  """
+  Check workspace prose. Vale errors fail; warnings and suggestions alone pass.
+  """
+  check(
+    inputs: [String!]! = ["."],
+    glob: String,
+    minAlertLevel: AlertLevel,
+  ): String! @check {
+    self.run(inputs, glob, minAlertLevel).check
+  }
+}
+
+type Runner {
+  let baseContainer: Container!
+  let args: [String!]!
+  let inputs: [String!]!
+  let container: Container!
+
+  new(baseContainer: Container!, args: [String!]!, inputs: [String!]!) {
+    self.baseContainer = baseContainer
+    self.args = args
+    self.inputs = inputs
+    self.container = self.exec("CLI")
+    self
+  }
+
+  let exec(format: String!): Container! {
+    self.baseContainer.withExec(
+      ["vale"] + self.args + ["--output", format, "--"] + self.inputs,
+      expect: ReturnType.ANY,
+      redirectStdout: "/work/out/report",
+      redirectStderr: "/work/out/stderr.log",
+    )
+  }
+
+  exitCode: Int! { self.container.exitCode }
+  report: File! { self.container.file("/work/out/report") }
+  stdout: String! { self.report.contents }
+  stderr: String! { self.stderrFile.contents }
+  stdoutFile: File! { self.report }
+  stderrFile: File! { self.container.file("/work/out/stderr.log") }
+  outputDirectory: Directory! { self.container.directory("/work/out") }
+
+  """
+  JSON report from a cached format-specific execution, available even on lint failures.
+  """
+  json: File! { self.exec("JSON").file("/work/out/report") }
+
+  """
+  One diagnostic per line, available even on lint failures.
+  """
+  line: File! { self.exec("line").file("/work/out/report") }
+
+  check: String! {
+    if (self.exitCode != 0) {
+      raise "Vale failed (exit code " + toString(self.exitCode) + ")\n" + self.stdout + self.stderr
+    }
+    self.stdout
+  }
+}
+
+enum AlertLevel {
+  SUGGESTION
+  WARNING
+  ERROR
+}
+
+let alertLevel(level: AlertLevel!): String! {
+  (case (level) {
+    AlertLevel.SUGGESTION => "suggestion"
+    AlertLevel.WARNING => "warning"
+    AlertLevel.ERROR => "error"
+  })!
+}
+
+let workspacePath(path: Path!, label: String!): Path! {
+  if (!Path(".").contains(path)) { raise label + " must remain within the workspace: " + path.string }
+  path
+}
+
+let findConfig(ws: Workspace!, cwd: Path!): Path! {
+  let root = ws.directory("/")
+  # Vale 3.22 searches each directory before moving to its parent, in this filename order.
+  [".vale", "_vale", "vale.ini", ".vale.ini", "_vale.ini"].each { name =>
+    let path = cwd.join(Path(name))
+    if (root.exists(path.string, expectedType: ExistsType.REGULAR_TYPE)) { return path }
+  }
+  if (cwd.string != ".") { return findConfig(ws, cwd.parent) }
+  raise "No Vale configuration found in the workspace; add .vale.ini or set config"
+}
+
+type SyncConfig {
+  stylesPath: String!
+  packages: [String!]!
+  configContents: String!
+}
+
+let inspectConfig(file: File!): SyncConfig! {
+  let helper = Dagger.container.from("golang:1.26.4-alpine")
+    .withWorkdir("/src")
+    .withMountedDirectory(".", Dagger.currentModule.source.directory("internal/config"))
+    .withEnvVariable("CGO_ENABLED", "0")
+    .withExec(["go", "build", "-o", "/out/vale-config", "."])
+    .file("/out/vale-config")
+  JSON.decode(
+    Dagger.container.from("alpine:3.23.4")
+      .withFile("/usr/local/bin/vale-config", helper)
+      .withMountedFile("/input/" + file.name, file)
+      .withExec(["vale-config", "/input/" + file.name])
+      .stdout,
+  ) :: SyncConfig!
+}
+
+let withLocalPackages(
+  dependencies: Directory!,
+  root: Directory!,
+  cwd: Path!,
+  packages: [String!]!,
+  visited: [String!]!,
+): Directory! {
+  packages.filter { _ != "" and !_.contains("://") }.each { package =>
+    if (Path(package).isAbsolute) { raise "Local Packages paths must be relative to the workspace cwd" }
+    let path = workspacePath(cwd.join(Path(package)), "local package").string
+    if (!visited.contains(path) and root.exists(path, expectedType: ExistsType.DIRECTORY_TYPE)) {
+      dependencies = dependencies.withDirectory(path, root.directory(path))
+      let config = Path(path).join(".vale.ini").string
+      if (root.exists(config, expectedType: ExistsType.REGULAR_TYPE)) {
+        dependencies = withLocalPackages(dependencies, root, cwd, inspectConfig(root.file(config)).packages, visited + [path])
+      }
+    } else if (!visited.contains(path) and root.exists(path, expectedType: ExistsType.REGULAR_TYPE)) {
+      dependencies = dependencies.withFile(path, root.file(path))
+      dependencies = withLocalPackages(dependencies, root, cwd, inspectConfig(root.file(path)).packages, visited + [path])
+    }
+  }
+  dependencies
+}

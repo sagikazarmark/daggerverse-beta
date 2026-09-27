@@ -1,0 +1,200 @@
+type Tests {
+  lintAndReports: Void @check {
+    let vale = Dagger.vale(ws: self.source.asWorkspace)
+    let runner = vale.run
+    if (runner.exitCode != 1) { raise runner.stdout + runner.stderr }
+    assert { runner.exitCode == 1 }
+    assert { runner.report.contents.contains("House.Terms") }
+    assert { runner.json.contents.contains(`"Severity": "error"`) }
+    assert { runner.line.contents.contains("House.Terms") }
+    assert { runner.stdoutFile.contents == runner.stdout }
+    assert { runner.outputDirectory.entries.contains("stderr.log") }
+    assert {
+      { vale.check; false } rescue {
+        err: Error => err.message.contains("Vale failed (exit code 1)") and err.message.contains("House.Terms")
+      }
+    }
+    assert { Dagger.vale(ws: self.source.withNewFile("README.md", "Use this.").asWorkspace).run.exitCode == 0 }
+  }
+
+  warningsAndFilters: Void @check {
+    let source = self.source.withNewFile(".vale.ini", """StylesPath = styles
+    MinAlertLevel = suggestion
+    [*.md]
+    BasedOnStyles = House
+    House.Terms = warning
+    """)
+    let vale = Dagger.vale(ws: source.asWorkspace)
+    assert { vale.run.exitCode == 0 }
+    assert { vale.check.contains("House.Terms") }
+    assert { !vale.run(minAlertLevel: ValeAlertLevel.ERROR).stdout.contains("House.Terms") }
+    assert { vale.run(glob: "*.txt").exitCode == 0 }
+  }
+
+  nestedConfigAndPackages: Void @check {
+    let source = self.source
+      .withoutFile(".vale.ini")
+      .withNewFile(".vale.ini", "invalid root config")
+      .withNewFile("docs/vale.ini", """StylesPath = ../styles
+      Packages = ../packages/Bundle
+      MinAlertLevel = suggestion
+      [*.md]
+      BasedOnStyles = House
+      """)
+      .withNewFile("docs/README.md", "utilize this")
+      .withNewFile("packages/Bundle/.vale.ini", """[*.md]
+      House.Terms = warning
+      """)
+      .withNewFile("packages/Bundle/styles/config/vocabularies/Bundle/accept.txt", "Dagger\n")
+    let vale = Dagger.vale(ws: source.asWorkspace("/docs"))
+    assert { vale.container.workdir == "/work/src/docs" }
+    assert { vale.sync.file(".vale-config/0-Bundle.ini").contents.contains("House.Terms = warning") }
+    assert { vale.sync.file("config/vocabularies/Bundle/accept.txt").contents == "Dagger\n" }
+    assert { vale.run.exitCode == 0 }
+    assert { vale.check.contains("House.Terms") }
+    assert { source.file("packages/Bundle/.vale.ini").contents.contains("House.Terms") }
+    assert { Dagger.vale(ws: source.asWorkspace, config: "docs/vale.ini", autoSync: false).run.exitCode == 1 }
+  }
+
+  vendoredAndIgnored: Void @check {
+    let source = self.source
+      .withNewFile(".gitignore", "styles/\nignored.md\n")
+      .withNewFile("ignored.md", "utilize this")
+      .withNewFile("README.md", "Use this")
+    let vale = Dagger.vale(ws: source.asWorkspace, autoSync: false, include: ["*.md"], exclude: ["ignored.md"])
+    assert { vale.run.exitCode == 0 }
+    assert { vale.container.file("/work/src/styles/House/Terms.yml").contents.contains("utilize") }
+    assert { !vale.container.directory("/work/src").exists("ignored.md") }
+    assert { vale.container.file("/work/src/.vale.ini").contents.contains("StylesPath") }
+  }
+
+  defaultStyles: Void @check {
+    let source = Dagger.directory
+      .withNewFile(".vale.ini", "[*.md]\nBasedOnStyles = Vale\nVale.Spelling = NO\n")
+      .withNewFile("README.md", "Hello world.")
+    assert { Dagger.vale(ws: source.asWorkspace).run.exitCode == 0 }
+    assert { Dagger.vale(ws: source.asWorkspace, autoSync: false).run.exitCode == 0 }
+    let empty = source.withNewFile(".vale.ini", "StylesPath =\n" + source.file(".vale.ini").contents)
+    assert { Dagger.vale(ws: empty.asWorkspace).run.exitCode == 0 }
+    assert { Dagger.vale(ws: empty.asWorkspace, autoSync: false).run.exitCode == 0 }
+  }
+
+  inlineCommentParsing: Void @check {
+    let source = self.source
+      .withDirectory("styles#local", self.source.directory("styles"))
+      .withoutDirectory("styles")
+      .withNewFile(".vale.ini", "StylesPath = styles#local\n[*.md]\nBasedOnStyles = House\n")
+    assert { Dagger.vale(ws: source.asWorkspace).run.exitCode == 1 }
+    assert { Dagger.vale(ws: source.asWorkspace, autoSync: false).run.exitCode == 1 }
+  }
+
+  """
+  Local zip packages and transitive directory packages are explicit inputs even when ignored.
+  """
+  localArchives: Void @check {
+    let archive = Dagger.container.from("python:3.13-alpine")
+      .withExec(["python", "-c", "from zipfile import ZipFile; z = ZipFile('/Bundle.zip', 'w'); z.writestr('Bundle/.vale.ini', 'Packages = packages/House\\n[*.md]\\nBasedOnStyles = House\\n'); z.close()"])
+      .file("/Bundle.zip")
+    let source = Dagger.directory
+      .withNewFile(".gitignore", "packages/\n")
+      .withNewFile(".vale.ini", "StylesPath = styles\nPackages = packages/Bundle.zip\n[*.md]\nBasedOnStyles = House\n")
+      .withFile("packages/Bundle.zip", archive)
+      .withDirectory("packages/House", self.source.directory("styles/House"))
+      .withNewFile("README.md", "utilize this")
+    let vale = Dagger.vale(ws: source.asWorkspace)
+    assert { vale.run.exitCode == 1 }
+    assert { vale.sync.exists(".vale-config/0-Bundle.ini") }
+    assert { vale.sync.file("House/Terms.yml").contents.contains("utilize") }
+    assert { Dagger.vale(ws: source.asWorkspace, autoSync: false).sync.digest == vale.sync.digest }
+    let edited = source.withNewFile("packages/House/Terms.yml", "extends: existence\nmessage: Avoid this.\nlevel: error\ntokens:\n  - other\n")
+    assert { Dagger.vale(ws: edited.asWorkspace).run.exitCode == 0 }
+  }
+
+  """
+  Document filters do not hide configuration assets, and excluded changes do not change lint inputs.
+  """
+  filteredInputs: Void @check {
+    let source = self.source.withNewFile("ignored.txt", "before").withNewFile("$good.md", "Use this.")
+    let first = Dagger.vale(ws: source.asWorkspace, include: ["*.md"])
+    let second = Dagger.vale(ws: source.withNewFile("ignored.txt", "after").asWorkspace, include: ["*.md"])
+    assert { first.container.directory("/work/src").digest == second.container.directory("/work/src").digest }
+    assert { first.run(inputs: ["$good.md"]).exitCode == 0 }
+    assert { first.run(inputs: []).exitCode == 1 }
+  }
+
+  syncFailure: Void @check {
+    let source = self.source.withNewFile(".vale.ini", "StylesPath = styles\nPackages = ./missing.zip\n[*.md]\nBasedOnStyles = House\n")
+    assert {
+      { Dagger.vale(ws: source.asWorkspace).check; false } rescue {
+        err: Error => err.message.contains("Vale sync failed") and err.message.contains("missing.zip")
+      }
+    }
+  }
+
+  missingInputsAndConfig: Void @check {
+    assert {
+      { Dagger.vale(ws: self.source.asWorkspace).run(inputs: ["missing.md"]).exitCode; false } rescue {
+        err: Error => err.message.contains("Vale input does not exist: missing.md")
+      }
+    }
+    assert {
+      { Dagger.vale(ws: self.source.withoutFile(".vale.ini").asWorkspace).check; false } rescue {
+        err: Error => err.message.contains("No Vale configuration found")
+      }
+    }
+    let invalid = self.source.withNewFile("styles/House/Terms.yml", "extends: nonexistent\n")
+    let runner = Dagger.vale(ws: invalid.asWorkspace).run
+    assert { runner.exitCode != 0 }
+    assert { runner.stderr != "" }
+    assert { runner.report.contents == runner.stdout }
+  }
+
+  """
+  A controlled package server counts downloads. Document edits reuse preparation;
+  style/config edits rerun it, and removed packages leave no stale installed files.
+  """
+  cachedDownloads: Void @check @cache(policy: FunctionCachePolicy.Never) {
+    let server = Dagger.container.from("python:3.13-alpine")
+      .withFile("/server.py", Dagger.currentModule.source.file("testdata/packages.py"))
+      .withEnvVariable("TEST_RUN", Random.string)
+      .withExposedPort(8000)
+      .asService(["python", "/server.py"])
+      .start
+    let container = Dagger.container.from("jdkato/vale:v3.22.0").withServiceBinding("packages", server)
+    let config = """StylesPath = styles
+    Packages = http://packages:8000/Remote.zip
+    [*.md]
+    BasedOnStyles = Remote
+    """
+    let source = Dagger.directory.withNewFile(".vale.ini", config).withNewFile("README.md", "utilize this")
+    let first = Dagger.vale(ws: source.asWorkspace, container: container)
+    assert { first.run.exitCode == 1 }
+    assert { downloads(container) == "1" }
+    let second = Dagger.vale(ws: source.withNewFile("README.md", "Use this").asWorkspace, container: container)
+    assert { second.run.exitCode == 0 }
+    assert { downloads(container) == "1" }
+    let third = Dagger.vale(ws: source.withNewFile("styles/config/vocabularies/Local/accept.txt", "Dagger").asWorkspace, container: container)
+    assert { third.run.exitCode == 1 }
+    assert { downloads(container) == "2" }
+    let fourth = Dagger.vale(ws: source.withNewFile(".vale.ini", config + "\nRemote.Terms = warning\n").asWorkspace, container: container)
+    if (fourth.run.exitCode != 0) { raise fourth.run.stderr + fourth.run.stdout }
+    assert { fourth.run.exitCode == 0 }
+    assert { downloads(container) == "3" }
+    let removed = Dagger.vale(ws: source.withNewFile(".vale.ini", "StylesPath = styles\n[*.md]\nBasedOnStyles = Vale\nVale.Spelling = NO\n").asWorkspace, container: container)
+    assert { !removed.sync.exists("Remote") }
+    assert { !removed.sync.exists(".vale-config/0-Remote.ini") }
+    assert { downloads(container) == "3" }
+  }
+
+  let source: Directory! {
+    Dagger.directory
+      .withNewFile(".vale.ini", "StylesPath = styles\nMinAlertLevel = suggestion\n[*.md]\nBasedOnStyles = House\n")
+      .withNewFile("styles/House/Terms.yml", "extends: existence\nmessage: Use 'use' instead.\nlevel: error\ntokens:\n  - utilize\n")
+      .withNewFile("README.md", "utilize this")
+  }
+}
+
+let downloads(container: Container!): String! @cache(policy: FunctionCachePolicy.Never) {
+  container.withEnvVariable("QUERY", Random.string)
+    .withExec(["wget", "-qO-", "http://packages:8000/count"]).stdout.trimSpace
+}

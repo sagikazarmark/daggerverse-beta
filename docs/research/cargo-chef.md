@@ -4,6 +4,11 @@ Research date: 2026-09-05
 
 ## Conclusion
 
+> Update (2026-10-02): every cargo command, the cook included, now runs from the
+> Cargo root (see rust-collections.md, "Target matrix"), so the cook no longer
+> passes `--manifest-path`; the cargo config and toolchain files of the Cargo
+> root and its parents are placed in the container by `apply`, not by the cook.
+
 **Adopt cargo-chef, optional and off by default, as a linear step in the
 existing container chain.** It fills the gap left when the shared `/target`
 cache volume was dropped (`63dd5d1`, after `ce70590` had to serialize it with

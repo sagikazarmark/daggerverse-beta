@@ -37,20 +37,28 @@ type Tests {
     assert { output == "ok|yes|hello world|a=b|1234567890" }
   }
 
-  build: Directory! @check {
-    Dagger.rust(ws: realProject.asWorkspace, version: rustVersion).build
+  build: Void @check {
+    let artifacts = Dagger.rust(ws: realProject.asWorkspace, version: rustVersion).build
+
+    assert { artifacts.entries.contains("cargo-artifacts") }
   }
 
-  check: String! @check {
-    Dagger.rust(ws: realProject.asWorkspace, version: rustVersion).check
+  check: Void @check {
+    let output = Dagger.rust(ws: realProject.asWorkspace, version: rustVersion).check
+
+    assert { output.contains("Finished") }
   }
 
-  test: String! @check {
-    Dagger.rust(ws: realProject.asWorkspace, version: rustVersion).test
+  test: Void @check {
+    let output = Dagger.rust(ws: realProject.asWorkspace, version: rustVersion).test
+
+    assert { output.contains("test result: ok") }
   }
 
-  clippy: String! @check {
-    Dagger.rust(ws: realProject.asWorkspace, version: rustVersion).clippy
+  clippy: Void @check {
+    let output = Dagger.rust(ws: realProject.asWorkspace, version: rustVersion).clippy
+
+    assert { output.contains("Finished") }
   }
 
   """
@@ -64,24 +72,13 @@ type Tests {
     assert { output.contains("Finished") }
   }
 
-  """
-  `toolchain: "msrv"` runs everything on the manifest's rust-version.
-  """
-  msrv: Void @check {
-    let output = Dagger
-      .rust(ws: featuresProject.asWorkspace, version: rustVersion, toolchain: "msrv")
-      .container
-      .withExec(["rustc", "--version"])
-      .stdout
-
-    assert { output.contains("rustc 1.88.") }
-  }
-
   chef: ChefTests! { ChefTests }
 
   hack: HackTests! { HackTests }
 
   nextest: NextestTests! { NextestTests }
+
+  collections: CollectionsTests! { CollectionsTests }
 }
 
 let hasTargetDir(container: Container!): Boolean! {
@@ -128,12 +125,16 @@ type ChefTests {
     assert { artifacts.entries.contains("cargo-artifacts") }
   }
 
-  test: String! @check {
-    Dagger.rust(ws: realProject.asWorkspace, version: rustVersion, chef: true).test
+  test: Void @check {
+    let output = Dagger.rust(ws: realProject.asWorkspace, version: rustVersion, chef: true).test
+
+    assert { output.contains("test result: ok") }
   }
 
-  clippy: String! @check {
-    Dagger.rust(ws: realProject.asWorkspace, version: rustVersion, chef: true).clippy
+  clippy: Void @check {
+    let output = Dagger.rust(ws: realProject.asWorkspace, version: rustVersion, chef: true).clippy
+
+    assert { output.contains("Finished") }
   }
 }
 

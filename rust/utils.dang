@@ -39,3 +39,17 @@ let arch(platform: Platform! = Dagger.defaultPlatform): String! {
     else => raise "unsupported platform: " + toString(platform)
   }
 }
+
+"""
+The file at a path in the workspace (e.g. "/.cargo/audit.toml"), or null when there is none.
+Only that file is loaded.
+"""
+let workspaceFile(ws: Workspace!, path: String!): File {
+  let relative = path.trimPrefix("/")
+  let dir = ws.directory("/", include: [relative])
+  if (!dir.exists(relative, expectedType: ExistsType.REGULAR_TYPE)) {
+    return null
+  }
+
+  dir.file(relative)
+}

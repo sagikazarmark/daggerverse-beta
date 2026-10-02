@@ -57,8 +57,7 @@ type RustCross {
     """
     noMacosSdk: Boolean! = false,
     """
-    Toolchain to install and use instead of the base container's (rustup name, e.g. `1.85`, `nightly`),
-    or `msrv` for the project's `package.rust-version`.
+    Toolchain to install and use instead of the base container's (rustup name, e.g. `1.85`, `nightly`).
 
     Takes precedence over a rust-toolchain.toml.
     """

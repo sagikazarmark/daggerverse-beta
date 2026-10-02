@@ -1,9 +1,12 @@
 type ContainerTests {
-  defaults: Container! @check {
+  defaults: Void @check {
     Dagger
       .rustEnvironment(ws: Dagger.directory.asWorkspace)
       .apply(rustContainer)
       .withExec(["cargo", "version"])
+      .sync
+
+    null
   }
 
   cargoHomeDefault: Void @check {
@@ -30,17 +33,23 @@ type ContainerTests {
     assert { container.envVariable("CARGO_HOME") == "/usr/local/cargo" }
   }
 
-  emptyWorkspace: Container! @check {
+  emptyWorkspace: Void @check {
     Dagger
       .rustEnvironment(ws: Dagger.directory.asWorkspace)
       .apply(rustContainer)
       .withExec(["cargo", "version"])
+      .sync
+
+    null
   }
 
-  realProjectSource: Container! @check {
+  realProjectSource: Void @check {
     Dagger
       .rustEnvironment(ws: realProject.asWorkspace)
       .apply(rustContainer)
       .withExec(["cargo", "version"])
+      .sync
+
+    null
   }
 }

@@ -1,0 +1,12 @@
+[package]
+name = "app"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+greeting = { path = "../greeting" }
+
+# A native application: only checked for the host target.
+[[package.metadata.dagger.modules]]
+name = "rust"
+targets = ["host"]

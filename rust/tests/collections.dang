@@ -1,0 +1,470 @@
+"""
+Virtual workspace with three members: `app` (two binaries, depending on `greeting`, checked for
+the host target only), `greeting` (a library with a unit test, a doctest, two integration tests
+(`api`, `other`) and an unformatted example (`hello`)) and `broken` (a failing test).
+"""
+let workspaceProject: Directory! {
+  Dagger.currentModule.source.directory("fixtures/workspace")
+}
+
+let wasm: String! = "wasm32-unknown-unknown"
+
+let workspaceRust(cwd: String! = "", targets: [String!]! = []): Rust! {
+  Dagger.rust(ws: workspaceProject.asWorkspace(cwd: cwd), version: rustVersion, targets: targets)
+}
+
+"""
+Packages for the host target.
+"""
+let hostPackages(cwd: String! = ""): RustPackages! {
+  workspaceRust(cwd: cwd).targets.get(key: "host").packages
+}
+
+let wasmPackages: RustPackages! {
+  workspaceRust(targets: [wasm]).targets.get(key: wasm).packages
+}
+
+"""
+The fixture with a rust-toolchain.toml listing the wasm target.
+"""
+let toolchainProject: Directory! {
+  workspaceProject.withNewFile(
+    "rust-toolchain.toml",
+    "[toolchain]\nchannel = \"1.96.0\"\ntargets = [\"" + wasm + "\"]\n",
+  )
+}
+
+"""
+The fixture with this module's entry in a manifest (the workspace root's, or a member's).
+"""
+let configuredProject(manifest: String!, header: String!, section: String!, entry: String!): Directory! {
+  workspaceProject.withNewFile(
+    manifest,
+    header + "\n[[" + section + ".metadata.dagger.modules]]\nname = \"rust\"\n" + entry + "\n",
+  )
+}
+
+let rootHeader: String! = "[workspace]\nmembers = [\"crates/*\"]\nresolver = \"2\"\n\n[workspace.package]\nversion = \"0.1.0\"\nedition = \"2021\"\n"
+
+let memberHeader(name: String!): String! {
+  "[package]\nname = \"" + name + "\"\nversion.workspace = true\nedition.workspace = true\n"
+}
+
+let raises(&block: Void): Boolean! {
+  { block; false } rescue {
+    err: Error => true
+  }
+}
+
+type CollectionsTests {
+  """
+  Without configured targets, the host is the only target.
+  """
+  hostTarget: Void @check {
+    assert { workspaceRust.targets.keys == ["host"] }
+  }
+
+  """
+  Package keys are the workspace members, from cargo metadata.
+  """
+  keys: Void @check {
+    assert { hostPackages.keys == ["app", "greeting", "broken"] }
+  }
+
+  """
+  From a member's directory, the collection only has the packages at or below it.
+  """
+  keysBelowCwd: Void @check {
+    assert { hostPackages(cwd: "crates/greeting").keys == ["greeting"] }
+  }
+
+  """
+  A package knows its directory, target and binaries.
+  """
+  package: Void @check {
+    let app = hostPackages.get(key: "app")
+
+    assert { app.path == "crates/app" }
+    assert { app.target == "host" }
+    assert { app.binaries.keys == ["app", "tool"] }
+    assert { hostPackages.get(key: "greeting").binaries.keys == [] }
+  }
+
+  """
+  Checks run on the selected packages only: the failing member is left out.
+  """
+  testSubset: Void @check {
+    assert { hostPackages.subset(keys: ["app", "greeting"]).batch.test.pass }
+  }
+
+  """
+  The whole collection includes the failing member.
+  """
+  testAll: Void @check {
+    assert { !hostPackages.batch.test.pass }
+  }
+
+  """
+  A single package runs its own checks.
+  """
+  packageChecks: Void @check {
+    assert { hostPackages.get(key: "greeting").test.pass }
+    assert { hostPackages.get(key: "greeting").clippy.pass }
+    assert { !hostPackages.get(key: "broken").test.pass }
+  }
+
+  """
+  A binary builds on its own and runs.
+  """
+  binary: Void @check {
+    let tool = hostPackages.get(key: "app").binaries.get(key: "tool").build
+
+    let output = Dagger
+      .container
+      .from("rust:" + rustVersion)
+      .withFile("/usr/local/bin/tool", tool)
+      .withExec(["tool"])
+      .stdout
+
+    assert { output == "Hello, tool!\n" }
+  }
+
+  """
+  The selected binaries build with one cargo command, into one directory.
+  """
+  binaries: Void @check {
+    let entries = hostPackages.get(key: "app").binaries.batch.build.entries
+
+    assert { entries.contains("app") }
+    assert { entries.contains("tool") }
+  }
+
+  """
+  A package knows its integration tests and examples.
+  """
+  testsAndExamples: Void @check {
+    let greeting = hostPackages.get(key: "greeting")
+
+    assert { greeting.integrationTests.keys == ["api", "other"] }
+    assert { greeting.examples.keys == ["hello"] }
+    assert { hostPackages.get(key: "app").integrationTests.keys == [] }
+  }
+
+  """
+  Only the selected integration tests run.
+  """
+  integrationTests: Void @check {
+    let output = hostPackages
+      .get(key: "greeting")
+      .integrationTests
+      .subset(keys: ["api"])
+      .batch
+      .run
+
+    assert { output.contains("tests/api.rs") }
+    assert { !output.contains("tests/other.rs") }
+    assert { !output.contains("Doc-tests") }
+  }
+
+  """
+  One integration test runs on its own.
+  """
+  integrationTest: Void @check {
+    let output = hostPackages.get(key: "greeting").integrationTests.get(key: "other").run
+
+    assert { output.contains("greets_from_other ... ok") }
+    assert { !output.contains("tests/api.rs") }
+  }
+
+  """
+  An example builds and runs with arguments.
+  """
+  example: Void @check {
+    let hello = hostPackages.get(key: "greeting").examples.get(key: "hello")
+
+    assert { hello.run(args: ["dagger"]) == "Hello, dagger!\n" }
+    assert { hello.build.name == "hello" }
+    assert { hostPackages.get(key: "greeting").examples.batch.build.entries.contains("hello") }
+  }
+
+  """
+  The package shortcut reaches the same items without going through the targets.
+  """
+  packageShortcut: Void @check {
+    let greeting = workspaceRust.package(name: "greeting")
+
+    assert { greeting.path == "crates/greeting" }
+    assert { greeting.integrationTests.get(key: "other").run.contains("greets_from_other ... ok") }
+  }
+
+  """
+  The shortcut takes a target, and rejects the ones a package is not checked for.
+  """
+  packageShortcutTarget: Void @check {
+    let rust = workspaceRust(targets: [wasm])
+
+    assert { rust.package(name: "greeting", target: wasm).examples.get(key: "hello").build.name == "hello.wasm" }
+    assert { raises { rust.package(name: "app", target: wasm).path; null } }
+    assert { raises { rust.package(name: "greeting", target: "wasm32-wasip1").path; null } }
+  }
+
+  """
+  fmt formats the code (the example is not formatted).
+  """
+  fmt: Void @check {
+    let changes = workspaceRust.fmt
+
+    assert { changes.modifiedPaths.contains("crates/greeting/examples/hello.rs") }
+  }
+
+  """
+  Outside a Cargo project, there is nothing to check: no packages, audit passes, nothing to format.
+  """
+  noProject: Void @check {
+    let rust = Dagger.rust(
+      ws: Dagger.directory.withNewFile("README.md", "Not Rust\n").asWorkspace,
+      version: rustVersion,
+    )
+
+    assert { rust.targets.get(key: "host").packages.keys == [] }
+    assert { rust.audit.pass }
+    assert { rust.fmt.isEmpty }
+  }
+
+  """
+  Root functions run from the Cargo root, selecting what cargo would from the current directory:
+  the member there, or the workspace default from a directory that is not a member.
+  """
+  rootFunctionsFromCwd: Void @check {
+    let output = workspaceRust(cwd: "crates/greeting").test
+
+    assert { output.contains("greeting") }
+    assert { !output.contains("broken") }
+    assert { raises { workspaceRust(cwd: "crates").test; null } }
+  }
+
+  """
+  Checks fail on broken code: a compile error fails check, clippy and build; a broken doc link
+  fails doc.
+  """
+  failures: Void @check {
+    let compileError = workspaceProject.withNewFile("crates/greeting/src/lib.rs", "pub fn broken() -> u32 { \"x\" }\n")
+    let packages = Dagger
+      .rust(ws: compileError.asWorkspace, version: rustVersion)
+      .targets
+      .get(key: "host")
+      .packages
+      .subset(keys: ["greeting"])
+      .batch
+
+    assert { !packages.check.pass }
+    assert { !packages.clippy.pass }
+    assert { !packages.build.pass }
+
+    let docWarning = workspaceProject.withNewFile("crates/greeting/src/lib.rs", "/// See [`missing`].\npub fn documented() {}\n")
+
+    assert {
+      !Dagger
+        .rust(ws: docWarning.asWorkspace, version: rustVersion)
+        .targets
+        .get(key: "host")
+        .packages
+        .subset(keys: ["greeting"])
+        .batch
+        .doc
+        .pass
+    }
+  }
+
+  config: ConfigTests! { ConfigTests }
+
+  cross: CrossTests! { CrossTests }
+}
+
+type ConfigTests {
+  """
+  Without a Cargo.lock, the Cargo root is still the workspace's (the manifest with [workspace]),
+  also from a member's directory: its configuration applies.
+  """
+  noLockfile: Void @check {
+    let project = configuredProject("Cargo.toml", rootHeader, "workspace", "targets = [\"" + wasm + "\"]")
+      .withoutFile("Cargo.lock")
+
+    let rust = Dagger.rust(ws: project.asWorkspace(cwd: "crates/greeting"), version: rustVersion)
+
+    assert { rust.targets.keys == ["host", wasm] }
+    assert { rust.targets.get(key: "host").packages.keys == ["greeting"] }
+  }
+
+  """
+  A nested crate with its own [workspace] is its own Cargo root; a crate that is neither a member
+  nor its own workspace is an error, not a silent run of the outer workspace.
+  """
+  nestedCrates: Void @check {
+    let project = workspaceProject
+      .withNewFile("fuzz/Cargo.toml", "[package]\nname = \"fuzz\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[workspace]\n")
+      .withNewFile("fuzz/src/lib.rs", "")
+      .withNewFile("tools/x/Cargo.toml", "[package]\nname = \"x\"\nversion = \"0.1.0\"\nedition = \"2021\"\n")
+      .withNewFile("tools/x/src/lib.rs", "")
+
+    let fuzz = Dagger.rust(ws: project.asWorkspace(cwd: "fuzz"), version: rustVersion)
+
+    assert { fuzz.targets.get(key: "host").packages.keys == ["fuzz"] }
+    assert { raises { Dagger.rust(ws: project.asWorkspace(cwd: "tools/x"), version: rustVersion).test; null } }
+  }
+
+  """
+  nextest is detected from its configuration at the Cargo root, also from a member's directory.
+  """
+  nextestFromMember: Void @check {
+    let project = workspaceProject.withNewFile(".config/nextest.toml", "[profile.default]\n")
+
+    assert { Dagger.rust(ws: project.asWorkspace(cwd: "crates/greeting"), version: rustVersion).nextest }
+    assert { !workspaceRust(cwd: "crates/greeting").nextest }
+  }
+
+  """
+  Targets configured in the workspace manifest apply from a member's directory too.
+  """
+  fromMember: Void @check {
+    let project = configuredProject("Cargo.toml", rootHeader, "workspace", "targets = [\"" + wasm + "\"]")
+
+    let rust = Dagger.rust(ws: project.asWorkspace(cwd: "crates/greeting"), version: rustVersion)
+
+    assert { rust.targets.keys == ["host", wasm] }
+  }
+
+  """
+  A member listing a target that is not configured is an error, not a silently dropped package.
+  """
+  unconfiguredTarget: Void @check {
+    let project = configuredProject(
+      "crates/broken/Cargo.toml",
+      memberHeader("broken"),
+      "package",
+      "targets = [\"wasm32-wasip1\"]",
+    )
+
+    let packages = Dagger.rust(ws: project.asWorkspace, version: rustVersion).targets.get(key: "host").packages
+
+    assert { raises { packages.keys; null } }
+  }
+
+  """
+  A member listing no targets is an error too.
+  """
+  noTargets: Void @check {
+    let project = configuredProject("crates/broken/Cargo.toml", memberHeader("broken"), "package", "targets = []")
+
+    let packages = Dagger.rust(ws: project.asWorkspace, version: rustVersion).targets.get(key: "host").packages
+
+    assert { raises { packages.keys; null } }
+  }
+
+  """
+  The host's own triple stands for host, in a member's list and in the configured targets.
+  """
+  hostTriple: Void @check {
+    let host = workspaceRust
+      .container
+      .withExec(["rustc", "-vV"])
+      .stdout
+      .split("\n")
+      .filter { line => line.hasPrefix("host: ") }
+      .map { line => line.trimPrefix("host: ").trimSpace }
+      .join("")
+
+    let project = configuredProject(
+      "crates/greeting/Cargo.toml",
+      memberHeader("greeting"),
+      "package",
+      "targets = [\"" + host + "\"]",
+    )
+
+    let rust = Dagger.rust(ws: project.asWorkspace, version: rustVersion, targets: [host, wasm])
+
+    assert { rust.targets.keys == ["host", wasm] }
+    assert { rust.targets.get(key: wasm).packages.keys == ["broken"] }
+    assert { rust.targets.get(key: "host").packages.keys == ["app", "greeting", "broken"] }
+  }
+}
+
+type CrossTests {
+  """
+  Configured targets are keys after the host.
+  """
+  keys: Void @check {
+    assert { workspaceRust(targets: [wasm]).targets.keys == ["host", wasm] }
+  }
+
+  """
+  A member that configures `targets` only has the targets it lists.
+  """
+  sparse: Void @check {
+    assert { wasmPackages.keys == ["greeting", "broken"] }
+  }
+
+  """
+  Checks run with `--target`.
+  """
+  check: Void @check {
+    assert { wasmPackages.batch.check.pass }
+    assert { wasmPackages.batch.clippy.pass }
+  }
+
+  """
+  Tests are built for the target, not run: the failing test does not fail it.
+  """
+  test: Void @check {
+    assert { wasmPackages.batch.test.pass }
+  }
+
+  """
+  Executables for the target get its file name.
+  """
+  example: Void @check {
+    let file = wasmPackages.get(key: "greeting").examples.get(key: "hello").build
+
+    assert { file.name == "hello.wasm" }
+  }
+
+  """
+  Integration tests only run on the host: other targets have none.
+  """
+  noIntegrationTests: Void @check {
+    let greeting = wasmPackages.get(key: "greeting")
+
+    assert { greeting.integrationTests.keys == [] }
+    assert { greeting.examples.keys == ["hello"] }
+  }
+
+  """
+  Targets listed in rust-toolchain.toml are keys, installed by rustup with the toolchain.
+  """
+  toolchainFile: Void @check {
+    let rust = Dagger.rust(ws: toolchainProject.asWorkspace, version: rustVersion)
+
+    assert { rust.targets.keys == ["host", wasm] }
+    assert { rust.targets.get(key: wasm).packages.subset(keys: ["greeting"]).batch.check.pass }
+  }
+
+  """
+  With the toolchain overridden, rust-toolchain.toml is ignored (as rustup does): only the
+  configured targets are keys.
+  """
+  toolchainFileOverridden: Void @check {
+    let rust = Dagger.rust(ws: toolchainProject.asWorkspace, version: rustVersion, toolchain: "1.96.0")
+
+    assert { rust.targets.keys == ["host"] }
+
+    let configured = Dagger.rust(
+      ws: toolchainProject.asWorkspace,
+      version: rustVersion,
+      toolchain: "1.96.0",
+      targets: [wasm],
+    )
+
+    assert { configured.targets.keys == ["host", wasm] }
+    assert { configured.targets.get(key: wasm).packages.subset(keys: ["greeting"]).batch.check.pass }
+  }
+}

@@ -1,0 +1,9 @@
+[package]
+name = "greeting"
+version.workspace = true
+edition.workspace = true
+
+# A library example: not runnable, so not an example key.
+[[example]]
+name = "plugin"
+crate-type = ["cdylib"]

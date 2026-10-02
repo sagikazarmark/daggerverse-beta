@@ -199,10 +199,16 @@ type CargoCommand {
     the cargo profile goes through `--cargo-profile`, `--profile` being nextest's own).
     """
     nextest: Boolean! = false,
+    """
+    Compile the tests, but don't run them (`--no-run`).
+    """
+    noRun: Boolean! = false,
   ): [String!]! {
     let _args = if (nextest) { ["cargo", "nextest", "run"] } else { ["cargo", "test"] }
 
     if (noFailFast) { _args += ["--no-fail-fast"] }
+
+    if (noRun) { _args += ["--no-run"] }
 
     _args += self.coreArgs(
       package,
@@ -253,6 +259,7 @@ type CargoCommand {
     noDefaultFeatures: Boolean! = false,
     release: Boolean! = false,
     profile: String! = "",
+    target: [String!]! = [],
   ): [String!]! {
     let args = ["cargo", "doc"]
 
@@ -273,7 +280,7 @@ type CargoCommand {
       [],
       false,
       false,
-      [],
+      target,
       allFeatures,
       feature,
       noDefaultFeatures,

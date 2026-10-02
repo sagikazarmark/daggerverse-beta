@@ -1,12 +1,15 @@
 # cargo-hack: run a cargo command across feature combinations (and more).
 #
-# The module never models a matrix itself: it forwards the arguments configured in the
+# The module never models the feature matrix itself: it forwards the arguments configured in the
 # project's manifest to cargo-hack, which enumerates the runs
 # (`--each-feature`, `--feature-powerset`, `--exclude-features`, `--depth`, ...).
 #
-# Configuration lives in Cargo.toml (package first, then workspace), keyed by the name
-# this module is registered under in dagger.toml, so instances (e.g. an MSRV one)
-# can run different matrices:
+# Configuration lives in the workspace root Cargo.toml (package first, then workspace),
+# whichever directory the module is called from, keyed by the name this module is registered
+# under in dagger.toml, so instances (e.g. an MSRV one) can run different matrices. The same
+# entry configures the target matrix (`targets`, see collections.dang; a member's own entry can
+# only restrict it). A member's `hack` entry is not read: one cargo command covers every selected
+# package.
 #
 #   [[package.metadata.dagger.modules]]
 #   name = "rust"
@@ -134,6 +137,16 @@ type ModuleConfig {
   cargo-hack arguments per cargo command.
   """
   hack: HackConfig
+
+  """
+  Target triples to check and build for.
+
+  In the workspace root manifest: checked besides the host and rust-toolchain.toml's targets.
+  In a member's manifest: the only targets that member is checked for ("host" for the host),
+  among the configured ones.
+  A member without it is checked for every target.
+  """
+  targets: [String!]
 }
 
 type HackConfig {

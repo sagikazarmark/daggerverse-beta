@@ -1,7 +1,4 @@
 type RustEnvironment {
-  let toolchainFile: File
-  let toolchainPath: String
-
   """
   Toolchain overriding the base image's and the toolchain file's (rustup name), if any.
   """
@@ -13,10 +10,26 @@ type RustEnvironment {
   let noCache: Boolean!
 
   """
-  Directory containing the project's .cargo directory.
+  Where cargo commands run, as a path in the workspace (e.g. "/" or "/backend"): the Cargo
+  workspace root, as cargo finds it from the current directory (the nearest Cargo.toml with a
+  [workspace] table, or the package's own directory), or the current directory outside a Cargo
+  project.
+
+  Toolchain files (rust-toolchain, rust-toolchain.toml) and cargo configuration (.cargo) apply
+  as rustup and cargo find them from there. Consumers running commands from another directory
+  (e.g. the current one) don't get toolchain files below the workdir installed.
   """
-  dotCargo: Directory! = Dagger.directory
-  let dotCargoPath: String
+  workdir: String!
+
+  """
+  Toolchain files in the workdir and its parents, at their paths in the workspace.
+  """
+  let toolchainFiles: Directory!
+
+  """
+  .cargo directories in the workdir and its parents, at their paths in the workspace.
+  """
+  let cargoConfig: Directory!
 
   """
   Whether dependency caching with cargo-chef is enabled.
@@ -24,25 +37,13 @@ type RustEnvironment {
   chef: Boolean! = false
   let chefVersion: String!
 
-  """
-  Path of the Cargo workspace root (the directory containing Cargo.lock) within the workspace.
-  """
-  cargoRoot: String
-
-  """
-  Path of the nearest Cargo.toml within the workspace:
-  the package cargo selects when invoked from the current directory.
-  """
-  manifestPath: String
-
   new(
     ws: Workspace!,
     """
-    Toolchain to install and use (rustup name, e.g. `1.85`, `stable`, `nightly-2026-01-01`),
-    or `msrv` for the project's `package.rust-version`.
+    Toolchain to install and use (rustup name, e.g. 1.85, stable, nightly-2026-01-01).
 
     Selected with RUSTUP_TOOLCHAIN, so it takes precedence over a rust-toolchain.toml
-    (whose components and targets are then not installed either).
+    (which rustup then ignores: its components and targets aren't installed).
     """
     toolchain: String,
     """
@@ -61,68 +62,99 @@ type RustEnvironment {
     """
     Cache compiled dependencies in a separate layer using cargo-chef.
 
-    Requires a Cargo.lock. See `cook`.
+    Requires a Cargo.lock. See cook.
     """
     chef: Boolean! = false,
     """
-    cargo-chef version to install when `chef` is enabled (default: 0.1.78).
+    cargo-chef version to install when chef is enabled (default: 0.1.78).
     """
     chefVersion: String,
   ) {
-    let toolchainPath = ws.findUp("rust-toolchain.toml")
-    if (toolchainPath != null) {
-      self.toolchainFile = ws.file(toolchainPath)
-      self.toolchainPath = toolchainPath
-    }
-
+    self.toolchain = toolchain
     self.targets = targets
     self.components = components
-
     self.noCache = noCache
 
-    let dotCargo = ws.findUp(".cargo")
-    if (dotCargo != null) {
-      self.dotCargo = ws.directory(dotCargo, gitignore: true)
-      self.dotCargoPath = dotCargo
+    let manifestPath = ws.findUp("Cargo.toml")
+    let workdir = ws.cwd
+    if (manifestPath != null) {
+      workdir = cargoRoot(ws, manifestPath)
     }
+    self.workdir = workdir
+
+    if (chef) {
+      let lockPath = Path(workdir).join(Path("Cargo.lock")).string
+      if (ws.findUp("Cargo.lock", from: workdir) != lockPath) {
+        raise "cargo-chef requires a Cargo.lock in the Cargo workspace root (" + workdir + ")"
+      }
+    }
+
+    # Only the files rustup and cargo read from the workdir: in it and its parents.
+    let parents: [String!]! = []
+    Path("/").join(Path(workdir)).ascend { dir =>
+      let relative = dir.string.trimPrefix("/")
+      parents += [if (relative == "") { "" } else { relative + "/" }]
+    }
+
+    self.toolchainFiles = ws.directory(
+      "/",
+      include: parents.map { dir => dir + "rust-toolchain" } + parents.map { dir => dir + "rust-toolchain.toml" },
+      gitignore: true,
+    )
+
+    self.cargoConfig = ws.directory(
+      "/",
+      include: parents.map { dir => dir + ".cargo/**" },
+      gitignore: true,
+    )
 
     self.chef = chef
     self.chefVersion = chefVersion ?? defaultChefVersion
 
-    let lockPath = ws.findUp("Cargo.lock")
-    let cargoRoot: String = null
-    if (lockPath != null) {
-      cargoRoot = Path(lockPath).parent.string
-      self.cargoRoot = cargoRoot
-    }
-    if (chef and lockPath == null) {
-      raise `cargo-chef requires a Cargo.lock: none found in ${ws.cwd} (or any parent directory)`
-    }
+    self
+  }
 
-    let manifestPath = ws.findUp("Cargo.toml")
-    if (manifestPath != null) {
-      self.manifestPath = manifestPath
-    }
-
-    self.toolchain = resolveToolchain(ws, toolchain, manifestPath, cargoRoot)
+  """
+  The environment with more targets to install with rustup.
+  """
+  withTargets(
+    """
+    Target triples to install.
+    """
+    targets: [String!]!,
+  ): RustEnvironment! {
+    self.targets = self.targets + targets
 
     self
   }
 
   """
   Returns a container with the configured Rust environment.
+
+  The project's toolchain files and cargo configuration are placed at their paths under
+  sourceRoot, and the working directory is set to workdir, so rustup and cargo find them as they
+  would in the source. Mount the source at sourceRoot afterwards (e.g. with build-environment):
+  it replaces them.
   """
   apply(
     """
     Custom base container to use.
     """
     container: Container!,
+    """
+    Absolute path where the source is (going to be) mounted in the container.
+    """
+    sourceRoot: String! = "/work/src",
   ): Container! {
     container
       .{ self.defaults(_) }
       .{ self.cache(_) }
+      .withDirectory(sourceRoot, self.toolchainFiles)
+      .withWorkdir(self.workdirIn(sourceRoot))
       .{ self.rustup(_) }
       .{ self.installChef(_) }
+      # Last: the cargo configuration does not affect the installs above.
+      .withDirectory(sourceRoot, self.cargoConfig)
   }
 
   """
@@ -150,7 +182,7 @@ type RustEnvironment {
 
     container
       .withMountedDirectory(sourceRoot, source)
-      .withWorkdir(self.cargoRootIn(sourceRoot))
+      .withWorkdir(self.workdirIn(sourceRoot))
       .withExec(["cargo", "chef", "prepare", "--recipe-path", "/tmp/recipe.json"])
       .file("/tmp/recipe.json")
   }
@@ -165,7 +197,8 @@ type RustEnvironment {
   Run this as late as possible before mounting the source: everything affecting cargo's
   fingerprints (environment variables such as RUSTFLAGS, toolchain, profile, target, features,
   package selection) must be identical between the cook and the cargo command that follows,
-  otherwise the cooked dependencies are not reused.
+  otherwise the cooked dependencies are not reused. The cook runs from workdir: run the cargo
+  command from there too.
   Requires `chef` to be enabled.
   """
   cook(
@@ -196,14 +229,9 @@ type RustEnvironment {
     let recipe = self.recipe(container, source, sourceRoot).contents
 
     container
-      .{ self.withConfigFiles(_, sourceRoot) }
-      .withWorkdir(self.cargoRootIn(sourceRoot))
+      .withWorkdir(self.workdirIn(sourceRoot))
       .withNewFile(recipePath, recipe)
-      .withExec(
-        ["cargo", "chef", "cook", "--recipe-path", recipePath, "--locked"]
-          + self.manifestPathArgs(sourceRoot)
-          + args,
-      )
+      .withExec(["cargo", "chef", "cook", "--recipe-path", recipePath, "--locked"] + args)
   }
 
   let requireChef: Void {
@@ -217,7 +245,7 @@ type RustEnvironment {
   (e.g. `dx build`, `worker-build`), instead of `cargo chef cook`'s own `cargo build`.
 
   cargo-chef only hydrates the project skeleton (`cook --no-build`: manifests, lockfile, dummy sources);
-  `command` then runs on it from `workdir`. The tool compiles the dependencies with exactly the flags
+  `command` then runs on it from `commandWorkdir`. The tool compiles the dependencies with exactly the flags
   and environment it uses for the real build (which may not be reproducible with cook arguments,
   e.g. ad hoc profiles or environment variables read by proc-macros). It is expected to fail afterwards
   on the dummy sources (e.g. at wasm-bindgen); its exit code is ignored, the compiled dependencies are
@@ -241,9 +269,9 @@ type RustEnvironment {
     """
     sourceRoot: String! = "/work/src",
     """
-    Working directory to run the command from (where the real command runs too).
+    Absolute path to run the command from (where the real command runs too).
     """
-    workdir: String!,
+    commandWorkdir: String!,
     """
     Command compiling the dependencies on the skeleton.
     """
@@ -251,46 +279,12 @@ type RustEnvironment {
   ): Container! {
     self
       .cook(container, source, sourceRoot, ["--no-build"])
-      .withWorkdir(workdir)
+      .withWorkdir(commandWorkdir)
       .withExec(command, expect: ReturnType.ANY)
   }
 
-  let cargoRootIn(sourceRoot: String!): String! {
-    Path(sourceRoot).join(Path(self.cargoRoot!)).string
-  }
-
-  """
-  Select the same package cargo would select from the current directory.
-  """
-  let manifestPathArgs(sourceRoot: String!): [String!]! {
-    let manifestPath = self.manifestPath
-    if (manifestPath == null) {
-      return []
-    }
-
-    ["--manifest-path", Path(sourceRoot).join(Path(manifestPath)).string]
-  }
-
-  """
-  Place the project's .cargo directory and toolchain file where cargo and rustup find them
-  when walking up from the Cargo workspace root. They may live above the Cargo workspace root,
-  in which case cargo-chef does not capture them in the recipe.
-  """
-  let withConfigFiles(container: Container!, sourceRoot: String!): Container! {
-    container
-      .{
-        let dotCargoPath = self.dotCargoPath
-        if (dotCargoPath != null) {
-          _.withDirectory(Path(sourceRoot).join(Path(dotCargoPath)).string, self.dotCargo)
-        } else _
-      }
-      .{
-        let toolchainFile = self.toolchainFile
-        let toolchainPath = self.toolchainPath
-        if (toolchainFile != null and toolchainPath != null) {
-          _.withFile(Path(sourceRoot).join(Path(toolchainPath)).string, toolchainFile)
-        } else _
-      }
+  let workdirIn(sourceRoot: String!): String! {
+    Path(sourceRoot).join(Path(self.workdir)).string
   }
 
   let installChef(container: Container!): Container! {
@@ -344,23 +338,25 @@ type RustEnvironment {
       )
   }
 
+  """
+  Install the toolchain, targets and components, from the working directory: rustup finds the
+  toolchain file there.
+  """
   let rustup(container: Container!): Container! {
     container
       .{
         let toolchain = self.toolchain
-        let toolchainFile = self.toolchainFile
         if (toolchain != null) {
           # RUSTUP_TOOLCHAIN makes it the active toolchain for every rustup-managed command
           # (cargo, rustc, the component/target installs below), regardless of a toolchain file.
           _
             .withExec(["rustup", "toolchain", "install", toolchain, "--no-self-update"])
             .withEnvVariable("RUSTUP_TOOLCHAIN", toolchain)
-        } else if (toolchainFile != null) {
-          _
-            .withWorkdir("/tmp/rust-environment/src")
-            .withFile("rust-toolchain.toml", toolchainFile)
-            .withExec(["rustup", "toolchain", "install", "--no-self-update"])
-        } else _
+        } else {
+          # The active toolchain: the toolchain file's (with its components and targets), or the
+          # default one (already installed: a no-op).
+          _.withExec(["rustup", "toolchain", "install", "--no-self-update"])
+        }
       }
       .{
         let targets = self.targets.uniq.filter { _ != "" }
@@ -376,6 +372,5 @@ type RustEnvironment {
           _.withExec(["rustup", "component", "add"] + components)
         } else _
       }
-      .withoutWorkdir # in case there was a toolchain file
   }
 }

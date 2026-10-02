@@ -1,0 +1,5 @@
+# Its test fails: it must only run when selected.
+[package]
+name = "broken"
+version.workspace = true
+edition.workspace = true

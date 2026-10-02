@@ -131,19 +131,18 @@ type ChefTests {
   }
 
   """
-  From a workspace member, the cook runs at the Cargo workspace root
-  but selects only the member (as cargo would from that directory).
+  From a workspace member, everything runs at the Cargo workspace root: package selection comes
+  from the cook arguments (mirroring the cargo command's).
   """
   workspaceMember: Void @check {
     let ws = workspaceProject.asWorkspace("api")
     let env = Dagger.rustEnvironment(ws: ws, chef: true)
 
-    assert { env.cargoRoot == "/" }
-    assert { env.manifestPath == "/api/Cargo.toml" }
+    assert { env.workdir == "/" }
 
     let cooked = env
       .apply(rustContainer)
-      .{ env.cook(_, workspaceProject) }
+      .{ env.cook(_, workspaceProject, args: ["--package", "api"]) }
 
     assert { cooked.workdir == "/work/src" }
     assert { cooked.file("/work/src/Cargo.toml").contents.contains("[workspace]") }

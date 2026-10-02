@@ -14,12 +14,20 @@ type Fix {
   Run clippy and fix any warnings.
   """
   clippy: Changeset! @generate {
+    # Not a Cargo project: nothing to fix.
+    if (!parent.cargoProject) {
+      return Dagger.directory.changes(Dagger.directory)
+    }
+
+    let packages = parent.selection([], false)
+
     let args = [
       "cargo", "clippy", "--fix",
       "--allow-dirty", "--allow-staged", "--allow-no-vcs", "--all-targets",
-      "--", "-D", "warnings",
     ]
+    packages.each { p => args += ["--package", p] }
+    args += ["--", "-D", "warnings"]
 
-    self.exec(args, CargoCommand.chefCook(allTargets: true, clippy: true))
+    self.exec(args, CargoCommand.chefCook(package: packages, allTargets: true, clippy: true))
   }
 }

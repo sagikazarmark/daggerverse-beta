@@ -1,3 +1,8 @@
+"""
+Check, test, lint, document and build Rust projects (Cargo workspaces).
+
+Checks run per target and package: dagger check --rust-target host --rust-package my-crate.
+"""
 type Rust {
   let base: Container!
 
@@ -10,13 +15,21 @@ type Rust {
 
   let chefArgs: [String!]
 
-  """
-  Configuration of this module instance from the project's manifest (see hack.dang).
-  """
+  # Configuration of this module instance from the workspace root manifest (see hack.dang).
   let config: ModuleConfig
 
+  # The current directory, relative to the workspace root. Cargo commands run from the Cargo root
+  # (the environment's workdir); the current directory scopes the packages (see selection).
+  let cwd: String!
+
+  # The nearest Cargo.toml from the current directory: the package cargo would select there.
+  let nearestManifest: String
+
+  # The project's .cargo/audit.toml, if any.
+  let auditConfig: File
+
   """
-  Whether tests run with cargo-nextest: the project has a `.config/nextest.toml` (see nextest.dang).
+  Whether tests run with cargo-nextest: the project has a .config/nextest.toml file.
   """
   nextest: Boolean! = false
 
@@ -31,14 +44,18 @@ type Rust {
     """
     container: Container! = Dagger.container.from("rust:" + version),
     """
-    Toolchain to install and use instead of the base container's (rustup name, e.g. `1.85`, `nightly`),
-    or `msrv` for the project's `package.rust-version`.
+    Toolchain to install and use instead of the base container's (rustup name, e.g. 1.85, nightly).
 
     Takes precedence over a rust-toolchain.toml.
     """
     toolchain: String,
     """
-    Targets to install for cross-compilation.
+    More target triples to check and build for, besides the host and rust-toolchain.toml's targets.
+
+    Each is a key of the targets collection, installed with rustup. Prefer listing targets in
+    rust-toolchain.toml; a [[workspace.metadata.dagger.modules]] entry (name = "<this module's
+    name>", targets = [...]) can add more, and a member's [[package.metadata.dagger.modules]] entry
+    can restrict itself to some of them ("host" for the host).
     """
     targets: [String!]! = [],
     """
@@ -77,32 +94,50 @@ type Rust {
     """
     chef: Boolean! = false,
     """
-    cargo-chef version to install when `chef` is enabled.
+    cargo-chef version to install when chef is enabled.
     """
     chefVersion: String,
     """
-    Fixed arguments for `cargo chef cook` (e.g. `["--workspace", "--all-targets"]`).
+    Fixed arguments for cargo chef cook (e.g. ["--workspace", "--all-targets"]).
 
     When set, replaces the arguments derived from each cargo command
-    (one shared dependency layer per profile), and also applies to `container`.
+    (one shared dependency layer per profile), and also applies to container.
     """
     chefArgs: [String!],
   ) {
     self.base = container
 
-    self.env = Dagger.rustEnvironment(
+    let env = Dagger.rustEnvironment(
       ws: ws,
       toolchain: toolchain,
-      targets: targets,
+      targets: targets.filter { triple => triple != "host" },
       components: ["rustfmt", "clippy"] + components,
       noCache: noCache,
       chef: chef,
       chefVersion: chefVersion,
     )
 
+    self.cwd = ws.cwd
+    let nearestManifest = ws.findUp("Cargo.toml")
+    self.nearestManifest = nearestManifest
+
+    # The workspace root manifest (in the Cargo root, where commands run), wherever the module is
+    # called from: the configuration must not depend on the current directory.
+    let config: ModuleConfig = null
+    if (nearestManifest != null) {
+      config = moduleConfig(ws, Path(env.workdir).join(Path("Cargo.toml")).string)
+    }
+    self.config = config
+
+    # Installed besides the toolchain file's targets (which rustup installs with the toolchain).
+    if (config != null) {
+      env = env.withTargets((config.targets ?? []).filter { triple => triple != "host" })
+    }
+    self.env = env
+
     self.buildEnv = Dagger
       .buildEnvironment
-      .withSource(ws.directory("/", gitignore: true), ws.cwd)
+      .withSource(ws.directory("/", gitignore: true), env.workdir)
       .withEnvFile(envFile)
       .withSourceDateEpoch(sourceDateEpoch)
 
@@ -112,9 +147,10 @@ type Rust {
 
     self.chefArgs = chefArgs
 
-    self.config = moduleConfig(ws, ws.findUp("Cargo.toml"))
+    self.nextest = workspaceFile(ws, Path(env.workdir).join(Path(".config/nextest.toml")).string) != null
 
-    self.nextest = detectNextest(ws)
+    # cargo-audit reads it from where it runs: the Cargo root.
+    self.auditConfig = workspaceFile(ws, Path(env.workdir).join(Path(".cargo/audit.toml")).string)
 
     self
   }
@@ -132,7 +168,7 @@ type Rust {
     """
     value: String!,
     """
-    Replace `${VAR}` or `$VAR` in the value according to the current environment
+    Replace ${VAR} or $VAR in the value according to the current environment
     variables defined in the container (e.g., "/opt/bin:$PATH").
     """
     expand: Boolean,
@@ -161,12 +197,208 @@ type Rust {
   let assemble(cookArgs: [String!], &fn(c: Container!): Container!): Container! {
     self
       .base
-      .{ self.env.apply(_) }
+      .{ self.env.apply(_, self.buildEnv.sourceRoot) }
       .{ moduleOverlay("v0.2.0", self.overlay).apply(_) }
       .{ fn(_) }
       .{ self.buildEnv.applyEnvironment(_) }
       .{ self.cook(_, cookArgs) }
       .{ self.buildEnv.applySource(_) }
+  }
+
+  """
+  Targets to check and build for: host (cargo's default) and the other installed targets.
+
+  Keys are "host" (no --target flag) and the triples listed in rust-toolchain.toml, the targets
+  argument and the workspace manifest. Each target has the packages at or below the current directory:
+  targets.get(key: "host").packages.subset(keys: ["my-crate"]).batch.test runs one package's
+  tests, and selecting nothing runs all of them in one cargo command per target.
+  """
+  targets: Targets! {
+    Targets(names: self.targetKeys, rust: self)
+  }
+
+  """
+  A package of the Cargo workspace (shortcut for targets.get(key: target).packages.get(key: name)).
+
+  Takes arguments, so it adds no dimension to check selection: checks are still selected with
+  --rust-target and --rust-package.
+  """
+  package(
+    """
+    Package name.
+    """
+    name: String!,
+    """
+    Target: "host" (cargo's default) or a configured target triple.
+    """
+    target: String! = "host",
+  ): Package! {
+    if (!self.targetKeys.contains(target)) {
+      raise "target " + target + " is not installed: targets are " + self.targetKeys.join(", ")
+    }
+
+    let member = self.members.find { candidate => candidate.name == name }
+    if (member == null) {
+      raise "no package named " + name + " in the Cargo workspace at or below the current directory"
+    }
+
+    if (!self.memberTargets(member).contains(target)) {
+      raise "package " + name + " is not checked for target " + target + " (see its manifest)"
+    }
+
+    Packages(names: [name], target: target, rust: self).package(name)
+  }
+
+  """
+  Keys of the targets collection: host, then the other targets installed for the toolchain
+  (rust-toolchain.toml's, the configured ones, and any the base image comes with).
+  """
+  let targetKeys: [String!]! {
+    let host = self.hostTriple
+    let installed = self
+      .toolchainContainer
+      .withExec(["rustup", "target", "list", "--installed"])
+      .stdout
+      .split("\n")
+      .map { line => line.trimSpace }
+      .filter { triple => triple != "" and triple != host }
+
+    ["host"] + installed
+  }
+
+  """
+  Target triple of the host (what "host" builds for).
+  """
+  let hostTriple: String! {
+    self
+      .toolchainContainer
+      .withExec(["rustc", "-vV"])
+      .stdout
+      .split("\n")
+      .filter { line => line.hasPrefix("host: ") }
+      .map { line => line.trimPrefix("host: ").trimSpace }
+      .join("")
+  }
+
+  """
+  The base container with the Rust environment only: what rustup reports there does not change
+  with the source.
+  """
+  let toolchainContainer: Container! {
+    self.env.apply(self.base, self.buildEnv.sourceRoot)
+  }
+
+  """
+  Keys of the targets collection a member is checked for: all of them, or the ones listed in its
+  manifest entry. A listed target must be installed (the host triple counts as host), and the
+  list must not be empty: a member is never dropped silently.
+  """
+  let memberTargets(member: MetadataPackage!): [String!]! {
+    let keys = self.targetKeys
+    let restriction = member.targetRestriction
+    if (restriction == null) {
+      return keys
+    }
+
+    if (restriction.isEmpty) {
+      raise "package " + member.name + " lists no targets in its manifest: remove targets from its "
+        + "entry to check it for every target, or list at least one"
+    }
+
+    restriction.map { entry => self.targetKey(member.name, entry, keys) }
+  }
+
+  let targetKey(memberName: String!, entry: String!, keys: [String!]!): String! {
+    if (keys.contains(entry)) {
+      return entry
+    }
+
+    if (entry == self.hostTriple) {
+      return "host"
+    }
+
+    raise "package " + memberName + " lists target " + entry + " in its manifest, which is not "
+      + "installed (installed: " + keys.join(", ") + "): add it to rust-toolchain.toml, the targets "
+      + "setting or the workspace manifest entry"
+  }
+
+  """
+  Whether the current directory is in a Cargo project.
+  """
+  let cargoProject: Boolean! {
+    self.nearestManifest != null
+  }
+
+  """
+  Packages of the Cargo workspace, from `cargo metadata`.
+  """
+  let metadataPackages: [MetadataPackage!]! {
+    if (!self.cargoProject) {
+      return []
+    }
+
+    let output = self
+      .container
+      .withExec(["cargo", "metadata", "--no-deps", "--format-version", "1", "--offline"])
+      .stdout
+
+    let metadata = JSON.decode(output) :: Metadata!
+
+    metadata.packages
+  }
+
+  """
+  Workspace members at or below the current directory.
+  """
+  let members: [MetadataPackage!]! {
+    let cwd = Path(self.buildEnv.sourceRoot).join(Path(self.cwd))
+
+    self.metadataPackages.filter { member => cwd.contains(Path(member.manifestPath).parent) }
+  }
+
+  """
+  Package selection of a cargo command: the given one, or what cargo would select from the
+  current directory (commands run from the Cargo root). Below the Cargo root, that is the package
+  of the nearest Cargo.toml; at the root (or when the nearest manifest is the root's), cargo's own
+  default.
+  """
+  let selection(package: [String!]!, all: Boolean!): [String!]! {
+    if (!package.isEmpty or all) {
+      return package
+    }
+
+    let nearest = self.nearestManifest
+    if (nearest == null) {
+      return package
+    }
+
+    let sourceRoot = Path(self.buildEnv.sourceRoot)
+    let manifestDir = sourceRoot.join(Path(nearest)).parent
+    if (manifestDir == sourceRoot.join(Path(self.env.workdir))) {
+      return package
+    }
+
+    let selected = self
+      .metadataPackages
+      .filter { member => Path(member.manifestPath).parent == manifestDir }
+      .map { member => member.name }
+
+    # Not a member (e.g. a crate excluded from the workspace): cargo would not build the workspace
+    # from there, and silently running the workspace's default would test the wrong thing.
+    if (selected.isEmpty) {
+      raise "the package in " + manifestDir.relativeTo(sourceRoot)!.string + " is not a member of the "
+        + "Cargo workspace in " + self.env.workdir + " (crates excluded from a workspace are not supported; "
+        + "give it its own [workspace] table)"
+    }
+
+    selected
+  }
+
+  """
+  Directory of a workspace member, relative to the workspace root.
+  """
+  let memberPath(member: MetadataPackage!): String! {
+    Path(member.manifestPath).parent.relativeTo(Path(self.buildEnv.sourceRoot))!.string
   }
 
   """
@@ -250,11 +482,17 @@ type Rust {
     Advisory id to ignore (can be specified multiple times).
     """
     ignore: [String!]! = [],
-  ): String! @check {
+  ): Void @check {
+    # Not a Cargo project: nothing to audit.
+    if (!self.cargoProject) {
+      return null
+    }
+
     let advisoryDb = Dagger.git("https://github.com/rustsec/advisory-db.git").head.tree
 
-    if (self.env.dotCargo.exists("audit.toml", expectedType: ExistsType.REGULAR_TYPE)) {
-      let config = TOML.decode(self.env.dotCargo.file("audit.toml").contents) :: CargoAuditConfig
+    let auditConfig = self.auditConfig
+    if (auditConfig != null) {
+      let config = TOML.decode(auditConfig.contents) :: CargoAuditConfig
 
       let url = config.database.url
       if (url != null) {
@@ -287,7 +525,9 @@ type Rust {
           .withMountedDirectory(ADVISORY_DB_PATH, advisoryDb)
       }
       .withExec(args)
-      .stdout
+      .sync
+
+    null
   }
 
   """
@@ -327,7 +567,7 @@ type Rust {
     """
     example: [String!]! = [],
     """
-    Build all targets that have `test = true` set.
+    Build all targets that have test = true set.
     """
     tests: Boolean! = false,
     """
@@ -335,7 +575,7 @@ type Rust {
     """
     test: [String!]! = [],
     """
-    Build all targets that have `bench = true` set.
+    Build all targets that have bench = true set.
     """
     benches: Boolean! = false,
     """
@@ -359,7 +599,7 @@ type Rust {
     """
     feature: [String!]! = [],
     """
-    Do not activate the `default` feature.
+    Do not activate the default feature.
     """
     noDefaultFeatures: Boolean! = false,
     """
@@ -374,9 +614,11 @@ type Rust {
     Do not abort the build as soon as there is an error.
     """
     keepGoing: Boolean! = false,
-  ): Directory! @check {
+  ): Directory! {
+    let selected = self.selection(package, all)
+
     let args = CargoCommand.build(
-      package,
+      selected,
       all,
       exclude,
       lib,
@@ -404,7 +646,7 @@ type Rust {
     }
 
     let cookArgs = CargoCommand.chefCook(
-      package: package,
+      package: selected,
       all: all,
       bins: bins,
       bin: bin,
@@ -438,7 +680,7 @@ type Rust {
   """
   Check a local package and all of its dependencies for errors.
 
-  Wrapped by cargo-hack when `hack.check` is configured in the manifest (see hack.dang).
+  Wrapped by cargo-hack when `hack.check` is configured in the workspace manifest.
   """
   check(
     """
@@ -474,7 +716,7 @@ type Rust {
     """
     example: [String!]! = [],
     """
-    Check all targets that have `test = true` set.
+    Check all targets that have test = true set.
     """
     tests: Boolean! = false,
     """
@@ -482,7 +724,7 @@ type Rust {
     """
     test: [String!]! = [],
     """
-    Check all targets that have `bench = true` set.
+    Check all targets that have bench = true set.
     """
     benches: Boolean! = false,
     """
@@ -506,7 +748,7 @@ type Rust {
     """
     feature: [String!]! = [],
     """
-    Do not activate the `default` feature.
+    Do not activate the default feature.
     """
     noDefaultFeatures: Boolean! = false,
     """
@@ -521,12 +763,14 @@ type Rust {
     Do not abort the check as soon as there is an error.
     """
     keepGoing: Boolean! = false,
-  ): String! @check {
+  ): String! {
+    let selected = self.selection(package, all)
+
     let hack = self.hackArgs { _.check }
 
     let args = withHack(
       CargoCommand.check(
-        package,
+        selected,
         all,
         exclude,
         lib,
@@ -551,7 +795,7 @@ type Rust {
     )
 
     let cookArgs = CargoCommand.chefCook(
-      package: package,
+      package: selected,
       all: all,
       bins: bins,
       bin: bin,
@@ -578,8 +822,8 @@ type Rust {
   Execute all unit and integration tests and build examples of a local package.
 
   Runs with cargo-nextest (followed by `cargo test --doc`) when the project has a
-  `.config/nextest.toml` (see nextest.dang).
-  Wrapped by cargo-hack when `hack.test` is configured in the manifest (see hack.dang).
+  `.config/nextest.toml`.
+  Wrapped by cargo-hack when `hack.test` is configured in the workspace manifest.
   """
   test(
     """
@@ -627,7 +871,7 @@ type Rust {
     """
     example: [String!]! = [],
     """
-    Test all targets that have `test = true` set.
+    Test all targets that have test = true set.
     """
     tests: Boolean! = false,
     """
@@ -635,7 +879,7 @@ type Rust {
     """
     test: [String!]! = [],
     """
-    Test all targets that have `bench = true` set.
+    Test all targets that have bench = true set.
     """
     benches: Boolean! = false,
     """
@@ -663,7 +907,7 @@ type Rust {
     """
     feature: [String!]! = [],
     """
-    Do not activate the `default` feature.
+    Do not activate the default feature.
     """
     noDefaultFeatures: Boolean! = false,
     """
@@ -674,18 +918,25 @@ type Rust {
     Build artifacts with the specified cargo profile.
     """
     cargoProfile: String! = "",
-  ): String! @check {
+    """
+    Compile the tests, but don't run them (e.g. for a target that cannot run here).
+    """
+    noRun: Boolean! = false,
+  ): String! {
+    let selected = self.selection(package, all)
+
     let hack = self.hackArgs { _.test }
 
-    # nextest cannot run doctests: `doc` stays with cargo test.
-    let nextest = self.nextest and !doc
+    # nextest cannot run doctests: `doc` stays with cargo test. `noRun` only compiles: cargo test
+    # does it, with the same selection.
+    let nextest = self.nextest and !doc and !noRun
 
     let command = withHack(
       CargoCommand.test(
         testName,
         args,
         noFailFast,
-        package,
+        selected,
         all,
         exclude,
         lib,
@@ -706,13 +957,14 @@ type Rust {
         release,
         cargoProfile,
         nextest,
+        noRun,
       ),
       hack,
     )
 
     # `cargo test` compiles dev-dependencies: cook them too.
     let cookArgs = CargoCommand.chefCook(
-      package: package,
+      package: selected,
       all: all,
       bins: bins,
       bin: bin,
@@ -748,7 +1000,7 @@ type Rust {
         testName,
         args,
         noFailFast,
-        package,
+        selected,
         all,
         exclude,
         target: target,
@@ -779,9 +1031,16 @@ type Rust {
   Format the codebase using rustfmt.
   """
   fmt: Changeset! @generate {
+    if (!self.cargoProject) {
+      return Dagger.directory.changes(Dagger.directory)
+    }
+
+    let args = ["cargo", "fmt"]
+    self.selection([], false).each { p => args += ["--package", p] }
+
     self
       .buildContainer(null)
-      .withExec(["cargo", "fmt", "--", "--check"])
+      .withExec(args)
       .directory("/work/src")
       .filter(gitignore: true)
       .changes(self.buildEnv.source)
@@ -790,7 +1049,7 @@ type Rust {
   """
   Checks a package to catch common mistakes and improve your Rust code.
 
-  Wrapped by cargo-hack when `hack.clippy` is configured in the manifest (see hack.dang).
+  Wrapped by cargo-hack when `hack.clippy` is configured in the workspace manifest.
   """
   clippy(
     """
@@ -830,7 +1089,7 @@ type Rust {
     """
     example: [String!]! = [],
     """
-    Lint all targets that have `test = true` set.
+    Lint all targets that have test = true set.
     """
     tests: Boolean! = false,
     """
@@ -838,7 +1097,7 @@ type Rust {
     """
     test: [String!]! = [],
     """
-    Lint all targets that have `bench = true` set.
+    Lint all targets that have bench = true set.
     """
     benches: Boolean! = false,
     """
@@ -862,7 +1121,7 @@ type Rust {
     """
     feature: [String!]! = [],
     """
-    Do not activate the `default` feature.
+    Do not activate the default feature.
     """
     noDefaultFeatures: Boolean! = false,
     """
@@ -893,12 +1152,14 @@ type Rust {
     Set lint forbidden.
     """
     forbid: [String!]! = [],
-  ): String! @check {
+  ): String! {
+    let selected = self.selection(package, all)
+
     let hack = self.hackArgs { _.clippy }
 
     let command = CargoCommand.clippy(
       noDeps ?? true,
-      package,
+      selected,
       all,
       exclude,
       lib,
@@ -931,7 +1192,7 @@ type Rust {
     command = withHack(command, hack)
 
     let cookArgs = CargoCommand.chefCook(
-      package: package,
+      package: selected,
       all: all,
       bins: bins,
       bin: bin,
@@ -958,7 +1219,7 @@ type Rust {
   """
   Build a package's documentation.
 
-  Wrapped by cargo-hack when `hack.doc` is configured in the manifest (see hack.dang).
+  Wrapped by cargo-hack when `hack.doc` is configured in the workspace manifest.
   """
   doc(
     """
@@ -966,35 +1227,35 @@ type Rust {
     """
     noDeps: Boolean,
     """
-    Package to run tests for.
+    Package to document.
     """
     package: [String!]! = [],
     """
-    Test all packages in the workspace.
+    Document all packages in the workspace.
     """
     all: Boolean! = false,
     """
-    Exclude packages from the test.
+    Exclude packages from the documentation.
     """
     exclude: [String!]! = [],
     """
-    Test only this package's library.
+    Document only this package's library.
     """
     lib: Boolean! = false,
     """
-    Test all binaries.
+    Document all binaries.
     """
     bins: Boolean! = false,
     """
-    Test only the specified binary.
+    Document only the specified binary.
     """
     bin: [String!]! = [],
     """
-    Test all examples.
+    Document all examples.
     """
     examples: Boolean! = false,
     """
-    Test only the specified example.
+    Document only the specified example.
     """
     example: [String!]! = [],
     """
@@ -1006,7 +1267,7 @@ type Rust {
     """
     feature: [String!]! = [],
     """
-    Do not activate the `default` feature.
+    Do not activate the default feature.
     """
     noDefaultFeatures: Boolean! = false,
     """
@@ -1017,13 +1278,19 @@ type Rust {
     Build artifacts with the specified cargo profile.
     """
     cargoProfile: String! = "",
-  ): String! @check {
+    """
+    Document for the target triple.
+    """
+    target: [String!]! = [],
+  ): String! {
+    let selected = self.selection(package, all)
+
     let hack = self.hackArgs { _.doc }
 
     let args = withHack(
       CargoCommand.doc(
         noDeps,
-        package,
+        selected,
         all,
         exclude,
         lib,
@@ -1036,13 +1303,14 @@ type Rust {
         noDefaultFeatures,
         release,
         cargoProfile,
+        target,
       ),
       hack,
     )
 
     # rustdoc needs the dependencies' metadata only (check mode).
     let cookArgs = CargoCommand.chefCook(
-      package: package,
+      package: selected,
       all: all,
       bins: bins,
       bin: bin,
@@ -1053,6 +1321,7 @@ type Rust {
       noDefaultFeatures: noDefaultFeatures,
       release: release,
       profile: cargoProfile,
+      target: target,
       check: true,
     )
 
@@ -1060,7 +1329,7 @@ type Rust {
       .commandContainer(cookArgs, hack)
       .withEnvVariable("RUSTDOCFLAGS", "-D warnings")
       .withExec(args)
-      .stdout
+      .combinedOutput
   }
 
   """

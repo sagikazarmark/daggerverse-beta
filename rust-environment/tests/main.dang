@@ -27,6 +27,37 @@ type Tests {
     assert { container.envVariable("CARGO_INCREMENTAL") == "0" }
   }
 
+  """
+  The toolchain files and .cargo directories of the Cargo root and its parents are placed at their
+  paths under the source root, and the workdir is the Cargo root (the manifest with [workspace]),
+  also from a member's directory. Files in the member's own directory are not placed.
+  """
+  placement: Void @check {
+    let project = Dagger
+      .directory
+      .withNewFile(".cargo/config.toml", "[alias]\nouter = \"version\"\n")
+      .withNewFile("rust-toolchain.toml", "[toolchain]\nchannel = \"1.96.0\"\n")
+      .withNewFile("backend/.cargo/config.toml", "[alias]\ninner = \"version\"\n")
+      .withNewFile("backend/Cargo.toml", "[workspace]\nmembers = [\"api\"]\nresolver = \"2\"\n")
+      .withNewFile("backend/api/Cargo.toml", "[package]\nname = \"api\"\nversion = \"0.1.0\"\nedition = \"2021\"\n")
+      .withNewFile("backend/api/rust-toolchain.toml", "[toolchain]\nchannel = \"nightly\"\n")
+      .withNewFile("backend/api/src/lib.rs", "")
+
+    let env = Dagger.rustEnvironment(ws: project.asWorkspace("backend/api"))
+    let container = env.apply(rustContainer)
+
+    assert { env.workdir == "/backend" }
+    assert { container.workdir == "/work/src/backend" }
+    assert { container.file("/work/src/.cargo/config.toml").contents.contains("outer") }
+    assert { container.file("/work/src/backend/.cargo/config.toml").contents.contains("inner") }
+    assert { container.file("/work/src/rust-toolchain.toml").contents.contains("1.96.0") }
+    assert { !container.directory("/work/src").exists("backend/api/rust-toolchain.toml") }
+
+    # cargo merges both levels of configuration from the workdir.
+    assert { container.withExec(["cargo", "outer"]).stdout.contains("cargo") }
+    assert { container.withExec(["cargo", "inner"]).stdout.contains("cargo") }
+  }
+
   workspace: Void @check {
     assert { realProject.digest == realProject.asWorkspace.directory("").digest }
     assert { realProject.digest == realProject.asWorkspace.directory("/").digest }

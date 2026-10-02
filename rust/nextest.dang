@@ -1,6 +1,6 @@
 # cargo-nextest: test runner, used in place of `cargo test` when the project has a
-# `.config/nextest.toml` (nextest's own configuration file: profiles, retries, timeouts,
-# test groups...). The module reads nothing from it; select a profile with NEXTEST_PROFILE.
+# `.config/nextest.toml` at the Cargo workspace root (nextest's own configuration file:
+# profiles, retries, timeouts, test groups...). The module reads nothing from it; select a profile with NEXTEST_PROFILE.
 #
 # nextest does not run doctests, so `test` runs `cargo test --doc` afterwards,
 # mirroring `cargo test`: only when no targets are selected explicitly, and only for
@@ -20,16 +20,4 @@ let cargoNextestBinary(version: String!): File! {
     .asset(`cargo-nextest-${tag}-${arch}-unknown-linux-musl.tar.gz`)
     .extracted # flat archive
     .file("cargo-nextest")
-}
-
-"""
-Whether the workspace has a nextest configuration file (`.config/nextest.toml`).
-"""
-let detectNextest(ws: Workspace!): Boolean! {
-  let config = ws.findUp(".config")
-  if (config == null) {
-    return false
-  }
-
-  ws.directory(config).exists("nextest.toml", expectedType: ExistsType.REGULAR_TYPE)
 }

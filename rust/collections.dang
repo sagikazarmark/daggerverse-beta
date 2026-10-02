@@ -1,0 +1,725 @@
+# Collections: a Cargo workspace as a matrix of target triples and packages, with the packages'
+# binaries, integration tests and examples as addressable items.
+#
+#   targets (host + configured triples) → packages → binaries / integration tests / examples
+#
+# Keys come from `cargo metadata --no-deps`, so they follow cargo's own workspace and target
+# discovery (member globs, `exclude`, `autobins`, `[[bin]]`, `[[test]]`, `[[example]]` sections...).
+#
+# Checks live on packages. Each is declared on the package (for API callers) and on the
+# collection; the engine replaces the package's with the collection's, calling it once per target
+# for all selected packages: a single cargo command with a `-p` flag for each, so the
+# dependencies compile once per target, as when checking the whole workspace at once. The engine
+# batches within one parent only, so targets are the outer dimension: under packages, the
+# dependencies would compile once per package, since the target directory is not cached.
+# A check per binary, test or example would do the same, so those collections only have plain
+# functions (the package `test` check already runs the integration tests).
+# The cargo-chef cook mirrors the same `-p` and `--target` flags (see chef.dang in
+# rust-environment).
+#
+# `host` is cargo's default target: commands run without `--target`, as they always did.
+# The other targets are those installed for the toolchain (`rustup target list --installed` on the
+# environment's container, without the source): rust-toolchain.toml's and the configured ones. All
+# commands run from the Cargo root (rust-environment's workdir). Commands that link
+# (`build`, and `test`, which only builds the tests: they cannot run here) may need a cross
+# linker (see the rust-cross module).
+#
+# Features are not a dimension: cargo-hack runs the combinations in one container, sharing the
+# target directory (see hack.dang).
+#
+# See docs/research/rust-collections.md.
+
+"""
+`--target` values for a key of the targets collection: none for `host`.
+"""
+let crossTarget(target: String!): [String!]! {
+  if (target == "host") {
+    return []
+  }
+
+  [target]
+}
+
+"""
+File name of an executable built for a key of the targets collection.
+"""
+let executableName(name: String!, target: String!): String! {
+  if (target.contains("-windows")) {
+    return name + ".exe"
+  }
+
+  if (target.hasPrefix("wasm32-") or target.hasPrefix("wasm64-")) {
+    return name + ".wasm"
+  }
+
+  name
+}
+
+"""
+Executables only run on the host.
+"""
+let requireHost(target: String!, what: String!): Void {
+  if (target != "host") {
+    raise "cannot run " + what + " built for " + target + ": only host executables run here"
+  }
+
+  null
+}
+
+"""
+Failure message of a command that links for a cross target, with a hint about linkers.
+"""
+let linkHint(target: String!, message: String!): String! {
+  message
+    + "\n\nLinking for " + target + " needs a linker for that target (except for wasm targets). "
+    + "If the output above shows a linker error, provide one with an overlay, .cargo/config.toml, "
+    + "or the rust-cross module."
+}
+
+"""
+Target triples to check and build for, keyed by triple ("host" for cargo's default target).
+"""
+type Targets @collection {
+  """
+  "host" and the configured target triples.
+  """
+  names: [String!]! @keys
+
+  let rust: Rust!
+
+  """
+  Target triple (or "host"): its packages.
+  """
+  target(name: String!): Target! @get {
+    Target(name: name, rust: rust)
+  }
+}
+
+"""
+A target to check and build for: a target triple, or "host" (cargo's default target).
+"""
+type Target {
+  """
+  Target triple, or "host".
+  """
+  name: String!
+
+  let rust: Rust!
+
+  """
+  Packages of the Cargo workspace checked for this target, keyed by name.
+
+  Members at or below the current directory; a member can restrict its targets in its manifest.
+  Checks run once for all selected packages: one cargo command with a -p flag for each.
+  """
+  packages: Packages! {
+    let target = name
+
+    Packages(
+      names: rust.members.filter { member => rust.memberTargets(member).contains(target) }.map { member => member.name },
+      target: target,
+      rust: rust,
+    )
+  }
+}
+
+"""
+Packages of the Cargo workspace checked for a target, keyed by name.
+
+Checks run once for all selected packages: one cargo command with a -p flag for each.
+"""
+type Packages @collection {
+  """
+  Package names.
+  """
+  names: [String!]! @keys
+
+  let target: String!
+
+  let rust: Rust!
+
+  """
+  Workspace member, for the target: its checks, binaries, integration tests and examples.
+  """
+  package(name: String!): Package! @get {
+    let member = rust.members.find { candidate => candidate.name == name }
+    if (member == null) {
+      raise "no package named " + name + " in the Cargo workspace at or below the current directory"
+    }
+
+    Package(
+      name: name,
+      path: rust.memberPath(member),
+      target: target,
+      binaryNames: member.targetNames("bin"),
+      testNames: member.targetNames("test"),
+      exampleNames: member.executableNames("example"),
+      rust: rust,
+    )
+  }
+
+  """
+  Check for errors (cargo check).
+
+  Wrapped by cargo-hack when hack.check is configured in the workspace manifest.
+  """
+  check: Void @check {
+    if (!names.isEmpty) {
+      rust.check(package: names, target: crossTarget(target))
+    }
+
+    null
+  }
+
+  """
+  Lint with Clippy.
+
+  Wrapped by cargo-hack when hack.clippy is configured in the workspace manifest.
+  """
+  clippy: Void @check {
+    if (!names.isEmpty) {
+      rust.clippy(package: names, target: crossTarget(target))
+    }
+
+    null
+  }
+
+  """
+  Run the unit, integration and doc tests (on a target other than host: only build them).
+
+  Every selected package is tested, even after a failure. Runs with cargo-nextest when the
+  project has a .config/nextest.toml. Wrapped by cargo-hack when hack.test is configured in the
+  workspace manifest.
+  """
+  test: Void @check {
+    if (names.isEmpty) {
+      return null
+    }
+
+    if (target == "host") {
+      rust.test(package: names, noFailFast: true)
+    } else {
+      rust.test(package: names, noFailFast: true, noRun: true, target: [target]) rescue {
+        err: Error => raise linkHint(target, err.message)
+      }
+    }
+
+    null
+  }
+
+  """
+  Build the documentation, denying rustdoc warnings.
+
+  Wrapped by cargo-hack when hack.doc is configured in the workspace manifest.
+  """
+  doc: Void @check {
+    if (!names.isEmpty) {
+      rust.doc(package: names, target: crossTarget(target))
+    }
+
+    null
+  }
+
+  """
+  Build (cargo build).
+  """
+  build: Void @check {
+    if (names.isEmpty) {
+      return null
+    }
+
+    if (target == "host") {
+      rust.build(package: names).sync
+    } else {
+      rust.build(package: names, target: [target]).sync rescue {
+        err: Error => raise linkHint(target, err.message)
+      }
+    }
+
+    null
+  }
+}
+
+"""
+A package of the Cargo workspace, for a target.
+"""
+type Package {
+  """
+  Package name.
+  """
+  name: String!
+
+  """
+  Package directory, relative to the workspace root.
+  """
+  path: String!
+
+  """
+  Target triple, or "host".
+  """
+  target: String!
+
+  let binaryNames: [String!]!
+  let testNames: [String!]!
+  let exampleNames: [String!]!
+
+  let rust: Rust!
+
+  """
+  This package, as a collection of one: its checks.
+  """
+  let selection: Packages! {
+    Packages(names: [name], target: target, rust: rust)
+  }
+
+  """
+  Check for errors (cargo check).
+  """
+  check: Void @check {
+    selection.check
+  }
+
+  """
+  Lint with Clippy.
+  """
+  clippy: Void @check {
+    selection.clippy
+  }
+
+  """
+  Run the unit, integration and doc tests (on a target other than host: only build them).
+  """
+  test: Void @check {
+    selection.test
+  }
+
+  """
+  Build the documentation, denying rustdoc warnings.
+  """
+  doc: Void @check {
+    selection.doc
+  }
+
+  """
+  Build (cargo build).
+  """
+  build: Void @check {
+    selection.build
+  }
+
+  """
+  Binaries of this package, keyed by name.
+  """
+  binaries: Binaries! {
+    Binaries(names: binaryNames, package: name, target: target, rust: rust)
+  }
+
+  """
+  Integration tests of this package (tests/*.rs, [[test]]), keyed by name.
+
+  Empty for a target other than host: tests only run on the host, and the test check already
+  builds them for the other targets.
+  """
+  integrationTests: IntegrationTests! {
+    let names: [String!]! = []
+    if (target == "host") {
+      names = testNames
+    }
+
+    IntegrationTests(names: names, package: name, target: target, rust: rust)
+  }
+
+  """
+  Examples of this package (examples/*.rs, [[example]]), keyed by name.
+
+  Library examples (with a crate-type) are not included: they cannot be run.
+  """
+  examples: Examples! {
+    Examples(names: exampleNames, package: name, target: target, rust: rust)
+  }
+}
+
+"""
+Binaries of a package, keyed by name.
+"""
+type Binaries @collection {
+  """
+  Binary names.
+  """
+  names: [String!]! @keys
+
+  let package: String!
+
+  let target: String!
+
+  let rust: Rust!
+
+  """
+  The binary with this name.
+  """
+  binary(name: String!): Binary! @get {
+    Binary(name: name, package: package, target: target, rust: rust)
+  }
+
+  """
+  Build the selected binaries with a single cargo command, one file each.
+  """
+  build(
+    """
+    Build artifacts in release mode, with optimizations.
+    """
+    release: Boolean! = false,
+    """
+    Build artifacts with the specified cargo profile.
+    """
+    cargoProfile: String! = "",
+  ): Directory! {
+    if (names.isEmpty) {
+      return Dagger.directory
+    }
+
+    rust.build(
+      package: [package],
+      bin: names,
+      target: crossTarget(target),
+      release: release,
+      cargoProfile: cargoProfile,
+    )
+  }
+}
+
+"""
+A binary of a package, for a target.
+"""
+type Binary {
+  """
+  Binary name.
+  """
+  name: String!
+
+  """
+  Name of the package.
+  """
+  package: String!
+
+  """
+  Target triple, or "host".
+  """
+  target: String!
+
+  let rust: Rust!
+
+  """
+  Build this binary.
+  """
+  build(
+    """
+    Build artifacts in release mode, with optimizations.
+    """
+    release: Boolean! = false,
+    """
+    Build artifacts with the specified cargo profile.
+    """
+    cargoProfile: String! = "",
+  ): File! {
+    rust
+      .build(
+        package: [package],
+        bin: [name],
+        target: crossTarget(target),
+        release: release,
+        cargoProfile: cargoProfile,
+      )
+      .file(executableName(name, target))
+  }
+}
+
+"""
+Integration tests of a package, keyed by name (host only).
+"""
+type IntegrationTests @collection {
+  """
+  Integration test names.
+  """
+  names: [String!]! @keys
+
+  let package: String!
+
+  let target: String!
+
+  let rust: Rust!
+
+  """
+  The integration test with this name.
+  """
+  integrationTest(name: String!): IntegrationTest! @get {
+    IntegrationTest(name: name, package: package, target: target, rust: rust)
+  }
+
+  """
+  Run the selected integration tests with a single cargo command and return their output.
+
+  Runs with cargo-nextest when the project has a .config/nextest.toml.
+  """
+  run(
+    """
+    If specified, only run tests containing this string in their names.
+    """
+    testName: String! = "",
+    """
+    Arguments for the test binaries.
+    """
+    args: [String!]! = [],
+  ): String! {
+    if (names.isEmpty) {
+      return ""
+    }
+
+    requireHost(target, "tests")
+
+    rust.test(package: [package], test: names, testName: testName, args: args)
+  }
+}
+
+"""
+An integration test of a package (a tests/*.rs file or a [[test]] target).
+"""
+type IntegrationTest {
+  """
+  Integration test name.
+  """
+  name: String!
+
+  """
+  Name of the package.
+  """
+  package: String!
+
+  """
+  Target triple, or "host".
+  """
+  target: String!
+
+  let rust: Rust!
+
+  """
+  Run this integration test and return its output.
+
+  Runs with cargo-nextest when the project has a .config/nextest.toml.
+  """
+  run(
+    """
+    If specified, only run tests containing this string in their names.
+    """
+    testName: String! = "",
+    """
+    Arguments for the test binary.
+    """
+    args: [String!]! = [],
+  ): String! {
+    requireHost(target, "tests")
+
+    rust.test(package: [package], test: [name], testName: testName, args: args)
+  }
+}
+
+"""
+Examples of a package, keyed by name.
+"""
+type Examples @collection {
+  """
+  Example names.
+  """
+  names: [String!]! @keys
+
+  let package: String!
+
+  let target: String!
+
+  let rust: Rust!
+
+  """
+  The example with this name.
+  """
+  example(name: String!): Example! @get {
+    Example(name: name, package: package, target: target, rust: rust)
+  }
+
+  """
+  Build the selected examples with a single cargo command, one file each.
+  """
+  build(
+    """
+    Build artifacts in release mode, with optimizations.
+    """
+    release: Boolean! = false,
+    """
+    Build artifacts with the specified cargo profile.
+    """
+    cargoProfile: String! = "",
+  ): Directory! {
+    if (names.isEmpty) {
+      return Dagger.directory
+    }
+
+    rust.build(
+      package: [package],
+      example: names,
+      target: crossTarget(target),
+      release: release,
+      cargoProfile: cargoProfile,
+    )
+  }
+}
+
+"""
+An example of a package, for a target.
+"""
+type Example {
+  """
+  Example name.
+  """
+  name: String!
+
+  """
+  Name of the package.
+  """
+  package: String!
+
+  """
+  Target triple, or "host".
+  """
+  target: String!
+
+  let rust: Rust!
+
+  """
+  Build this example.
+  """
+  build(
+    """
+    Build artifacts in release mode, with optimizations.
+    """
+    release: Boolean! = false,
+    """
+    Build artifacts with the specified cargo profile.
+    """
+    cargoProfile: String! = "",
+  ): File! {
+    rust
+      .build(
+        package: [package],
+        example: [name],
+        target: crossTarget(target),
+        release: release,
+        cargoProfile: cargoProfile,
+      )
+      .file(executableName(name, target))
+  }
+
+  """
+  Run this example with cargo run and return its standard output (host only).
+  """
+  run(
+    """
+    Arguments for the example.
+    """
+    args: [String!]! = [],
+    """
+    Build artifacts in release mode, with optimizations.
+    """
+    release: Boolean! = false,
+    """
+    Build artifacts with the specified cargo profile.
+    """
+    cargoProfile: String! = "",
+  ): String! {
+    requireHost(target, "examples")
+
+    let command = ["cargo", "run", "--package", package, "--example", name]
+
+    if (release) {
+      command += ["--release"]
+    }
+
+    if (cargoProfile != "") {
+      command += ["--profile", cargoProfile]
+    }
+
+    command += ["--"] + args
+
+    let cookArgs = CargoCommand.chefCook(
+      package: [package],
+      example: [name],
+      release: release,
+      profile: cargoProfile,
+    )
+
+    rust.buildContainer(cookArgs).withExec(command).stdout
+  }
+}
+
+"""
+Output of cargo metadata --no-deps --format-version 1 (the parts this module reads).
+"""
+type Metadata {
+  packages: [MetadataPackage!]!
+}
+
+"""
+A workspace member in the output of cargo metadata.
+"""
+type MetadataPackage {
+  name: String!
+
+  """
+  Absolute path of the package manifest in the container.
+  """
+  manifestPath: String! @JSON.field(name: "manifest_path")
+
+  targets: [MetadataTarget!]! = []
+
+  """
+  The package's [package.metadata] table.
+  """
+  metadata: ManifestMetadata
+
+  """
+  Names of the cargo targets of a kind (e.g. bin, example, test).
+  """
+  let targetNames(kind: String!): [String!]! {
+    targets.filter { candidate => candidate.kind.contains(kind) }.map { candidate => candidate.name }
+  }
+
+  """
+  Names of the cargo targets of a kind that build executables (e.g. examples without a library
+  crate-type).
+  """
+  let executableNames(kind: String!): [String!]! {
+    targets
+      .filter { candidate => candidate.kind.contains(kind) and candidate.crateTypes.contains("bin") }
+      .map { candidate => candidate.name }
+  }
+
+  """
+  Targets listed in this module's entry of the package manifest, or null when it lists none.
+  """
+  let targetRestriction: [String!] {
+    let moduleName = Dagger.currentModule.name
+    let config = modulesIn(ManifestSection(metadata: metadata)).find { _.name == moduleName }
+    if (config == null) {
+      return null
+    }
+
+    config.targets
+  }
+}
+
+"""
+A cargo target (lib, bin, test, example...) in the output of cargo metadata.
+"""
+type MetadataTarget {
+  name: String!
+  kind: [String!]!
+  crateTypes: [String!]! @JSON.field(name: "crate_types") = []
+}

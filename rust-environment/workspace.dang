@@ -1,0 +1,30 @@
+"""
+The Cargo workspace root, as cargo finds it from a package manifest: the nearest manifest (the
+package's own included) with a [workspace] table, or the package's own directory.
+"""
+let cargoRoot(ws: Workspace!, manifestPath: String!): String! {
+  let packageDir = Path(manifestPath).parent
+  let root: String = null
+
+  packageDir.ascend { dir =>
+    if (root == null) {
+      let candidate = dir.join(Path("Cargo.toml")).string
+      if (ws.findUp("Cargo.toml", from: dir.string) == candidate) {
+        let manifest = TOML.decode(ws.file(candidate).contents) :: WorkspaceManifest!
+        if (manifest.workspace != null) {
+          root = dir.string
+        }
+      }
+    }
+  }
+
+  root ?? packageDir.string
+}
+
+type WorkspaceManifest {
+  workspace: WorkspaceTable
+}
+
+type WorkspaceTable {
+  members: [String!]
+}

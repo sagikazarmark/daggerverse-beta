@@ -133,12 +133,16 @@ type Lychee {
 
   """
   Check links in the workspace and fail if Lychee reports errors.
+
+  The failure includes the report and logs. For the report of a passing run, use run(...).check.
   """
   check(
     inputs: [String!]! = [],
     offline: Boolean,
-  ): String! @check @cache(policy: FunctionCachePolicy.Never) {
+  ): Void @check @cache(policy: FunctionCachePolicy.Never) {
     self.run(inputs, offline).check
+
+    null
   }
 }
 

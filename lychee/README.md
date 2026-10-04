@@ -70,7 +70,9 @@ and `outputDirectory` for the default-format execution, including on broken-link
 failures. `runner.check` raises
 on failure and includes the configured-format report and logs in the error.
 The module's `check` function is annotated `@check` and defaults to checking the
-current workspace directory with gitignored files excluded.
+current workspace directory with gitignored files excluded. Like every check, it
+returns nothing (`Void`): a failure carries the report and logs, and
+`run(...).check` returns the report of a passing run.
 
 ## Cache outside the workdir
 
@@ -91,5 +93,5 @@ expiry.
 ## Tests
 
 ```sh
-dagger -m lychee/tests check --no-generate
+dagger -m lychee/tests check --generated=false
 ```

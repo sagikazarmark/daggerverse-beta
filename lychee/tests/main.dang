@@ -51,9 +51,11 @@ type Tests {
     assert { result.json.contents.contains("missing.md") }
     assert { result.junit.contents.contains("missing.md") }
 
+    assert { !lychee.check(offline: true).pass }
+
     {
-      lychee.check(offline: true)
-      raise "expected broken links to fail the check"
+      result.check
+      raise "expected broken links to fail the runner check"
     } rescue {
       err: Error => {
         assert { err.message.contains("Lychee failed (exit code") }
@@ -63,7 +65,9 @@ type Tests {
 
     let valid = self.source.withNewFile("missing.md", "# Found")
       .withNewFile("lychee.toml", "format = 'json'")
-    assert { Dagger.lychee(ws: valid.asWorkspace, noCache: true).check(offline: true).hasPrefix("{") }
+    let validLychee = Dagger.lychee(ws: valid.asWorkspace, noCache: true)
+    assert { validLychee.check(offline: true).pass }
+    assert { validLychee.run(offline: true).check.hasPrefix("{") }
   }
 
   """
@@ -150,7 +154,8 @@ type Tests {
     assert { lychee.container.workdir == "/work/src/docs" }
     assert { lychee.container.file("/work/src/shared/ok.md").contents == "# OK" }
     assert { lychee.container.withExec(["readlink", ".lycheecache"]).stdout.trimSpace == "/work/cache/lychee.csv" }
-    assert { lychee.check.hasPrefix("{") }
+    assert { lychee.check.pass }
+    assert { lychee.run.check.hasPrefix("{") }
   }
 
   """

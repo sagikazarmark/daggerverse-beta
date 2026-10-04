@@ -1,8 +1,7 @@
 type Tests {
-  # Value workspaces (Directory.asWorkspace) cannot enumerate checks, so the
-  # fixture workspace only backs workflow rendering and generate. The check
-  # names below mirror the modules in fixtures/workspace and drive the pure
-  # resolveChecks tests.
+  # The fixture workspace (a value workspace: Directory.asWorkspace) backs check
+  # discovery, workflow rendering and generate. The check names below mirror
+  # its modules and drive the pure resolveChecks tests and the golden files.
   let ws: Workspace! {
     Dagger
       .currentModule
@@ -175,8 +174,14 @@ type Tests {
   checkArguments: Void @check {
     assertEqual(workflowArgs(Dagger.daggerGha(include: ["alpha:**", "beta:lint"]).workflow(ws).contents), "alpha:** beta:lint")
     assertEqual(workflowArgs(Dagger.daggerGha(skip: ["alpha:fmt"]).workflow(ws).contents), "--skip alpha:fmt")
-    assertEqual(workflowArgs(Dagger.daggerGha(noGenerate: true).workflow(ws).contents), "--no-generate")
-    assertEqual(workflowArgs(Dagger.daggerGha(onlyGenerate: true).workflow(ws).contents), "--generate")
+    assertEqual(workflowArgs(Dagger.daggerGha(noGenerate: true).workflow(ws).contents), "--generated=false")
+    # dagger check has no flag for only the staleness checks of generators: the
+    # selectors narrow to them (their paths end in "stale").
+    assertEqual(workflowArgs(Dagger.daggerGha(onlyGenerate: true).workflow(ws).contents), "**:stale")
+    assertEqual(
+      workflowArgs(Dagger.daggerGha(include: ["alpha", "beta:fmt:stale"], onlyGenerate: true).workflow(ws).contents),
+      "alpha:**:stale beta:fmt:stale",
+    )
     assertEqual(workflowArgs(Dagger.daggerGha(env: "ci").workflow(ws).contents), "--env ci")
     # The env flag leads the other arguments.
     assertEqual(
@@ -185,13 +190,14 @@ type Tests {
     )
     assertEqual(
       workflowArgs(Dagger.daggerGha(include: ["alpha:**"], skip: ["beta:**"], noGenerate: true).workflow(ws).contents),
-      "--skip beta:** --no-generate alpha:**",
+      "--skip beta:** --generated=false alpha:**",
     )
-    # Expanded workflows select checks per matrix entry, but keep the skip
-    # patterns and generate flags on the command line.
+    # Expanded workflows select checks per matrix entry (discovery already
+    # narrowed them to the staleness checks), but keep the skip patterns on
+    # the command line.
     assertEqual(
       workflowArgs(Dagger.daggerGha(skip: ["alpha:fmt"], onlyGenerate: true, expand: true).workflow(ws).contents),
-      "--skip alpha:fmt --generate ${{ matrix.check }}",
+      "--skip alpha:fmt ${{ matrix.check }}",
     )
   }
 
@@ -301,7 +307,7 @@ type Tests {
     let nested = Dagger.daggerGha(skip: ["fmt"], noGenerate: true).workflow(nestedWs).contents
 
     assertEqual(stepInputs(nested).workdir ?? "", "alpha")
-    assertEqual(workflowArgs(nested), "--skip fmt --no-generate")
+    assertEqual(workflowArgs(nested), "--skip fmt --generated=false")
 
     # The workspace root renders no suffix or workdir.
     let root = Dagger.daggerGha.workflow(ws)
@@ -445,17 +451,45 @@ type Tests {
     assertList(decodeWorkflow(contents).jobs.check.strategy!.matrix.check!, ["alpha", "beta"])
   }
 
-  emptyWorkspaceChecks: Void @check {
-    # Canary for the engine limitation described on the ws field: discovery
-    # finds no checks on a value workspace, so an expanded workflow without an
-    # explicit check list renders an empty matrix. If this ever fails, the
-    # engine learned to enumerate checks on value workspaces and the expanded
-    # tests can switch to real discovery.
-    assert { Dagger.daggerGha.checks(ws).isEmpty }
+  discovery: Void @check {
+    # The checks dagger check runs, from the workspace's artifacts: check
+    # functions and the staleness checks of generators (alpha:fmt:stale).
+    assertList(
+      Dagger.daggerGha.checks(ws),
+      ["alpha:build", "alpha:fmt:stale", "alpha:test:integration", "alpha:test:unit", "beta:lint"],
+    )
 
-    let wf = decodeWorkflow(Dagger.daggerGha(expand: true).workflow(ws).contents)
+    assertList(
+      Dagger.daggerGha(noGenerate: true).checks(ws),
+      ["alpha:build", "alpha:test:integration", "alpha:test:unit", "beta:lint"],
+    )
+    assertList(Dagger.daggerGha(onlyGenerate: true).checks(ws), ["alpha:fmt:stale"])
+    assertList(Dagger.daggerGha(include: ["alpha:test"]).checks(ws), ["alpha:test:integration", "alpha:test:unit"])
+    assertList(Dagger.daggerGha(skip: ["alpha:test", "beta"]).checks(ws), ["alpha:build", "alpha:fmt:stale"])
 
-    assert { wf.jobs.check.strategy!.matrix.check!.isEmpty }
+    # An expanded workflow without an explicit list uses the discovered checks.
+    let wf = decodeWorkflow(Dagger.daggerGha(expand: true, noGenerate: true).workflow(ws).contents)
+
+    assertList(
+      wf.jobs.check.strategy!.matrix.check!,
+      ["alpha:build", "alpha:test:integration", "alpha:test:unit", "beta:lint"],
+    )
+  }
+
+  configuredSkips: Void @check {
+    # check.skip and generate.skip in the workspace configuration apply as in
+    # dagger check: an expanded entry for a skipped check would select nothing.
+    let configured = Dagger
+      .currentModule
+      .source
+      .directory("fixtures/workspace")
+      .withNewFile(
+        "dagger.toml",
+        "[modules.alpha]\nsource = \"alpha\"\ncheck.skip = [\"test:integration\"]\ngenerate.skip = [\"fmt\"]\n\n[modules.beta]\nsource = \"beta\"\n",
+      )
+      .asWorkspace
+
+    assertList(Dagger.daggerGha.checks(configured), ["alpha:build", "alpha:test:unit", "beta:lint"])
   }
 
   invalidOptions: Void @check {

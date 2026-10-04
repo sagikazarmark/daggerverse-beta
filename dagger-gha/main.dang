@@ -260,10 +260,9 @@ type DaggerGha {
 
     self.checkJob(checkJobName(expand, envMatrix), checkArgs(
       matrixEnvArg(envMatrix, self.env),
-      matrixCheckPatterns(expand, self.include),
+      matrixCheckPatterns(expand, self.include, self.onlyGenerate),
       self.skip,
       self.noGenerate,
-      self.onlyGenerate,
     ), workspaceDir)
       .{
         if (expand) {
@@ -411,16 +410,44 @@ let matrixEnvArg(envMatrix: Boolean!, env: String): String {
 
 """
 Check selectors on the generated command line: the matrix entry when checks are
-expanded, the configured include patterns otherwise.
+expanded, the configured include patterns otherwise. dagger check has no flag
+selecting only the staleness checks of generators, so onlyGenerate narrows the
+patterns to them instead (their paths end in "stale").
 """
-let matrixCheckPatterns(expand: Boolean!, include: [String!]!): [String!]! {
+let matrixCheckPatterns(expand: Boolean!, include: [String!]!, onlyGenerate: Boolean!): [String!]! {
   if (expand) {
     return ["${{ matrix.check }}"]
   }
 
-  include
+  if (!onlyGenerate) {
+    return include
+  }
+
+  if (include.isEmpty) {
+    return ["**:stale"]
+  }
+
+  include.map { pattern => stalePattern(pattern) }
 }
 
+"""
+The staleness checks at or below a check selector.
+"""
+let stalePattern(pattern: String!): String! {
+  if (pattern.hasSuffix(":stale") or pattern == "stale") {
+    return pattern
+  }
+
+  pattern + ":**:stale"
+}
+
+"""
+The checks dagger check runs in the workspace, as selectors (module and path,
+separated by colons): Check artifacts, including the staleness checks of
+generators (artifacts whose parent is a Generator), filtered the way dagger
+check filters them with include patterns, --skip, --generated, and the check.skip
+and generate.skip settings of each module in the workspace configuration.
+"""
 let checkSelectors(
   ws: Workspace!,
   include: [String!]! = [],
@@ -428,16 +455,86 @@ let checkSelectors(
   noGenerate: Boolean! = false,
   onlyGenerate: Boolean! = false,
 ): [String!]! {
-  let checks = (
-    ws.checks(
-      include: optionalStringList(include),
-      skip: optionalStringList(skip),
-      noGenerate: noGenerate,
-      onlyGenerate: onlyGenerate,
-    ).list
-  ).{{name}}
+  let selection = ws.artifacts(include: optionalStringList(include)).filterTypes(["Check"])
 
-  checks.map { _.name }
+  if (noGenerate) {
+    selection = selection.filterParentTypes(["Generator"], exclude: true)
+  }
+
+  if (onlyGenerate) {
+    selection = selection.filterParentTypes(["Generator"])
+  }
+
+  # As --skip: a literal path also skips everything below it.
+  skip.each { pattern =>
+    selection = selection.withoutUri(skipAddress("", pattern))
+  }
+
+  let moduleNames = selection.pathDefinitions.{{moduleName}}.map { path => path.moduleName }.uniq
+
+  moduleNames.each { moduleName =>
+    configuredSkip(ws, moduleName, "check").each { pattern =>
+      selection = selection.withoutUri(skipAddress(moduleName, pattern))
+    }
+
+    # generate.skip names generators: it skips their staleness checks only.
+    if (!noGenerate) {
+      configuredSkip(ws, moduleName, "generate").each { pattern =>
+        let generators = selection
+          .filterParentTypes(["Generator"])
+          .filterUri(skipAddress(moduleName, pattern))
+          .pathDefinitions.{{uri}}
+
+        generators.each { generator =>
+          selection = selection.withoutUri(generator.uri)
+        }
+      }
+    }
+  }
+
+  selection.pathDefinitions.{{uri}}.map { path => checkSelector(path.uri) }
+}
+
+"""
+DAG address of a skip pattern (colon or slash separated), within a module when
+given. A literal path also covers everything below it, as dagger check does.
+"""
+let skipAddress(moduleName: String!, pattern: String!): String! {
+  let path = pattern.split(":").join("/")
+
+  if (!path.containsMatch(`[*?\[{]`)) {
+    path = path + "/**"
+  }
+
+  if (moduleName != "") {
+    path = moduleName + "/" + path
+  }
+
+  "dag://" + path
+}
+
+"""
+Skip patterns of a module for a command (check or generate) in the workspace
+configuration: modules.<name>.<command>.skip.
+"""
+let configuredSkip(ws: Workspace!, moduleName: String!, command: String!): [String!]! {
+  let table = ws.configRead(key: "modules." + moduleName + "." + command) rescue {
+    err: Error => ""
+  }
+
+  (TOML.decode(table) :: SkipConfig!).skip
+}
+
+type SkipConfig {
+  skip: [String!]! = []
+}
+
+"""
+The selector of a check, from its DAG address: dag://alpha/test/unit becomes
+alpha:test:unit.
+"""
+let checkSelector(uri: String!): String! {
+  uri.trimPrefix("dag://").split("/").join(":")
 }
 
 let optionalStringList(values: [String!]!): [String!] {
@@ -535,16 +632,11 @@ let checkArgs(
   patterns: [String!]!,
   skip: [String!]!,
   noGenerate: Boolean!,
-  onlyGenerate: Boolean!,
 ): String! {
   let args = skip.reduce([]) { args, pattern => args + ["--skip", pattern] }
 
   if (noGenerate) {
-    args += ["--no-generate"]
-  }
-
-  if (onlyGenerate) {
-    args += ["--generate"]
+    args += ["--generated=false"]
   }
 
   if (env != null) {

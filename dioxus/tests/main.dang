@@ -42,7 +42,10 @@ type Tests {
     output
   }
 
-  init: Directory! @check {
+  """
+  A project generated from the Dioxus template.
+  """
+  let app: Directory! {
     let template = Dagger.git("https://github.com/DioxusLabs/dioxus-template.git").branch("v0.7").tree
 
     self
@@ -53,11 +56,20 @@ type Tests {
       .directory
   }
 
-  build: Container! @check {
+  init: Void @check {
+    self.app.sync
+
+    null
+  }
+
+  build: Void @check {
     Dagger
-      .dioxus(ws: init.asWorkspace, rustVersion: rustVersion)
+      .dioxus(ws: self.app.asWorkspace, rustVersion: rustVersion)
       .container
       .withExec(["dx", "build"])
+      .sync
+
+    null
   }
 
   """
@@ -81,7 +93,7 @@ type Tests {
   """
   Build the Dioxus counter example from the upstream repository.
   """
-  counter: Directory! @check {
+  counter: Void @check {
     let cargoToml = """
       [package]
       name = "dioxus-counter-example"
@@ -106,13 +118,15 @@ type Tests {
       .withFile("Dioxus.toml", Dagger.currentModule.source.file("counter.dioxus.toml"))
       .withFile("src/main.rs", self.source.file("examples/02-building-ui/counter.rs"))
 
-    self.buildExample(source)
+    self.buildExample(source).sync
+
+    null
   }
 
   """
   Build the Dioxus PWA integration example from the upstream repository.
   """
-  pwa: Directory! @check {
+  pwa: Void @check {
     let source = self
       .source
       .directory("examples/10-integrations/pwa")
@@ -131,12 +145,12 @@ type Tests {
     assert { output.file("index.html").contents.contains("serviceWorker") }
     assert { output.file("manifest.json").contents.contains("Dioxus") }
 
-    output
+    null
   }
 
   serve: Void @check {
     let service = Dagger
-      .dioxus(ws: init.asWorkspace, rustVersion: rustVersion)
+      .dioxus(ws: self.app.asWorkspace, rustVersion: rustVersion)
       .serve
 
     let response = Dagger.http(service.endpoint(scheme: "http"), experimentalServiceHost: service)
@@ -147,13 +161,13 @@ type Tests {
   """
   With chef enabled, the dependencies are compiled on the skeleton before the real bundle.
   """
-  chefBundle: Directory! @check {
+  chefBundle: Void @check {
     let output = Dagger
-      .dioxus(ws: init.asWorkspace, rustVersion: rustVersion, chef: true)
+      .dioxus(ws: self.app.asWorkspace, rustVersion: rustVersion, chef: true)
       .bundle(platform: DioxusPlatform.WEB)
 
     assert { output.directory("public").file("index.html").contents.contains("main") }
 
-    output
+    null
   }
 }

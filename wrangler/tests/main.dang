@@ -1,5 +1,9 @@
 type Tests {
-  container: Container! @check { Dagger.wrangler.container }
+  container: Void @check {
+    Dagger.wrangler.container.sync
+
+    null
+  }
 
   dev: Void @check @cache(policy: FunctionCachePolicy.Never) {
     let worker = Dagger

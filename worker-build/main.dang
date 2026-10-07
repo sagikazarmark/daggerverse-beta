@@ -239,7 +239,7 @@ type WorkerBuild {
     Additional arguments to pass to `cargo build`.
     """
     args: [String!]! = [],
-  ): Directory! @check {
+  ): Directory! {
     let buildArgs = ["worker-build"]
     if (dev) {
       buildArgs += ["--dev"]

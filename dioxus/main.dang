@@ -370,7 +370,7 @@ type Dioxus {
     Specify the arguments for the server build.
     """
     serverArgs: [String!]! = [],
-  ): Directory! @check {
+  ): Directory! {
     let args = DioxusCommand.bundle(
       packageTypes: packageTypes,
       fullstack: fullstack,

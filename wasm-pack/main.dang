@@ -168,7 +168,7 @@ type WasmPack {
     Additional arguments to pass to `cargo test`.
     """
     args: [String!]! = self.defaultTestArgs,
-  ): Container! @check {
+  ): Void @check {
     let _args = ["wasm-pack", "test", "--mode", "no-install", "--headless"]
 
     _args += browsers.uniq.map { "--" + toString(_).toLower }
@@ -179,7 +179,9 @@ type WasmPack {
       _args += args
     }
 
-    self.container.withExec(_args, experimentalPrivilegedNesting: true)
+    self.container.withExec(_args, experimentalPrivilegedNesting: true).sync
+
+    null
   }
 }
 

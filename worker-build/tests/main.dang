@@ -163,7 +163,7 @@ type Tests {
   """
   Build the Cloudflare workers-rs axum example with worker-build.
   """
-  axum: Directory! @check {
+  axum: Void @check {
     let source = self
       .source
       .withoutFile("examples/axum/Cargo.lock")
@@ -178,21 +178,25 @@ type Tests {
         )
       }
 
-    self.buildExample(source: source, name: "axum")
+    self.buildExample(source: source, name: "axum").sync
+
+    null
   }
 
   """
   Build the Cloudflare workers-rs digest example with worker-build.
   """
-  digest: Directory! @check {
-    self.buildExample(name: "digest")
+  digest: Void @check {
+    self.buildExample(name: "digest").sync
+
+    null
   }
 
   """
   Build the Cloudflare workers-rs digest example and verify it runs with Wrangler dev.
   """
   digestService: Void @check @cache(policy: FunctionCachePolicy.Never) {
-    let service = Dagger.wrangler.dev(self.digest)
+    let service = Dagger.wrangler.dev(self.buildExample(name: "digest"))
 
     let response = Dagger.http(
       service.endpoint(scheme: "http", port: 8787),
@@ -207,8 +211,10 @@ type Tests {
   """
   Build the Cloudflare workers-rs tracing example with worker-build.
   """
-  tracing: Directory! @check {
-    self.buildExample(name: "tracing")
+  tracing: Void @check {
+    self.buildExample(name: "tracing").sync
+
+    null
   }
 
   """
@@ -218,7 +224,7 @@ type Tests {
   project would: in the workers-rs repository `worker` is a workspace member, whose version cargo-chef
   masks, which worker-build's version check rejects.
   """
-  chefDigest: Directory! @check {
+  chefDigest: Void @check {
     let output = Dagger
       .workerBuild(
         ws: self.standaloneDigest.asWorkspace,
@@ -230,7 +236,7 @@ type Tests {
 
     assert { output.file("index.js").contents.contains("wasm") }
 
-    output
+    null
   }
 
   let standaloneDigest: Directory! {

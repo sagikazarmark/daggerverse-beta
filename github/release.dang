@@ -117,7 +117,9 @@ type ReleaseAssetNotFound implements Error {
     release.htmlUrl.trimPrefix("https://github.com/").split("/").takeFirst(2).join("/")
   }
 
-  message: String! = `asset "${name}" is not found in release "${release.tagName}" of repository "${repository}"`
+  message: String! {
+    `asset "${name}" is not found in release "${release.tagName}" of repository "${repository}"`
+  }
 }
 
 """
